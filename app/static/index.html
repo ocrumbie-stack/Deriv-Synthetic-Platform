@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Risk Controls — Trading Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+
+      <!-- ── Sidebar ──────────────────────────────────────────── -->
+      <aside class="sidebar">
+
+        <div class="sidebar-brand">
+          <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+            <path d="M13 2L3 6v6.5c0 5.2 3.8 10 10 11.3C19.2 22.5 23 17.7 23 12.5V6L13 2z" fill="#ffc107" opacity="0.9"/>
+            <path d="M9 13l3 3 5-5.5" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <div>
+            <div class="brand">RISK CONTROLS</div>
+            <div class="version">v2.4.1</div>
+          </div>
+        </div>
+
+        <nav class="sidebar-nav">
+
+          <div class="nav-section">
+            <span class="nav-section-label">Dashboard</span>
+            <button class="nav-item active" data-page="dashboard-overview">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <rect x="1" y="1" width="5" height="5" rx="1" fill="currentColor"/>
+                <rect x="8" y="1" width="5" height="5" rx="1" fill="currentColor"/>
+                <rect x="1" y="8" width="5" height="5" rx="1" fill="currentColor"/>
+                <rect x="8" y="8" width="5" height="5" rx="1" fill="currentColor"/>
+              </svg>
+              Overview
+            </button>
+          </div>
+
+          <div class="nav-section">
+            <span class="nav-section-label">Trading</span>
+            <button class="nav-item" data-page="trading-bots">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <rect x="3" y="1" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.4"/>
+                <path d="M1 6h2M11 6h2M5 9v4M9 9v4M5 13h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              </svg>
+              Signal Bots
+            </button>
+            <button class="nav-item" data-page="trading-positions">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M1 4L7 1l6 3-6 3-6-3z" fill="currentColor"/>
+                <path d="M1 7.5L7 10.5l6-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none"/>
+                <path d="M1 11L7 14l6-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none"/>
+              </svg>
+              Open Positions
+            </button>
+            <button class="nav-item" data-page="trading-history">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5"/>
+                <path d="M7 4V7l2 1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+              Trade History
+            </button>
+          </div>
+
+          <div class="nav-section">
+            <span class="nav-section-label">Signals</span>
+            <button class="nav-item" data-page="signals-journal">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <rect x="1" y="2" width="12" height="1.5" rx="0.75" fill="currentColor"/>
+                <rect x="1" y="6" width="12" height="1.5" rx="0.75" fill="currentColor"/>
+                <rect x="1" y="10" width="8"  height="1.5" rx="0.75" fill="currentColor"/>
+              </svg>
+              Signal Journal
+            </button>
+          </div>
+
+          <div class="nav-section">
+            <span class="nav-section-label">Strategies</span>
+            <button class="nav-item" data-page="strategies-ranking">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M1 10.5l3-4 2.5 2.5 3.5-6 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+              </svg>
+              Performance
+            </button>
+            <button class="nav-item" data-page="strategies-settings">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <circle cx="7" cy="7" r="1.8" stroke="currentColor" stroke-width="1.3"/>
+                <path d="M7 1v1.5M7 11.5V13M13 7h-1.5M2.5 7H1M11.2 2.8l-1.1 1.1M3.9 10.1l-1.1 1.1M11.2 11.2l-1.1-1.1M3.9 3.9L2.8 2.8"
+                  stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+              </svg>
+              Settings
+            </button>
+          </div>
+
+          <div class="nav-section">
+            <span class="nav-section-label">System</span>
+            <button class="nav-item" data-page="system-risk">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M7 1L1.5 3.5V7c0 2.9 2.2 5.6 5.5 6.3C10.3 12.6 12.5 9.9 12.5 7V3.5L7 1z" stroke="currentColor" stroke-width="1.4" fill="none"/>
+                <path d="M5 7l1.5 1.5L9.5 5.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              Risk Controls
+            </button>
+          </div>
+
+        </nav>
+
+        <!-- Emergency Stop — always visible -->
+        <div class="sidebar-footer">
+          <button class="es-widget" id="sidebarEmergencyStop" aria-pressed="false">
+            <div class="es-top">
+              <span class="es-dot"></span>
+              <span class="es-label">Emergency Stop</span>
+            </div>
+            <span class="es-state" id="esWidgetState">INACTIVE — click to activate</span>
+          </button>
+          <div class="footer-meta">
+            <span class="live-dot"></span>
+            <span class="live-badge paper" id="liveMode">PAPER</span>
+            <span class="stop-label" id="stopLabel">controls active</span>
+          </div>
+        </div>
+
+      </aside>
+
+      <!-- ── Main content ─────────────────────────────────────── -->
+      <div class="main-content">
+
+        <!-- ────────── DASHBOARD ────────── -->
+
+        <div class="page active" id="page-dashboard-overview">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Overview</h1>
+              <p class="subtle">Your command center</p>
+            </div>
+            <div class="period-tabs">
+              <button data-period="today" class="active">1D</button>
+              <button data-period="week">5D</button>
+              <button data-period="month">MTD</button>
+              <button data-period="all">ALL</button>
+            </div>
+          </div>
+          <div class="page-body">
+            <div id="summary"></div>
+            <div class="status-banner" id="riskStatusBanner">
+              <div class="status-banner-icon" id="riskStatusIcon">●</div>
+              <div>
+                <div class="status-banner-title" id="riskStatusText">ALL SYSTEMS OPERATIONAL</div>
+                <div class="status-banner-sub" id="riskStatusSub">No limits breached · Emergency stop inactive</div>
+              </div>
+              <button class="nav-link-btn" data-page="system-risk">Manage →</button>
+            </div>
+            <div class="charts-row">
+              <div class="chart-panel pnl-panel">
+                <div class="chart-header">
+                  <span class="chart-title">P&amp;L</span>
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <span id="pnlHeadline" style="font-size:11px;font-family:monospace;font-weight:700"></span>
+                    <div class="pnl-range-switcher">
+                      <button class="pnl-range-btn active" data-pnl-range="1D">1D</button>
+                      <button class="pnl-range-btn" data-pnl-range="5D">5D</button>
+                      <button class="pnl-range-btn" data-pnl-range="MTD">MTD</button>
+                    </div>
+                  </div>
+                </div>
+                <canvas id="pnlChart" height="160" style="height:160px"></canvas>
+              </div>
+              <div class="chart-panel">
+                <div class="chart-header">
+                  <span class="chart-title">Signal Activity</span>
+                  <div class="chart-legend">
+                    <div class="legend-item"><span class="legend-dot" style="background:#3b82f6;border-radius:2px"></span>passed</div>
+                    <div class="legend-item"><span class="legend-dot" style="background:#ef4444;border-radius:2px"></span>blocked</div>
+                  </div>
+                </div>
+                <canvas id="activityChart" height="160" style="height:160px"></canvas>
+              </div>
+            </div>
+            <div class="webhook-panel" style="grid-template-columns:1fr">
+              <div class="webhook-section" style="border-right:0;border-bottom:1px solid var(--border)">
+                <span class="webhook-label">TRADINGVIEW WEBHOOK URL</span>
+                <div class="url-row">
+                  <code id="webhookUrl" class="url-display"></code>
+                  <button id="copyWebhook" class="copy-btn">Copy</button>
+                </div>
+              </div>
+              <div class="webhook-section">
+                <span class="webhook-label">MINIMUM REQUIRED PAYLOAD</span>
+                <div class="url-row">
+                  <code id="payloadDisplay" class="url-display dim">{"secret":"YOUR_SECRET","strategy":"{{strategy.title}}","symbol":"{{ticker}}","action":"entry","direction":"long|short","size":0.1,"leverage":10,"price":{{close}}}</code>
+                  <button id="copyPayload" class="copy-btn">Copy</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+
+        <!-- ────────── SIGNALS ────────── -->
+
+        <div class="page" id="page-signals-journal">
+          <div class="page-header">
+            <h1 class="page-title">Signals</h1>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="header-badge" id="signalCount">0 signals</span>
+              <div class="tabs"><button id="rejectionsFilterBtn">Rejections only</button></div>
+            </div>
+          </div>
+          <div class="page-body">
+            <div class="chart-panel">
+              <div class="chart-header">
+                <span class="chart-title">Signal Timeline</span>
+                <div class="chart-legend">
+                  <div class="legend-item"><span class="legend-dot" style="background:#4488ff"></span>passed</div>
+                  <div class="legend-item"><span class="legend-dot" style="background:#ff3d5a"></span>blocked</div>
+                </div>
+              </div>
+              <canvas id="activityChart2" height="180" style="height:180px"></canvas>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr>
+                  <th>Time</th><th>Strategy</th><th>Symbol</th>
+                  <th>Signal</th><th>Status</th><th>Reason</th>
+                </tr></thead>
+                <tbody id="signals"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+
+        <!-- ────────── TRADING ────────── -->
+
+        <div class="page" id="page-trading-bots">
+          <div class="page-header">
+            <h1 class="page-title">Signal Bots</h1>
+            <button id="newBotToggle" class="copy-btn">+ New Bot</button>
+          </div>
+          <div class="page-body">
+
+            <div id="newBotForm" style="display:none" class="risk-panel">
+              <p class="panel-title" style="margin-bottom:4px">New Signal Bot</p>
+              <p style="font-size:11px;color:var(--muted);margin-bottom:16px">Size and leverage are stored here — no need to include them in your TradingView alert. TP / SL / Cycles are optional circuit breakers.</p>
+              <datalist id="symbolSuggestions"></datalist>
+              <div style="display:grid;grid-template-columns:1.4fr 1.2fr 1fr 1fr 1fr 1fr 1fr auto;gap:12px;align-items:end">
+                <div>
+                  <label class="bot-field-label">Strategy name</label>
+                  <input id="botName" type="text" placeholder="MyStrategy" />
+                </div>
+                <div>
+                  <label class="bot-field-label">Symbol</label>
+                  <input id="botSymbol" type="text" placeholder="BTCUSDT" list="symbolSuggestions" autocomplete="off" />
+                </div>
+                <div>
+                  <label class="bot-field-label">Size (USDT)</label>
+                  <input id="botSize" type="number" step="1" min="1" placeholder="100" />
+                </div>
+                <div>
+                  <label class="bot-field-label">Leverage</label>
+                  <input id="botLeverage" type="number" step="1" min="1" placeholder="1" />
+                </div>
+                <div>
+                  <label class="bot-field-label">TP %</label>
+                  <input id="botTp" type="number" step="0.1" min="0.1" placeholder="optional" />
+                </div>
+                <div>
+                  <label class="bot-field-label">SL %</label>
+                  <input id="botSl" type="number" step="0.1" min="0.1" placeholder="optional" />
+                </div>
+                <div>
+                  <label class="bot-field-label">Max Cycles</label>
+                  <input id="botCycles" type="number" step="1" min="1" placeholder="optional" />
+                </div>
+                <div style="display:flex;flex-direction:column;gap:6px;align-self:end">
+                  <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:var(--muted)">
+                    <input id="botHedge" type="checkbox" /> Hedge
+                  </label>
+                  <button id="createBotBtn" class="copy-btn" style="height:34px">Create</button>
+                </div>
+              </div>
+              <div id="botError" style="display:none;margin-top:10px;font-size:12px;color:var(--red)"></div>
+            </div>
+
+            <details class="setup-guide">
+              <summary>
+                <div style="display:flex;align-items:center;gap:9px">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.3"/>
+                    <path d="M6 5v4M6 3.5v.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                  </svg>
+                  TradingView Setup
+                </div>
+                <svg class="setup-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </summary>
+              <div>
+                <div style="padding:16px 20px;border-bottom:1px solid var(--border)">
+                  <span class="webhook-label" style="display:block;margin-bottom:10px">Step 1 — Paste into TradingView alert → Notifications → Webhook URL</span>
+                  <div class="url-row">
+                    <code id="botWebhookUrl" class="url-display"></code>
+                    <button id="copyBotWebhook" class="copy-btn">Copy</button>
+                  </div>
+                </div>
+                <div style="padding:16px 20px">
+                  <span class="webhook-label" style="display:block;margin-bottom:10px">Step 2 — Paste into TradingView alert → Message · Click a bot row to load its name</span>
+                  <div class="url-row">
+                    <code id="botTemplateDisplay" class="url-display dim" style="font-size:11px;white-space:pre;overflow-x:auto"></code>
+                    <button id="copyBotTemplate" class="copy-btn" style="align-self:stretch">Copy</button>
+                  </div>
+                </div>
+              </div>
+            </details>
+
+            <div class="table-wrap">
+              <table>
+                <thead><tr>
+                  <th>Bot</th><th>Symbol</th><th>Size · Lev</th>
+                  <th>TP / SL</th><th>Cycles</th><th>Session P&amp;L</th>
+                  <th>Hedge</th><th>Status</th><th></th>
+                </tr></thead>
+                <tbody id="signalBots"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="page" id="page-trading-positions">
+          <div class="page-header">
+            <h1 class="page-title">Open Positions</h1>
+            <span class="header-badge" id="positionCount">0 open</span>
+          </div>
+          <div class="page-body">
+            <div class="table-wrap">
+              <table>
+                <thead><tr>
+                  <th>Strategy</th><th>Symbol</th><th>Direction</th>
+                  <th>Entry price</th><th>Size</th><th>Leverage</th>
+                  <th>Unrealized P/L</th><th>Status</th><th>Opened</th>
+                </tr></thead>
+                <tbody id="positions"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="page" id="page-trading-history">
+          <div class="page-header">
+            <h1 class="page-title">Trade History</h1>
+            <span class="header-badge" id="historyCount">0 trades</span>
+          </div>
+          <div class="page-body">
+            <div class="table-wrap">
+              <table>
+                <thead><tr>
+                  <th>Strategy</th><th>Symbol</th><th>Side</th>
+                  <th>Entry</th><th>Exit</th><th>Size</th>
+                  <th>Gross P/L</th><th>Net P/L</th>
+                  <th>Opened</th><th>Closed</th><th>Duration</th>
+                </tr></thead>
+                <tbody id="history"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+
+        <!-- ────────── STRATEGIES ────────── -->
+
+        <div class="page" id="page-strategies-ranking">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Performance</h1>
+              <p id="focusLabel" class="subtle">All strategies</p>
+            </div>
+            <div class="tabs" role="tablist">
+              <button data-period-table="today" class="active">Today</button>
+              <button data-period-table="week">This week</button>
+              <button data-period-table="month">This month</button>
+              <button data-period-table="all">All time</button>
+            </div>
+          </div>
+          <div class="page-body">
+            <div class="chart-panel">
+              <div class="chart-header">
+                <span class="chart-title">Equity Curve</span>
+                <span class="chart-value neutral" id="curveValue2">$0.00</span>
+              </div>
+              <canvas id="equityChart2" height="200" style="height:200px"></canvas>
+            </div>
+            <div class="chart-panel">
+              <div class="chart-header"><span class="chart-title">Signal Quality</span></div>
+              <canvas id="statusChart" height="200" style="height:200px"></canvas>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr>
+                  <th>Strategy</th><th>Status</th><th>Net P/L</th>
+                  <th>Trades</th><th>Win rate</th><th>Avg win</th><th>Avg loss</th><th>Open</th>
+                </tr></thead>
+                <tbody id="performance"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="page" id="page-strategies-settings">
+          <div class="page-header">
+            <h1 class="page-title">Strategy Settings</h1>
+          </div>
+          <div class="page-body">
+            <div class="table-wrap">
+              <table>
+                <thead><tr>
+                  <th>Strategy</th><th>Enabled</th><th>Max position size</th>
+                  <th>Daily loss limit</th><th>Open positions</th><th>Period net</th>
+                </tr></thead>
+                <tbody id="strategyRisk"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ────────── SYSTEM ────────── -->
+
+        <div class="page" id="page-system-risk">
+          <div class="page-header">
+            <h1 class="page-title">Risk Controls</h1>
+          </div>
+          <div class="page-body">
+            <div class="risk-grid">
+              <div class="risk-panel critical">
+                <div>
+                  <p class="panel-label">Killswitch</p>
+                  <p class="panel-title">Emergency Controls</p>
+                </div>
+                <div class="switch-row">
+                  <span>Emergency stop</span>
+                  <button class="switch emergency-stop-btn" id="emergencyStopToggle" aria-pressed="false"><span></span></button>
+                </div>
+                <div class="switch-row">
+                  <span>Duplicate blocking</span>
+                  <button class="switch" id="duplicateBlockingToggle" aria-pressed="true"><span></span></button>
+                </div>
+              </div>
+              <div class="risk-panel">
+                <div>
+                  <p class="panel-label">Account</p>
+                  <p class="panel-title">Daily Loss Limit</p>
+                </div>
+                <div class="field-row">
+                  <label for="accountLossLimit">Limit ($)</label>
+                  <input id="accountLossLimit" type="number" min="0" step="0.01" />
+                </div>
+                <div class="risk-meter">
+                  <div class="meter-label">
+                    <span>Today's net</span>
+                    <strong id="todayNet">$0.00</strong>
+                  </div>
+                  <div class="meter-track"><span id="lossMeter"></span></div>
+                </div>
+              </div>
+              <div class="risk-panel">
+                <div>
+                  <p class="panel-label">Account</p>
+                  <p class="panel-title">Exposure Limit</p>
+                </div>
+                <div class="field-row">
+                  <label for="accountExposureLimit">Max exposure</label>
+                  <input id="accountExposureLimit" type="number" min="0" step="0.01" />
+                </div>
+                <div class="risk-meter">
+                  <div class="meter-label">
+                    <span>Current exposure</span>
+                    <strong id="currentExposure">0</strong>
+                  </div>
+                  <div class="meter-track"><span id="exposureMeter"></span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+
+      </div><!-- /main-content -->
+    </div><!-- /app -->
+
+    <script src="/static/app.js?v=3"></script>
+  </body>
+</html>
