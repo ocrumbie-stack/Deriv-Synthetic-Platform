@@ -1348,12 +1348,12 @@ function wireBotForm() {
     ["#botName","#botSymbol","#botSize","#botLeverage"].forEach(sel => {
       const el = document.querySelector(sel); if (el) el.value = "";
     });
-    const form = document.querySelector("#newBotForm");
-    if (form) form.style.display = "none";
     await refreshBots();
     loadBotTemplate(name);
     const preview = document.querySelector("#botTemplatePreview");
-    if (preview) { preview.style.display = "block"; form.style.display = "block"; }
+    if (preview) preview.style.display = "block";
+    const form = document.querySelector("#newBotForm");
+    if (form) form.style.display = "block";
   });
 }
 

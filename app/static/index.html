@@ -283,20 +283,25 @@
                   <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:var(--muted)">
                     <input id="botHedge" type="checkbox" /> Hedge
                   </label>
-                  <div style="display:flex;gap:6px">
-                    <button id="generateMsgBtn" class="nav-link-btn" style="height:34px;white-space:nowrap">TradingView Alert</button>
-                    <button id="createBotBtn" class="copy-btn" style="height:34px">Create</button>
-                  </div>
+                  <button id="createBotBtn" class="copy-btn" style="height:34px">Create</button>
                 </div>
               </div>
-              <div id="botTemplatePreview" style="display:none;margin-top:16px;border-top:1px solid var(--border);padding-top:16px">
-                <span class="webhook-label" style="display:block;margin-bottom:8px">Paste into TradingView alert → Message field</span>
-                <div class="url-row">
-                  <code id="botTemplateDisplay" class="url-display dim" style="font-size:11px;white-space:pre;overflow-x:auto"></code>
+
+              <div id="botError" style="display:none;margin-top:10px;font-size:12px;color:var(--red)"></div>
+
+              <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+                <button id="generateMsgBtn" class="nav-link-btn" style="width:100%;text-align:center;padding:9px">
+                  Generate TradingView Alert Message
+                </button>
+              </div>
+
+              <div id="botTemplatePreview" style="display:none;margin-top:12px">
+                <span class="webhook-label" style="display:block;margin-bottom:8px">Paste this into your TradingView alert → Message field</span>
+                <div class="url-row" style="align-items:stretch">
+                  <code id="botTemplateDisplay" class="url-display dim" style="font-size:11px;white-space:pre;overflow-x:auto;line-height:1.6"></code>
                   <button id="copyBotTemplate" class="copy-btn" style="align-self:stretch">Copy</button>
                 </div>
               </div>
-              <div id="botError" style="display:none;margin-top:10px;font-size:12px;color:var(--red)"></div>
             </div>
 
             <div class="table-wrap">
