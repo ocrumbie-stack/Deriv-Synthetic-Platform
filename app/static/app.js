@@ -1177,10 +1177,19 @@ async function refreshBots() {
     const tpSl     = [b.tp_pct ? `+${b.tp_pct}%` : null, b.sl_pct ? `-${b.sl_pct}%` : null].filter(Boolean).join(" / ") || "—";
     return `
     <tr class="clickable" data-bot-name="${escapeAttr(b.name)}">
-      <td>
-        <div style="display:flex;align-items:center;gap:8px">
+      <td style="min-width:200px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
           <span class="bot-dot ${b.enabled ? "active" : "paused"}"></span>
           <span style="font-weight:600">${b.name}</span>
+        </div>
+        <button class="nav-link-btn" data-toggle-tpl="${b.id}" style="font-size:10px;padding:2px 8px">
+          TradingView Alert Message ▾
+        </button>
+        <div id="bot-tpl-${b.id}" style="display:none;margin-top:8px">
+          <div class="url-row">
+            <code class="url-display dim" style="font-size:10px;white-space:pre;overflow-x:auto;line-height:1.6">${escapeAttr(botTemplate(b.name))}</code>
+            <button class="copy-btn" data-copy-tpl="${escapeAttr(b.name)}" style="align-self:stretch;font-size:11px">Copy</button>
+          </div>
         </div>
       </td>
       <td style="font-family:monospace">${b.symbol}</td>
@@ -1220,17 +1229,24 @@ async function refreshBots() {
         </button>
       </td>
       <td>
-        <button class="copy-btn" data-copy-template="${escapeAttr(b.name)}" style="font-size:11px;padding:4px 10px">Copy</button>
-      </td>
-      <td>
         <button class="mini-switch" data-delete-bot="${b.id}" style="background:var(--red-dim);color:var(--red)">Delete</button>
       </td>
     </tr>`;
   }).join("");
 
-  el.querySelectorAll("[data-copy-template]").forEach(btn => {
+  el.querySelectorAll("[data-toggle-tpl]").forEach(btn => {
     btn.addEventListener("click", () => {
-      navigator.clipboard.writeText(botTemplate(btn.dataset.copyTemplate)).then(() => {
+      const tpl = document.querySelector(`#bot-tpl-${btn.dataset.toggleTpl}`);
+      if (!tpl) return;
+      const open = tpl.style.display !== "none";
+      tpl.style.display = open ? "none" : "block";
+      btn.textContent = open ? "TradingView Alert Message ▾" : "TradingView Alert Message ▲";
+    });
+  });
+
+  el.querySelectorAll("[data-copy-tpl]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      navigator.clipboard.writeText(botTemplate(btn.dataset.copyTpl)).then(() => {
         btn.textContent = "Copied!";
         setTimeout(() => { btn.textContent = "Copy"; }, 2000);
       });
@@ -1349,11 +1365,16 @@ function wireBotForm() {
       const el = document.querySelector(sel); if (el) el.value = "";
     });
     await refreshBots();
-    loadBotTemplate(name);
-    const preview = document.querySelector("#botTemplatePreview");
-    if (preview) preview.style.display = "block";
+    // Close form and reset template preview
     const form = document.querySelector("#newBotForm");
-    if (form) form.style.display = "block";
+    if (form) form.style.display = "none";
+    const preview = document.querySelector("#botTemplatePreview");
+    if (preview) preview.style.display = "none";
+    ["#botName","#botSymbol","#botSize","#botLeverage","#botTp","#botSl","#botCycles"].forEach(sel => {
+      const el = document.querySelector(sel); if (el) el.value = "";
+    });
+    const hedge = document.querySelector("#botHedge");
+    if (hedge) hedge.checked = false;
   });
 }
 
