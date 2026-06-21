@@ -1328,6 +1328,7 @@ function wireBotForm() {
     const form = document.querySelector("#newBotForm");
     if (form) form.style.display = "none";
     await refreshBots();
+    loadBotTemplate(name);
   });
 }
 
