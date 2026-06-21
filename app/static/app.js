@@ -1220,17 +1220,20 @@ async function refreshBots() {
         </button>
       </td>
       <td>
+        <button class="copy-btn" data-copy-template="${escapeAttr(b.name)}" style="font-size:11px;padding:4px 10px">Copy</button>
+      </td>
+      <td>
         <button class="mini-switch" data-delete-bot="${b.id}" style="background:var(--red-dim);color:var(--red)">Delete</button>
       </td>
     </tr>`;
   }).join("");
 
-  el.querySelectorAll("tr[data-bot-name]").forEach(row => {
-    row.addEventListener("click", e => {
-      if (e.target.closest("input, button")) return;
-      el.querySelectorAll("tr").forEach(r => r.classList.remove("selected"));
-      row.classList.add("selected");
-      loadBotTemplate(row.dataset.botName);
+  el.querySelectorAll("[data-copy-template]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      navigator.clipboard.writeText(botTemplate(btn.dataset.copyTemplate)).then(() => {
+        btn.textContent = "Copied!";
+        setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+      });
     });
   });
 
@@ -1298,6 +1301,19 @@ function wireBotForm() {
     if (form) form.style.display = form.style.display === "none" ? "block" : "none";
   });
 
+  document.querySelector("#generateMsgBtn")?.addEventListener("click", () => {
+    const name = (document.querySelector("#botName")?.value || "").trim();
+    const errEl = document.querySelector("#botError");
+    if (!name) {
+      if (errEl) { errEl.textContent = "Enter a strategy name first."; errEl.style.display = "block"; }
+      return;
+    }
+    if (errEl) errEl.style.display = "none";
+    loadBotTemplate(name);
+    const preview = document.querySelector("#botTemplatePreview");
+    if (preview) preview.style.display = "block";
+  });
+
   document.querySelector("#createBotBtn")?.addEventListener("click", async () => {
     const name     = (document.querySelector("#botName")?.value || "").trim();
     const symbol   = (document.querySelector("#botSymbol")?.value || "").trim().toUpperCase();
@@ -1336,6 +1352,8 @@ function wireBotForm() {
     if (form) form.style.display = "none";
     await refreshBots();
     loadBotTemplate(name);
+    const preview = document.querySelector("#botTemplatePreview");
+    if (preview) { preview.style.display = "block"; form.style.display = "block"; }
   });
 }
 
@@ -1352,15 +1370,14 @@ function wireBotForm() {
     });
   });
 
-  const tplEl  = document.querySelector("#botTemplateDisplay");
-  const tplBtn = document.querySelector("#copyBotTemplate");
   getJson("/api/config").then(cfg => {
     if (cfg.webhook_secret) _webhookSecret = cfg.webhook_secret;
-    if (tplEl && !tplEl.textContent) tplEl.textContent = botTemplate("YourStrategy");
-  }).catch(() => {
-    if (tplEl && !tplEl.textContent) tplEl.textContent = botTemplate("YourStrategy");
-  });
-  if (tplBtn && tplEl) tplBtn.addEventListener("click", () => {
+  }).catch(() => {});
+
+  const tplBtn = document.querySelector("#copyBotTemplate");
+  if (tplBtn) tplBtn.addEventListener("click", () => {
+    const tplEl = document.querySelector("#botTemplateDisplay");
+    if (!tplEl) return;
     navigator.clipboard.writeText(tplEl.textContent).then(() => {
       tplBtn.textContent = "Copied!";
       setTimeout(() => { tplBtn.textContent = "Copy"; }, 2000);

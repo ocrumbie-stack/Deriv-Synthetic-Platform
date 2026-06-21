@@ -238,7 +238,11 @@
         <div class="page" id="page-trading-bots">
           <div class="page-header">
             <h1 class="page-title">Signal Bots</h1>
-            <button id="newBotToggle" class="copy-btn">+ New Bot</button>
+            <div style="display:flex;align-items:center;gap:8px">
+              <code id="botWebhookUrl" style="display:none"></code>
+              <button id="copyBotWebhook" class="copy-btn" style="font-size:11px">Copy Webhook URL</button>
+              <button id="newBotToggle" class="copy-btn">+ New Bot</button>
+            </div>
           </div>
           <div class="page-body">
 
@@ -279,49 +283,28 @@
                   <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:var(--muted)">
                     <input id="botHedge" type="checkbox" /> Hedge
                   </label>
-                  <button id="createBotBtn" class="copy-btn" style="height:34px">Create</button>
+                  <div style="display:flex;gap:6px">
+                    <button id="generateMsgBtn" class="nav-link-btn" style="height:34px;white-space:nowrap">TradingView Alert</button>
+                    <button id="createBotBtn" class="copy-btn" style="height:34px">Create</button>
+                  </div>
+                </div>
+              </div>
+              <div id="botTemplatePreview" style="display:none;margin-top:16px;border-top:1px solid var(--border);padding-top:16px">
+                <span class="webhook-label" style="display:block;margin-bottom:8px">Paste into TradingView alert → Message field</span>
+                <div class="url-row">
+                  <code id="botTemplateDisplay" class="url-display dim" style="font-size:11px;white-space:pre;overflow-x:auto"></code>
+                  <button id="copyBotTemplate" class="copy-btn" style="align-self:stretch">Copy</button>
                 </div>
               </div>
               <div id="botError" style="display:none;margin-top:10px;font-size:12px;color:var(--red)"></div>
             </div>
-
-            <details class="setup-guide">
-              <summary>
-                <div style="display:flex;align-items:center;gap:9px">
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                    <circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.3"/>
-                    <path d="M6 5v4M6 3.5v.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-                  </svg>
-                  TradingView Setup
-                </div>
-                <svg class="setup-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none">
-                  <path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-              </summary>
-              <div>
-                <div style="padding:16px 20px;border-bottom:1px solid var(--border)">
-                  <span class="webhook-label" style="display:block;margin-bottom:10px">Step 1 — Paste into TradingView alert → Notifications → Webhook URL</span>
-                  <div class="url-row">
-                    <code id="botWebhookUrl" class="url-display"></code>
-                    <button id="copyBotWebhook" class="copy-btn">Copy</button>
-                  </div>
-                </div>
-                <div style="padding:16px 20px">
-                  <span class="webhook-label" style="display:block;margin-bottom:10px">Step 2 — Paste into TradingView alert → Message · Click a bot row to load its name</span>
-                  <div class="url-row">
-                    <code id="botTemplateDisplay" class="url-display dim" style="font-size:11px;white-space:pre;overflow-x:auto"></code>
-                    <button id="copyBotTemplate" class="copy-btn" style="align-self:stretch">Copy</button>
-                  </div>
-                </div>
-              </div>
-            </details>
 
             <div class="table-wrap">
               <table>
                 <thead><tr>
                   <th>Bot</th><th>Symbol</th><th>Size · Lev</th>
                   <th>TP / SL</th><th>Cycles</th><th>Session P&amp;L</th>
-                  <th>Hedge</th><th>Status</th><th></th>
+                  <th>Hedge</th><th>Status</th><th>Alert</th><th></th>
                 </tr></thead>
                 <tbody id="signalBots"></tbody>
               </table>
