@@ -51,7 +51,13 @@ def config() -> dict[str, str]:
 
 @app.post("/webhook")
 async def receive_webhook(payload: WebhookSignal, db: Session = Depends(get_db)) -> dict:
-    payload.symbol = payload.symbol.upper()
+    # TradingView appends suffixes like .P or .PERP for perpetuals — Bitget expects plain symbol
+    symbol = payload.symbol.upper()
+    for suffix in (".P", ".PERP", ".USD", "-PERP", "-USD"):
+        if symbol.endswith(suffix):
+            symbol = symbol[: -len(suffix)]
+            break
+    payload.symbol = symbol
     result = await process_webhook_signal(db, payload)
     return {
         "signal_id": result.signal.id,
