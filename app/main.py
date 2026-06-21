@@ -44,6 +44,11 @@ def health() -> dict[str, str]:
     return {"status": "ok", "execution_mode": settings.execution_mode}
 
 
+@app.get("/api/config")
+def config() -> dict[str, str]:
+    return {"webhook_secret": settings.webhook_secret}
+
+
 @app.post("/webhook")
 async def receive_webhook(payload: WebhookSignal, db: Session = Depends(get_db)) -> dict:
     payload.symbol = payload.symbol.upper()

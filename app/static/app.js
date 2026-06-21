@@ -1146,7 +1146,7 @@ window.addEventListener("resize", renderAll);
 
 function botTemplate(name) {
   return JSON.stringify({
-    secret: "YOUR_SECRET",
+    secret: _webhookSecret,
     strategy: name,
     symbol: "{{ticker}}",
     action: "{{strategy.order.action}}",
@@ -1273,10 +1273,17 @@ async function refreshBots() {
   if (bots.length) loadBotTemplate(bots[0].name);
 }
 
+let _webhookSecret = "YOUR_SECRET";
+
 let _botFormWired = false;
 function wireBotForm() {
   if (_botFormWired) return;
   _botFormWired = true;
+
+  // Load real webhook secret for template
+  getJson("/api/config").then(cfg => {
+    if (cfg.webhook_secret) _webhookSecret = cfg.webhook_secret;
+  }).catch(() => {});
 
   // Populate symbol autosuggest
   getJson("/api/symbols").then(symbols => {
@@ -1347,7 +1354,12 @@ function wireBotForm() {
 
   const tplEl  = document.querySelector("#botTemplateDisplay");
   const tplBtn = document.querySelector("#copyBotTemplate");
-  if (tplEl && !tplEl.textContent) tplEl.textContent = botTemplate("YourStrategy");
+  getJson("/api/config").then(cfg => {
+    if (cfg.webhook_secret) _webhookSecret = cfg.webhook_secret;
+    if (tplEl && !tplEl.textContent) tplEl.textContent = botTemplate("YourStrategy");
+  }).catch(() => {
+    if (tplEl && !tplEl.textContent) tplEl.textContent = botTemplate("YourStrategy");
+  });
   if (tplBtn && tplEl) tplBtn.addEventListener("click", () => {
     navigator.clipboard.writeText(tplEl.textContent).then(() => {
       tplBtn.textContent = "Copied!";
