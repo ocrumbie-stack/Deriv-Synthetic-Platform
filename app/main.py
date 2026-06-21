@@ -67,6 +67,19 @@ async def receive_webhook(payload: WebhookSignal, db: Session = Depends(get_db))
     }
 
 
+@app.get("/api/unrealized-pnl")
+async def unrealized_pnl() -> dict:
+    positions = await BitgetClient().get_positions()
+    result: dict[str, float] = {}
+    for p in positions:
+        symbol   = p.get("symbol", "")
+        hold     = p.get("holdSide", "")
+        upl      = float(p.get("unrealizedPL") or p.get("upl") or 0)
+        key      = f"{symbol}_{hold}" if hold else symbol
+        result[key] = round(upl, 8)
+    return result
+
+
 @app.get("/api/symbols")
 async def list_symbols() -> list[str]:
     return await BitgetClient().get_contracts()

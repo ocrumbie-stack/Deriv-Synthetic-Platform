@@ -60,6 +60,14 @@ class BitgetClient:
         accounts = data.get("data", [])
         return next((a for a in accounts if a.get("marginCoin") == "USDT"), None)
 
+    async def get_positions(self) -> list[dict[str, Any]]:
+        if settings.execution_mode.lower() != "live":
+            return []
+        data = await self._get("/api/v2/mix/position/all-position", "productType=usdt-futures&marginCoin=USDT")
+        if not data:
+            return []
+        return data.get("data", [])
+
     async def set_leverage(self, symbol: str, leverage: int, hedge_mode: bool = False) -> None:
         holds = ["long", "short"] if hedge_mode else [None]
         for hold_side in holds:

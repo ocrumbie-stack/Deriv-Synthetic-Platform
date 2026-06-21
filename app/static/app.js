@@ -481,10 +481,21 @@ function renderPositions(rows) {
       <td>${t.strategy_name}</td><td>${t.symbol}</td><td>${t.direction}</td>
       <td>${number.format(t.entry_price)}</td><td>${number.format(t.size)}</td>
       <td>${number.format(t.leverage)}x</td>
-      <td class="neutral">—</td>
+      <td class="neutral" data-upl="${t.symbol}_${t.direction}">—</td>
       <td>${statusBadge(t.status)}</td>
       <td>${fmtDate(t.opened_at)}</td>
     </tr>`).join("");
+  // Fetch live unrealized P&L from Bitget
+  getJson("/api/unrealized-pnl").then(upl => {
+    el.querySelectorAll("[data-upl]").forEach(cell => {
+      const key = cell.dataset.upl;
+      const val = upl[key] ?? upl[key.split("_")[0]];
+      if (val !== undefined) {
+        cell.textContent = (val >= 0 ? "+" : "") + currency.format(val);
+        cell.className   = pnlClass(val);
+      }
+    });
+  }).catch(() => {});
 }
 
 function renderHistory(rows) {
@@ -1161,7 +1172,10 @@ function loadBotTemplate(name) {
 }
 
 async function refreshBots() {
-  const bots = await getJson("/api/signal-bots").catch(() => []);
+  const [bots, uplData] = await Promise.all([
+    getJson("/api/signal-bots").catch(() => []),
+    getJson("/api/unrealized-pnl").catch(() => ({})),
+  ]);
   const el = document.querySelector("#signalBots");
   if (!el) return;
 
@@ -1171,9 +1185,13 @@ async function refreshBots() {
   }
 
   el.innerHTML = bots.map(b => {
-    const pnlCls   = b.session_pnl > 0 ? "positive" : b.session_pnl < 0 ? "negative" : "neutral";
-    const pnlPct   = b.size > 0 ? ((b.session_pnl / b.size) * 100).toFixed(1) : "0.0";
-    const cycPct   = b.max_cycles ? Math.min(b.cycles_completed / b.max_cycles * 100, 100).toFixed(0) : 0;
+    const uplKey = `${b.symbol}_long`;
+    const uplKeyS = `${b.symbol}_short`;
+    const upl    = uplData[uplKey] ?? uplData[uplKeyS] ?? uplData[b.symbol] ?? 0;
+    const total  = b.session_pnl + upl;
+    const pnlCls = total > 0 ? "positive" : total < 0 ? "negative" : "neutral";
+    const pnlPct = b.size > 0 ? ((total / b.size) * 100).toFixed(1) : "0.0";
+    const cycPct = b.max_cycles ? Math.min(b.cycles_completed / b.max_cycles * 100, 100).toFixed(0) : 0;
     const tpSl     = [b.tp_pct ? `+${b.tp_pct}%` : null, b.sl_pct ? `-${b.sl_pct}%` : null].filter(Boolean).join(" / ") || "—";
     return `
     <tr class="clickable" data-bot-name="${escapeAttr(b.name)}">
@@ -1215,8 +1233,8 @@ async function refreshBots() {
         ${b.max_cycles ? `<div style="height:3px;background:var(--border);border-radius:999px"><div style="height:100%;width:${cycPct}%;background:var(--blue);border-radius:999px;transition:width 300ms"></div></div>` : ""}
       </td>
       <td>
-        <div class="${pnlCls}" style="font-family:monospace;font-weight:700;font-size:13px">${b.session_pnl >= 0 ? "+" : ""}${currency.format(b.session_pnl)}</div>
-        <div style="font-size:10px;color:var(--muted)">${b.session_pnl >= 0 ? "+" : ""}${pnlPct}%</div>
+        <div class="${pnlCls}" style="font-family:monospace;font-weight:700;font-size:13px">${total >= 0 ? "+" : ""}${currency.format(total)}</div>
+        <div style="font-size:10px;color:var(--muted)">${pnlPct}%${upl !== 0 ? ` · <span style="font-style:italic">${upl >= 0 ? "+" : ""}${currency.format(upl)} unrlzd</span>` : ""}</div>
       </td>
       <td>
         <button class="mini-switch ${b.hedge_mode ? "on" : ""}" data-bot-id="${b.id}" data-hedge="${b.hedge_mode}">
