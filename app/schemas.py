@@ -37,7 +37,7 @@ class WebhookSignal(BaseModel):
 
 class SignalBotCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
-    symbol: str = Field(..., min_length=1, max_length=40)
+    symbol: str | None = Field(default=None, max_length=200)
     size: float = Field(default=0.01, gt=0)
     leverage: float = Field(default=1.0, ge=1)
     hedge_mode: bool = False
@@ -48,7 +48,7 @@ class SignalBotCreate(BaseModel):
 
 class SignalBotUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
-    symbol: str | None = Field(default=None, min_length=1, max_length=40)
+    symbol: str | None = Field(default=None, max_length=200)
     size: float | None = Field(default=None, gt=0)
     leverage: float | None = Field(default=None, ge=1)
     enabled: bool | None = None
@@ -61,7 +61,7 @@ class SignalBotUpdate(BaseModel):
 class SignalBotOut(BaseModel):
     id: int
     name: str
-    symbol: str
+    symbol: str | None
     size: float
     leverage: float
     enabled: bool

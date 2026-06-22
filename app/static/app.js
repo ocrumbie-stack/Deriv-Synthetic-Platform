@@ -1188,9 +1188,16 @@ async function refreshBots() {
   const tdStyle = "padding:12px 16px;border-bottom:1px solid var(--border)";
 
   el.innerHTML = bots.map(b => {
-    const uplKey = `${b.symbol}_long`;
-    const uplKeyS = `${b.symbol}_short`;
-    const upl    = uplData[uplKey] ?? uplData[uplKeyS] ?? uplData[b.symbol] ?? 0;
+    // Aggregate unrealized P&L — per symbol for single-pair, across all positions for multi-pair
+    const upl = (() => {
+      if (b.symbol) {
+        const syms = b.symbol.split(",").map(s => s.trim().toUpperCase());
+        return syms.reduce((sum, sym) => sum + (uplData[`${sym}_long`] ?? uplData[`${sym}_short`] ?? uplData[sym] ?? 0), 0);
+      }
+      return (latestState.positions || [])
+        .filter(p => p.strategy_name === b.name)
+        .reduce((sum, p) => sum + (uplData[`${p.symbol}_${p.direction}`] ?? uplData[p.symbol] ?? 0), 0);
+    })();
     const total  = b.session_pnl + upl;
     const pnlCls = total > 0 ? "positive" : total < 0 ? "negative" : "neutral";
     const pnlPct = b.size > 0 ? ((total / b.size) * 100).toFixed(1) : "0.0";
@@ -1254,7 +1261,11 @@ async function refreshBots() {
                 </div>
               </div>
             </td>
-            <td style="${tdStyle};font-family:monospace">${b.symbol || "Any pair"}</td>
+            <td style="${tdStyle}">
+              ${b.symbol
+                ? b.symbol.split(",").map(s => `<span class="badge ok" style="margin:1px;font-size:10px">${s.trim()}</span>`).join("")
+                : `<span style="color:var(--muted);font-size:12px">Any pair</span>`}
+            </td>
             <td style="${tdStyle}">
               <div style="display:flex;align-items:center;gap:4px">
                 <input class="inline-input" type="number" step="1" min="1" value="${b.size}" data-bot-id="${b.id}" data-field="size" style="width:64px" />
@@ -1409,8 +1420,8 @@ function wireBotForm() {
     const leverage = parseFloat(document.querySelector("#botLeverage")?.value || "1");
     const errEl    = document.querySelector("#botError");
 
-    if (!name || !symbol || size <= 0) {
-      if (errEl) { errEl.textContent = "Strategy name, symbol and size are required."; errEl.style.display = "block"; }
+    if (!name || size <= 0) {
+      if (errEl) { errEl.textContent = "Strategy name and size are required."; errEl.style.display = "block"; }
       return;
     }
     if (errEl) errEl.style.display = "none";
@@ -1419,7 +1430,8 @@ function wireBotForm() {
     const tp_raw      = parseFloat(document.querySelector("#botTp")?.value || "");
     const sl_raw      = parseFloat(document.querySelector("#botSl")?.value || "");
     const cycles_raw  = parseInt(document.querySelector("#botCycles")?.value || "");
-    const body = { name, symbol, size, leverage, hedge_mode };
+    const body = { name, size, leverage, hedge_mode };
+    if (symbol) body.symbol = symbol.toUpperCase();
     if (!isNaN(tp_raw) && tp_raw > 0)    body.tp_pct     = tp_raw;
     if (!isNaN(sl_raw) && sl_raw > 0)    body.sl_pct     = sl_raw;
     if (!isNaN(cycles_raw) && cycles_raw > 0) body.max_cycles = cycles_raw;

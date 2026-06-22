@@ -117,6 +117,10 @@ def validate_signal(db: Session, payload: WebhookSignal, strategy: Strategy, bot
         return "Emergency stop is active."
     if bot and not bot.enabled:
         return "Signal bot is disabled."
+    if bot and bot.symbol:
+        allowed = [s.strip().upper() for s in bot.symbol.split(",")]
+        if payload.symbol.upper() not in allowed:
+            return f"Symbol {payload.symbol} is not in this bot's allowed list ({bot.symbol})."
     if not strategy.enabled:
         return "Strategy is disabled."
     if risk.duplicate_blocking and payload.signal_id:

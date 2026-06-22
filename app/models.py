@@ -107,7 +107,7 @@ class SignalBot(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
-    symbol: Mapped[str] = mapped_column(String(40))
+    symbol: Mapped[str | None] = mapped_column(String(200), nullable=True)
     size: Mapped[float] = mapped_column(Float, default=0.01)
     leverage: Mapped[float] = mapped_column(Float, default=1.0)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
