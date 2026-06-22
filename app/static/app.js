@@ -1184,6 +1184,9 @@ async function refreshBots() {
     return;
   }
 
+  const thStyle = "padding:10px 16px;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:left;border-bottom:1px solid var(--border);white-space:nowrap;background:var(--panel)";
+  const tdStyle = "padding:12px 16px;border-bottom:1px solid var(--border)";
+
   el.innerHTML = bots.map(b => {
     const uplKey = `${b.symbol}_long`;
     const uplKeyS = `${b.symbol}_short`;
@@ -1192,49 +1195,26 @@ async function refreshBots() {
     const pnlCls = total > 0 ? "positive" : total < 0 ? "negative" : "neutral";
     const pnlPct = b.size > 0 ? ((total / b.size) * 100).toFixed(1) : "0.0";
     const cycPct = b.max_cycles ? Math.min(b.cycles_completed / b.max_cycles * 100, 100).toFixed(0) : 0;
-    const tpSl     = [b.tp_pct ? `+${b.tp_pct}%` : null, b.sl_pct ? `-${b.sl_pct}%` : null].filter(Boolean).join(" / ") || "—";
+    const cycBar = b.max_cycles ? `<div style="height:3px;background:var(--border);border-radius:999px;margin-top:4px"><div style="height:100%;width:${cycPct}%;background:var(--blue);border-radius:999px"></div></div>` : "";
+    const tpsl   = `${b.tp_pct ? "+" + b.tp_pct + "%" : "—"} / ${b.sl_pct ? "-" + b.sl_pct + "%" : "—"}`;
+
     return `
-    <tr class="clickable" data-bot-name="${escapeAttr(b.name)}">
-      <td style="min-width:200px">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+    <tr data-expand="${b.id}" style="cursor:pointer">
+      <td>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span id="chev-${b.id}" style="font-size:9px;color:var(--muted);transition:transform 150ms;display:inline-block">▶</span>
           <span class="bot-dot ${b.enabled ? "active" : "paused"}"></span>
           <span style="font-weight:600">${b.name}</span>
         </div>
-        <button class="nav-link-btn" data-toggle-tpl="${b.id}" style="font-size:10px;padding:2px 8px">
-          TradingView Alert Message ▾
-        </button>
-        <div id="bot-tpl-${b.id}" style="display:none;margin-top:8px">
-          <div class="url-row">
-            <code class="url-display dim" style="font-size:10px;white-space:pre;overflow-x:auto;line-height:1.6">${escapeAttr(botTemplate(b.name))}</code>
-            <button class="copy-btn" data-copy-tpl="${escapeAttr(b.name)}" style="align-self:stretch;font-size:11px">Copy</button>
-          </div>
-        </div>
       </td>
-      <td style="font-family:monospace">${b.symbol}</td>
+      <td style="font-family:monospace;font-size:12px">${tpsl}</td>
       <td>
-        <div style="display:flex;align-items:center;gap:4px">
-          <input class="inline-input" type="number" step="1" min="1" value="${b.size}" data-bot-id="${b.id}" data-field="size" style="width:64px" />
-          <span style="color:var(--muted);font-size:11px">×</span>
-          <input class="inline-input" type="number" step="1" min="1" value="${b.leverage}" data-bot-id="${b.id}" data-field="leverage" style="width:46px" />
-        </div>
-      </td>
-      <td>
-        <div style="display:flex;align-items:center;gap:4px">
-          <input class="inline-input" type="number" step="0.1" min="0" value="${b.tp_pct ?? ""}" placeholder="TP" data-bot-id="${b.id}" data-field="tp_pct" style="width:52px" />
-          <span style="color:var(--muted);font-size:10px">/</span>
-          <input class="inline-input" type="number" step="0.1" min="0" value="${b.sl_pct ?? ""}" placeholder="SL" data-bot-id="${b.id}" data-field="sl_pct" style="width:52px" />
-        </div>
-      </td>
-      <td style="min-width:100px">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-          <input class="inline-input" type="number" step="1" min="1" value="${b.max_cycles ?? ""}" placeholder="∞" data-bot-id="${b.id}" data-field="max_cycles" style="width:52px" />
-          <span style="font-size:11px;color:var(--muted)">${b.cycles_completed}${b.max_cycles ? "/" + b.max_cycles : ""}</span>
-        </div>
-        ${b.max_cycles ? `<div style="height:3px;background:var(--border);border-radius:999px"><div style="height:100%;width:${cycPct}%;background:var(--blue);border-radius:999px;transition:width 300ms"></div></div>` : ""}
-      </td>
-      <td>
-        <div class="${pnlCls}" style="font-family:monospace;font-weight:700;font-size:13px">${total >= 0 ? "+" : ""}${currency.format(total)}</div>
+        <div class="${pnlCls}" style="font-family:monospace;font-weight:700">${total >= 0 ? "+" : ""}${currency.format(total)}</div>
         <div style="font-size:10px;color:var(--muted)">${pnlPct}%${upl !== 0 ? ` · <span style="font-style:italic">${upl >= 0 ? "+" : ""}${currency.format(upl)} unrlzd</span>` : ""}</div>
+      </td>
+      <td>
+        <div style="font-size:12px">${b.cycles_completed}${b.max_cycles ? "/" + b.max_cycles : ""}</div>
+        ${cycBar}
       </td>
       <td>
         <button class="mini-switch ${b.hedge_mode ? "on" : ""}" data-bot-id="${b.id}" data-hedge="${b.hedge_mode}">
@@ -1249,8 +1229,86 @@ async function refreshBots() {
       <td>
         <button class="mini-switch" data-delete-bot="${b.id}" style="background:var(--red-dim);color:var(--red)">Delete</button>
       </td>
+    </tr>
+    <tr id="detail-${b.id}" style="display:none">
+      <td colspan="7" style="padding:0;border-bottom:2px solid var(--border)">
+        <table style="width:100%;border-collapse:collapse;background:var(--panel-2)">
+          <thead><tr>
+            <th style="${thStyle}">Bot</th>
+            <th style="${thStyle}">Symbol</th>
+            <th style="${thStyle}">Size · Lev</th>
+            <th style="${thStyle}">TP / SL</th>
+            <th style="${thStyle}">Cycles</th>
+            <th style="${thStyle}">Session P&amp;L</th>
+            <th style="${thStyle}">Hedge</th>
+            <th style="${thStyle}">Status</th>
+          </tr></thead>
+          <tbody><tr>
+            <td style="${tdStyle}">
+              <div style="font-weight:600;margin-bottom:6px">${b.name}</div>
+              <button class="nav-link-btn" data-toggle-tpl="${b.id}" style="font-size:10px;padding:2px 8px">TradingView Alert ▾</button>
+              <div id="bot-tpl-${b.id}" style="display:none;margin-top:8px">
+                <div class="url-row">
+                  <code class="url-display dim" style="font-size:10px;white-space:pre;overflow-x:auto;line-height:1.6">${escapeAttr(botTemplate(b.name))}</code>
+                  <button class="copy-btn" data-copy-tpl="${escapeAttr(b.name)}" style="align-self:stretch;font-size:11px">Copy</button>
+                </div>
+              </div>
+            </td>
+            <td style="${tdStyle};font-family:monospace">${b.symbol || "Any pair"}</td>
+            <td style="${tdStyle}">
+              <div style="display:flex;align-items:center;gap:4px">
+                <input class="inline-input" type="number" step="1" min="1" value="${b.size}" data-bot-id="${b.id}" data-field="size" style="width:64px" />
+                <span style="color:var(--muted);font-size:11px">×</span>
+                <input class="inline-input" type="number" step="1" min="1" value="${b.leverage}" data-bot-id="${b.id}" data-field="leverage" style="width:46px" />
+              </div>
+            </td>
+            <td style="${tdStyle}">
+              <div style="display:flex;align-items:center;gap:4px">
+                <input class="inline-input" type="number" step="0.1" min="0" value="${b.tp_pct ?? ""}" placeholder="TP" data-bot-id="${b.id}" data-field="tp_pct" style="width:52px" />
+                <span style="color:var(--muted);font-size:10px">/</span>
+                <input class="inline-input" type="number" step="0.1" min="0" value="${b.sl_pct ?? ""}" placeholder="SL" data-bot-id="${b.id}" data-field="sl_pct" style="width:52px" />
+              </div>
+            </td>
+            <td style="${tdStyle}">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+                <input class="inline-input" type="number" step="1" min="1" value="${b.max_cycles ?? ""}" placeholder="∞" data-bot-id="${b.id}" data-field="max_cycles" style="width:52px" />
+                <span style="font-size:11px;color:var(--muted)">${b.cycles_completed}${b.max_cycles ? "/" + b.max_cycles : ""}</span>
+              </div>
+              ${cycBar}
+            </td>
+            <td style="${tdStyle}">
+              <div class="${pnlCls}" style="font-family:monospace;font-weight:700">${total >= 0 ? "+" : ""}${currency.format(total)}</div>
+              <div style="font-size:10px;color:var(--muted)">${pnlPct}%</div>
+            </td>
+            <td style="${tdStyle}">
+              <button class="mini-switch ${b.hedge_mode ? "on" : ""}" data-bot-id="${b.id}" data-hedge="${b.hedge_mode}">
+                ${b.hedge_mode ? "On" : "Off"}
+              </button>
+            </td>
+            <td style="${tdStyle}">
+              <button class="mini-switch ${b.enabled ? "on" : ""}" data-bot-id="${b.id}" data-enabled="${b.enabled}">
+                ${b.enabled ? "Active" : "Paused"}
+              </button>
+            </td>
+          </tr></tbody>
+        </table>
+      </td>
     </tr>`;
   }).join("");
+
+  // Expand / collapse on summary row click
+  el.querySelectorAll("[data-expand]").forEach(row => {
+    row.addEventListener("click", e => {
+      if (e.target.closest("button, input")) return;
+      const id     = row.dataset.expand;
+      const detail = document.querySelector(`#detail-${id}`);
+      const chev   = document.querySelector(`#chev-${id}`);
+      if (!detail) return;
+      const open = detail.style.display !== "none";
+      detail.style.display = open ? "none" : "table-row";
+      if (chev) chev.style.transform = open ? "" : "rotate(90deg)";
+    });
+  });
 
   el.querySelectorAll("[data-toggle-tpl]").forEach(btn => {
     btn.addEventListener("click", () => {
@@ -1258,7 +1316,7 @@ async function refreshBots() {
       if (!tpl) return;
       const open = tpl.style.display !== "none";
       tpl.style.display = open ? "none" : "block";
-      btn.textContent = open ? "TradingView Alert Message ▾" : "TradingView Alert Message ▲";
+      btn.textContent = open ? "TradingView Alert ▾" : "TradingView Alert ▲";
     });
   });
 
@@ -1275,8 +1333,7 @@ async function refreshBots() {
     inp.addEventListener("change", async () => {
       const nullableFields = ["tp_pct", "sl_pct", "max_cycles"];
       const val = inp.value === "" && nullableFields.includes(inp.dataset.field)
-        ? null
-        : Number(inp.value);
+        ? null : Number(inp.value);
       await patchJson(`/api/signal-bots/${inp.dataset.botId}`, { [inp.dataset.field]: val });
       await refreshBots();
     });
@@ -1300,14 +1357,11 @@ async function refreshBots() {
 
   el.querySelectorAll("[data-delete-bot]").forEach(btn => {
     btn.addEventListener("click", async () => {
-      if (!confirm(`Delete bot "${btn.closest("tr").querySelector("td").textContent}"?`)) return;
+      if (!confirm(`Delete this bot?`)) return;
       await fetch(`/api/signal-bots/${btn.dataset.deleteBot}`, { method: "DELETE" });
       await refreshBots();
     });
   });
-
-  // Load first bot's template by default
-  if (bots.length) loadBotTemplate(bots[0].name);
 }
 
 let _webhookSecret = "YOUR_SECRET";
