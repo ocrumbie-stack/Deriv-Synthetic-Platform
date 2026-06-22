@@ -1242,7 +1242,6 @@ async function refreshBots() {
         <table style="width:100%;border-collapse:collapse;background:var(--panel-2)">
           <thead><tr>
             <th style="${thStyle}">Bot</th>
-            <th style="${thStyle}">Symbol</th>
             <th style="${thStyle}">Size · Lev</th>
             <th style="${thStyle}">TP / SL</th>
             <th style="${thStyle}">Cycles</th>
@@ -1260,11 +1259,6 @@ async function refreshBots() {
                   <button class="copy-btn" data-copy-tpl="${escapeAttr(b.name)}" style="align-self:stretch;font-size:11px">Copy</button>
                 </div>
               </div>
-            </td>
-            <td style="${tdStyle}">
-              ${b.symbol
-                ? b.symbol.split(",").map(s => `<span class="badge ok" style="margin:1px;font-size:10px">${s.trim()}</span>`).join("")
-                : `<span style="color:var(--muted);font-size:12px">Any pair</span>`}
             </td>
             <td style="${tdStyle}">
               <div style="display:flex;align-items:center;gap:4px">
@@ -1387,13 +1381,6 @@ function wireBotForm() {
     if (cfg.webhook_secret) _webhookSecret = cfg.webhook_secret;
   }).catch(() => {});
 
-  // Populate symbol autosuggest
-  getJson("/api/symbols").then(symbols => {
-    const dl = document.querySelector("#symbolSuggestions");
-    if (dl && symbols.length) {
-      dl.innerHTML = symbols.map(s => `<option value="${s}">`).join("");
-    }
-  }).catch(() => {});
 
   document.querySelector("#newBotToggle")?.addEventListener("click", () => {
     const form = document.querySelector("#newBotForm");
@@ -1415,7 +1402,7 @@ function wireBotForm() {
 
   document.querySelector("#createBotBtn")?.addEventListener("click", async () => {
     const name     = (document.querySelector("#botName")?.value || "").trim();
-    const symbol   = (document.querySelector("#botSymbol")?.value || "").trim().toUpperCase();
+    const symbol   = "";
     const size     = parseFloat(document.querySelector("#botSize")?.value || "0");
     const leverage = parseFloat(document.querySelector("#botLeverage")?.value || "1");
     const errEl    = document.querySelector("#botError");

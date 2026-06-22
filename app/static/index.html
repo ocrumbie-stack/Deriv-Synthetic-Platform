@@ -248,16 +248,11 @@
 
             <div id="newBotForm" style="display:none" class="risk-panel">
               <p class="panel-title" style="margin-bottom:4px">New Signal Bot</p>
-              <p style="font-size:11px;color:var(--muted);margin-bottom:16px">Size and leverage are stored here — no need to include them in your TradingView alert. TP / SL / Cycles are optional circuit breakers.</p>
-              <datalist id="symbolSuggestions"></datalist>
-              <div style="display:grid;grid-template-columns:1.4fr 1.2fr 1fr 1fr 1fr 1fr 1fr auto;gap:12px;align-items:end">
+              <p style="font-size:11px;color:var(--muted);margin-bottom:16px">Size and leverage are stored here — no need to include them in your TradingView alert. Which pairs this bot trades is controlled by your TradingView alerts — set up one alert per symbol using the same strategy name. TP / SL / Cycles are optional circuit breakers.</p>
+              <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr 1fr 1fr auto;gap:12px;align-items:end">
                 <div>
                   <label class="bot-field-label">Strategy name</label>
                   <input id="botName" type="text" placeholder="MyStrategy" />
-                </div>
-                <div>
-                  <label class="bot-field-label">Symbols</label>
-                  <input id="botSymbol" type="text" placeholder="BTCUSDT,ETHUSDT (blank = any)" list="symbolSuggestions" autocomplete="off" />
                 </div>
                 <div>
                   <label class="bot-field-label">Size (USDT)</label>
