@@ -194,23 +194,16 @@ class BitgetClient:
         if settings.execution_mode.lower() != "live":
             return {"mode": "paper", "order_id": f"paper-close-{self._timestamp()}"}
 
-        close_side = "sell" if direction == "long" else "buy"
-        path = "/api/v2/mix/order/place-order"
-        body_data = {
+        # Use flash-close-position to close the full position without specifying size,
+        # which avoids minimum order quantity errors on low-liquidity or fractional pairs.
+        path = "/api/v2/mix/order/flash-close-position"
+        body_data: dict[str, Any] = {
             "symbol": symbol,
             "productType": "USDT-FUTURES",
-            "marginMode": "isolated",
             "marginCoin": "USDT",
-            "size": str(size),
-            "side": close_side,
-            "orderType": "market",
-            "force": "gtc",
         }
         if hedge_mode:
-            body_data["tradeSide"] = "close"
             body_data["holdSide"] = direction
-        else:
-            body_data["reduceOnly"] = "YES"
         body = json.dumps(body_data, separators=(",", ":"))
         timestamp = self._timestamp()
         headers = {
