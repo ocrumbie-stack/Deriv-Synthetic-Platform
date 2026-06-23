@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.bitget import BitgetClient, BitgetExecutionError
 from app.config import settings
-from app.models import ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, Trade
+from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, Trade
 from app.schemas import WebhookSignal
 
 
@@ -77,6 +77,33 @@ def get_signal_bot(db: Session, name: str) -> SignalBot | None:
     return db.scalar(select(SignalBot).where(SignalBot.name == name))
 
 
+def get_or_create_bot_pair(db: Session, bot_id: int, symbol: str) -> BotPair:
+    pair = db.scalar(select(BotPair).where(BotPair.bot_id == bot_id, BotPair.symbol == symbol))
+    if not pair:
+        pair = BotPair(bot_id=bot_id, symbol=symbol)
+        db.add(pair)
+        db.flush()
+    return pair
+
+
+def update_pair_session(db: Session, pair: BotPair, bot: SignalBot, trade_net: float) -> str | None:
+    pair.session_pnl = round((pair.session_pnl or 0.0) + trade_net, 8)
+    pair.cycles_completed = (pair.cycles_completed or 0) + 1
+    target_base = bot.size if bot.size > 0 else 1.0
+    net_pct = (pair.session_pnl / target_base) * 100
+    reason = None
+    if pair.tp_pct and net_pct >= pair.tp_pct:
+        reason = f"Pair TP reached ({net_pct:.1f}%)"
+    elif pair.sl_pct and net_pct <= -abs(pair.sl_pct):
+        reason = f"Pair SL reached ({net_pct:.1f}%)"
+    elif pair.max_cycles and pair.cycles_completed >= pair.max_cycles:
+        reason = f"Pair cycle limit reached ({pair.cycles_completed}/{pair.max_cycles})"
+    if reason:
+        pair.enabled = False
+    db.flush()
+    return reason
+
+
 def update_bot_session(db: Session, bot: SignalBot, trade_net: float) -> str | None:
     bot.session_pnl = round((bot.session_pnl or 0.0) + trade_net, 8)
     bot.cycles_completed = (bot.cycles_completed or 0) + 1
@@ -121,6 +148,10 @@ def validate_signal(db: Session, payload: WebhookSignal, strategy: Strategy, bot
         allowed = [s.strip().upper() for s in bot.symbol.split(",")]
         if payload.symbol.upper() not in allowed:
             return f"Symbol {payload.symbol} is not in this bot's allowed list ({bot.symbol})."
+    if bot and payload.action == SignalAction.entry:
+        pair = db.scalar(select(BotPair).where(BotPair.bot_id == bot.id, BotPair.symbol == payload.symbol))
+        if pair and not pair.enabled:
+            return f"{payload.symbol} is paused for this bot."
     if not strategy.enabled:
         return "Strategy is disabled."
     if risk.duplicate_blocking and payload.signal_id:
@@ -263,6 +294,8 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
             trade.closed_at = datetime.utcnow()
             signal.status = ExecutionStatus.closed
             if bot:
+                pair = get_or_create_bot_pair(db, bot.id, trade.symbol)
+                update_pair_session(db, pair, bot, net)
                 update_bot_session(db, bot, net)
 
     db.commit()

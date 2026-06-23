@@ -1171,6 +1171,68 @@ function loadBotTemplate(name) {
   if (el) el.textContent = botTemplate(name);
 }
 
+async function loadBotPairs(botId) {
+  const tbody = document.querySelector(`#pairs-${botId}`);
+  if (!tbody) return;
+  const pairs = await getJson(`/api/signal-bots/${botId}/pairs`).catch(() => []);
+  if (!pairs.length) return;
+
+  tbody.innerHTML = pairs.map(p => {
+    const pnlCls  = p.session_pnl > 0 ? "positive" : p.session_pnl < 0 ? "negative" : "neutral";
+    const cycPct  = p.max_cycles ? Math.min(p.cycles_completed / p.max_cycles * 100, 100).toFixed(0) : 0;
+    const cycBar  = p.max_cycles ? `<div style="height:3px;background:var(--border);border-radius:999px;margin-top:4px"><div style="height:100%;width:${cycPct}%;background:var(--blue);border-radius:999px"></div></div>` : "";
+    const tdS = "padding:10px 16px;border-bottom:1px solid var(--border)";
+    return `
+    <tr>
+      <td style="${tdS};font-family:monospace;font-weight:600">${p.symbol}</td>
+      <td style="${tdS}">
+        <div style="display:flex;align-items:center;gap:4px">
+          <input class="inline-input pair-input" type="number" step="0.1" min="0" value="${p.tp_pct ?? ""}" placeholder="TP"
+            data-bot-id="${botId}" data-symbol="${p.symbol}" data-field="tp_pct" style="width:52px" />
+          <span style="color:var(--muted);font-size:10px">/</span>
+          <input class="inline-input pair-input" type="number" step="0.1" min="0" value="${p.sl_pct ?? ""}" placeholder="SL"
+            data-bot-id="${botId}" data-symbol="${p.symbol}" data-field="sl_pct" style="width:52px" />
+        </div>
+      </td>
+      <td style="${tdS}">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+          <input class="inline-input pair-input" type="number" step="1" min="1" value="${p.max_cycles ?? ""}" placeholder="∞"
+            data-bot-id="${botId}" data-symbol="${p.symbol}" data-field="max_cycles" style="width:52px" />
+          <span style="font-size:11px;color:var(--muted)">${p.cycles_completed}${p.max_cycles ? "/" + p.max_cycles : ""}</span>
+        </div>
+        ${cycBar}
+      </td>
+      <td style="${tdS}">
+        <div class="${pnlCls}" style="font-family:monospace;font-weight:700">${p.session_pnl >= 0 ? "+" : ""}${currency.format(p.session_pnl)}</div>
+      </td>
+      <td style="${tdS}">
+        <button class="mini-switch ${p.enabled ? "on" : ""}" data-pair-bot="${botId}" data-pair-sym="${p.symbol}" data-pair-enabled="${p.enabled}">
+          ${p.enabled ? "Active" : "Paused"}
+        </button>
+      </td>
+    </tr>`;
+  }).join("");
+
+  // Wire pair inputs
+  tbody.querySelectorAll(".pair-input").forEach(inp => {
+    inp.addEventListener("change", async () => {
+      const nullables = ["tp_pct", "sl_pct", "max_cycles"];
+      const val = inp.value === "" && nullables.includes(inp.dataset.field) ? null : Number(inp.value);
+      await patchJson(`/api/signal-bots/${inp.dataset.botId}/pairs/${inp.dataset.symbol}`, { [inp.dataset.field]: val });
+      await loadBotPairs(inp.dataset.botId);
+    });
+  });
+
+  // Wire pair status toggles
+  tbody.querySelectorAll("[data-pair-bot]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const current = btn.dataset.pairEnabled === "true";
+      await patchJson(`/api/signal-bots/${btn.dataset.pairBot}/pairs/${btn.dataset.pairSym}`, { enabled: !current });
+      await loadBotPairs(btn.dataset.pairBot);
+    });
+  });
+}
+
 async function refreshBots() {
   const [bots, uplData] = await Promise.all([
     getJson("/api/signal-bots").catch(() => []),
@@ -1297,6 +1359,21 @@ async function refreshBots() {
             </td>
           </tr></tbody>
         </table>
+        <div style="padding:0 0 0 0;border-top:1px solid var(--border)">
+          <div style="padding:10px 16px 6px;font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)">Pairs</div>
+          <table style="width:100%;border-collapse:collapse;background:var(--bg)">
+            <thead><tr>
+              <th style="${thStyle};background:var(--bg)">Symbol</th>
+              <th style="${thStyle};background:var(--bg)">TP / SL</th>
+              <th style="${thStyle};background:var(--bg)">Cycles</th>
+              <th style="${thStyle};background:var(--bg)">Session P&amp;L</th>
+              <th style="${thStyle};background:var(--bg)">Status</th>
+            </tr></thead>
+            <tbody id="pairs-${b.id}">
+              <tr><td colspan="5" style="${tdStyle};color:var(--muted);font-size:12px">No pairs traded yet — pairs appear here automatically when signals arrive.</td></tr>
+            </tbody>
+          </table>
+        </div>
       </td>
     </tr>`;
   }).join("");
@@ -1312,6 +1389,7 @@ async function refreshBots() {
       const open = detail.style.display !== "none";
       detail.style.display = open ? "none" : "table-row";
       if (chev) chev.style.transform = open ? "" : "rotate(90deg)";
+      if (!open) loadBotPairs(id);
     });
   });
 

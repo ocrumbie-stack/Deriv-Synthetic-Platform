@@ -118,3 +118,22 @@ class SignalBot(Base):
     cycles_completed: Mapped[int] = mapped_column(Integer, default=0)
     session_pnl: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    pairs: Mapped[list["BotPair"]] = relationship(back_populates="bot", cascade="all, delete-orphan")
+
+
+class BotPair(Base):
+    __tablename__ = "bot_pairs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    bot_id: Mapped[int] = mapped_column(ForeignKey("signal_bots.id"), index=True)
+    symbol: Mapped[str] = mapped_column(String(40), index=True)
+    tp_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sl_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_cycles: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cycles_completed: Mapped[int] = mapped_column(Integer, default=0)
+    session_pnl: Mapped[float] = mapped_column(Float, default=0.0)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    bot: Mapped["SignalBot"] = relationship(back_populates="pairs")

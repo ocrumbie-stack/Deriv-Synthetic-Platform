@@ -58,6 +58,28 @@ class SignalBotUpdate(BaseModel):
     max_cycles: int | None = Field(default=None, gt=0)
 
 
+class BotPairUpdate(BaseModel):
+    tp_pct: float | None = Field(default=None, gt=0)
+    sl_pct: float | None = Field(default=None, gt=0)
+    max_cycles: int | None = Field(default=None, gt=0)
+    enabled: bool | None = None
+
+
+class BotPairOut(BaseModel):
+    id: int
+    bot_id: int
+    symbol: str
+    tp_pct: float | None
+    sl_pct: float | None
+    max_cycles: int | None
+    cycles_completed: int
+    session_pnl: float
+    enabled: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class SignalBotOut(BaseModel):
     id: int
     name: str

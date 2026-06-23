@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session
 from app.bitget import BitgetClient
 from app.config import settings
 from app.database import Base, SessionLocal, engine, get_db
-from app.models import ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalBot, Strategy, Trade
-from app.schemas import SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, TradeOut, WebhookSignal
+from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalBot, Strategy, Trade
+from app.schemas import BotPairOut, BotPairUpdate, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, TradeOut, WebhookSignal
 from app.services import account_exposure, daily_account_net, get_risk_settings, get_signal_bot, process_webhook_signal
 
 
@@ -88,6 +88,28 @@ async def unrealized_pnl() -> dict:
 @app.get("/api/symbols")
 async def list_symbols() -> list[str]:
     return await BitgetClient().get_contracts()
+
+
+@app.get("/api/signal-bots/{bot_id}/pairs", response_model=list[BotPairOut])
+def list_bot_pairs(bot_id: int, db: Session = Depends(get_db)) -> list[BotPair]:
+    if not db.get(SignalBot, bot_id):
+        raise HTTPException(status_code=404, detail="Bot not found.")
+    return list(db.scalars(select(BotPair).where(BotPair.bot_id == bot_id).order_by(BotPair.symbol)))
+
+
+@app.patch("/api/signal-bots/{bot_id}/pairs/{symbol}", response_model=BotPairOut)
+def update_bot_pair(bot_id: int, symbol: str, updates: BotPairUpdate, db: Session = Depends(get_db)) -> BotPair:
+    pair = db.scalar(select(BotPair).where(BotPair.bot_id == bot_id, BotPair.symbol == symbol.upper()))
+    if not pair:
+        raise HTTPException(status_code=404, detail="Pair not found.")
+    if updates.enabled is True and not pair.enabled:
+        pair.session_pnl = 0.0
+        pair.cycles_completed = 0
+    for field, value in updates.model_dump(exclude_unset=True).items():
+        setattr(pair, field, value)
+    db.commit()
+    db.refresh(pair)
+    return pair
 
 
 @app.get("/api/signal-bots", response_model=list[SignalBotOut])
