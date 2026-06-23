@@ -68,6 +68,43 @@ class BitgetClient:
             return []
         return data.get("data", [])
 
+    async def place_tpsl(
+        self,
+        symbol: str,
+        direction: str,
+        tp_price: float | None,
+        sl_price: float | None,
+        hedge_mode: bool = False,
+    ) -> None:
+        if settings.execution_mode.lower() != "live":
+            return
+        for plan_type, trigger_price in (("pos_profit", tp_price), ("pos_loss", sl_price)):
+            if not trigger_price:
+                continue
+            body_data: dict[str, Any] = {
+                "symbol": symbol,
+                "productType": "USDT-FUTURES",
+                "marginCoin": "USDT",
+                "planType": plan_type,
+                "triggerPrice": str(round(trigger_price, 8)),
+                "triggerType": "mark_price",
+            }
+            if hedge_mode:
+                body_data["holdSide"] = direction
+            body = json.dumps(body_data, separators=(",", ":"))
+            timestamp = self._timestamp()
+            path = "/api/v2/mix/order/place-tpsl"
+            headers = {
+                "ACCESS-KEY": settings.bitget_api_key,
+                "ACCESS-SIGN": self._signature(timestamp, "POST", path, body),
+                "ACCESS-TIMESTAMP": timestamp,
+                "ACCESS-PASSPHRASE": settings.bitget_api_passphrase,
+                "Content-Type": "application/json",
+                "locale": "en-US",
+            }
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.post(f"{self.base_url}{path}", headers=headers, content=body)
+
     async def set_leverage(self, symbol: str, leverage: int, hedge_mode: bool = False) -> None:
         holds = ["long", "short"] if hedge_mode else [None]
         for hold_side in holds:

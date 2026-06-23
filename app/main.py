@@ -11,7 +11,7 @@ from app.config import settings
 from app.database import Base, SessionLocal, engine, get_db
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalBot, Strategy, Trade
 from app.schemas import BotPairOut, BotPairUpdate, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, TradeOut, WebhookSignal
-from app.services import account_exposure, daily_account_net, get_risk_settings, get_signal_bot, process_webhook_signal
+from app.services import account_exposure, arm_pair_tpsl, daily_account_net, get_risk_settings, get_signal_bot, process_webhook_signal
 
 
 Base.metadata.create_all(bind=engine)
@@ -98,8 +98,12 @@ def list_bot_pairs(bot_id: int, db: Session = Depends(get_db)) -> list[BotPair]:
 
 
 @app.patch("/api/signal-bots/{bot_id}/pairs/{symbol}", response_model=BotPairOut)
-def update_bot_pair(bot_id: int, symbol: str, updates: BotPairUpdate, db: Session = Depends(get_db)) -> BotPair:
-    pair = db.scalar(select(BotPair).where(BotPair.bot_id == bot_id, BotPair.symbol == symbol.upper()))
+async def update_bot_pair(bot_id: int, symbol: str, updates: BotPairUpdate, db: Session = Depends(get_db)) -> BotPair:
+    bot = db.get(SignalBot, bot_id)
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found.")
+    sym = symbol.upper()
+    pair = db.scalar(select(BotPair).where(BotPair.bot_id == bot_id, BotPair.symbol == sym))
     if not pair:
         raise HTTPException(status_code=404, detail="Pair not found.")
     if updates.enabled is True and not pair.enabled:
@@ -109,6 +113,19 @@ def update_bot_pair(bot_id: int, symbol: str, updates: BotPairUpdate, db: Sessio
         setattr(pair, field, value)
     db.commit()
     db.refresh(pair)
+    # Arm TP/SL on Bitget if an open trade exists for this pair
+    open_trade = db.scalar(
+        select(Trade).where(
+            Trade.strategy_name == bot.name,
+            Trade.symbol == sym,
+            Trade.status == PositionStatus.open,
+        )
+    )
+    if open_trade and (pair.tp_pct or pair.sl_pct):
+        await arm_pair_tpsl(
+            sym, open_trade.direction.value, open_trade.entry_price,
+            pair.tp_pct, pair.sl_pct, bot.hedge_mode,
+        )
     return pair
 
 

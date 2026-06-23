@@ -110,6 +110,22 @@ def update_pair_session(db: Session, pair: BotPair, bot: SignalBot, trade_net: f
     return reason
 
 
+async def arm_pair_tpsl(
+    symbol: str,
+    direction: str,
+    entry_price: float,
+    tp_pct: float | None,
+    sl_pct: float | None,
+    hedge_mode: bool = False,
+) -> None:
+    if not entry_price or (not tp_pct and not sl_pct):
+        return
+    is_long = direction == "long"
+    tp_price = entry_price * (1 + tp_pct / 100) if tp_pct and is_long else (entry_price * (1 - tp_pct / 100) if tp_pct else None)
+    sl_price = entry_price * (1 - sl_pct / 100) if sl_pct and is_long else (entry_price * (1 + sl_pct / 100) if sl_pct else None)
+    await BitgetClient().place_tpsl(symbol, direction, tp_price, sl_price, hedge_mode)
+
+
 def update_bot_session(db: Session, bot: SignalBot, trade_net: float) -> str | None:
     bot.session_pnl = round((bot.session_pnl or 0.0) + trade_net, 8)
     bot.cycles_completed = (bot.cycles_completed or 0) + 1
@@ -274,6 +290,14 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
             trade.exchange_order_id = str(result.get("order_id") or result.get("data", {}).get("orderId") or "")
             trade.execution_status = ExecutionStatus.executed
             signal.status = ExecutionStatus.executed
+            # Arm pair-level TP/SL on Bitget if configured
+            if bot and payload.direction and payload.price:
+                pair = get_or_create_bot_pair(db, bot, payload.symbol)
+                if pair.tp_pct or pair.sl_pct:
+                    await arm_pair_tpsl(
+                        payload.symbol, payload.direction.value, payload.price,
+                        pair.tp_pct, pair.sl_pct, hedge,
+                    )
         except BitgetExecutionError as exc:
             trade.execution_status = ExecutionStatus.failed
             signal.status = ExecutionStatus.failed
