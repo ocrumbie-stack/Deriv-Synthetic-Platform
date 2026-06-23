@@ -1,6 +1,6 @@
 from datetime import datetime, time, timedelta
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select
@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.bitget import BitgetClient
 from app.config import settings
-from app.database import Base, engine, get_db
+from app.database import Base, SessionLocal, engine, get_db
 from app.models import ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalBot, Strategy, Trade
 from app.schemas import SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, TradeOut, WebhookSignal
 from app.services import account_exposure, daily_account_net, get_risk_settings, get_signal_bot, process_webhook_signal
@@ -49,22 +49,27 @@ def config() -> dict[str, str]:
     return {"webhook_secret": settings.webhook_secret}
 
 
-@app.post("/webhook")
-async def receive_webhook(payload: WebhookSignal, db: Session = Depends(get_db)) -> dict:
-    # TradingView appends suffixes like .P or .PERP for perpetuals — Bitget expects plain symbol
+async def _process_in_background(payload: WebhookSignal) -> None:
+    db = SessionLocal()
+    try:
+        await process_webhook_signal(db, payload)
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+@app.post("/webhook", status_code=202)
+async def receive_webhook(payload: WebhookSignal, background_tasks: BackgroundTasks) -> dict:
+    # Normalise symbol — TradingView appends .P / .PERP for perpetuals
     symbol = payload.symbol.upper()
     for suffix in (".P", ".PERP", ".USD", "-PERP", "-USD"):
         if symbol.endswith(suffix):
             symbol = symbol[: -len(suffix)]
             break
     payload.symbol = symbol
-    result = await process_webhook_signal(db, payload)
-    return {
-        "signal_id": result.signal.id,
-        "status": result.signal.status,
-        "reason": result.signal.rejection_reason,
-        "trade_id": result.trade.id if result.trade else None,
-    }
+    background_tasks.add_task(_process_in_background, payload)
+    return {"status": "received"}
 
 
 @app.get("/api/unrealized-pnl")
