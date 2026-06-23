@@ -1171,44 +1171,73 @@ function loadBotTemplate(name) {
   if (el) el.textContent = botTemplate(name);
 }
 
-async function loadBotPairs(botId) {
+async function loadBotPairs(botId, botName) {
   const tbody = document.querySelector(`#pairs-${botId}`);
   if (!tbody) return;
-  const pairs = await getJson(`/api/signal-bots/${botId}/pairs`).catch(() => []);
-  if (!pairs.length) return;
 
-  tbody.innerHTML = pairs.map(p => {
-    const pnlCls  = p.session_pnl > 0 ? "positive" : p.session_pnl < 0 ? "negative" : "neutral";
-    const cycPct  = p.max_cycles ? Math.min(p.cycles_completed / p.max_cycles * 100, 100).toFixed(0) : 0;
-    const cycBar  = p.max_cycles ? `<div style="height:3px;background:var(--border);border-radius:999px;margin-top:4px"><div style="height:100%;width:${cycPct}%;background:var(--blue);border-radius:999px"></div></div>` : "";
-    const tdS = "padding:10px 16px;border-bottom:1px solid var(--border)";
+  const [pairs, uplData] = await Promise.all([
+    getJson(`/api/signal-bots/${botId}/pairs`).catch(() => []),
+    getJson("/api/unrealized-pnl").catch(() => ({})),
+  ]);
+
+  const openPositions = (latestState.positions || []).filter(p => p.strategy_name === botName);
+  const allSymbols = [...new Set([
+    ...openPositions.map(p => p.symbol),
+    ...pairs.map(p => p.symbol),
+  ])].sort();
+
+  if (!allSymbols.length) return;
+
+  const tdS = "padding:10px 16px;border-bottom:1px solid var(--border)";
+
+  tbody.innerHTML = allSymbols.map(sym => {
+    const pos  = openPositions.find(p => p.symbol === sym);
+    const pair = pairs.find(p => p.symbol === sym);
+    const upl  = uplData[`${sym}_${pos?.direction}`] ?? uplData[sym] ?? null;
+    const uplCls = upl === null ? "neutral" : upl > 0 ? "positive" : upl < 0 ? "negative" : "neutral";
+    const pnlCls = (pair?.session_pnl || 0) > 0 ? "positive" : (pair?.session_pnl || 0) < 0 ? "negative" : "neutral";
+    const cycPct = pair?.max_cycles ? Math.min(pair.cycles_completed / pair.max_cycles * 100, 100).toFixed(0) : 0;
+    const cycBar = pair?.max_cycles ? `<div style="height:3px;background:var(--border);border-radius:999px;margin-top:4px"><div style="height:100%;width:${cycPct}%;background:var(--blue);border-radius:999px"></div></div>` : "";
+
     return `
     <tr>
-      <td style="${tdS};font-family:monospace;font-weight:600">${p.symbol}</td>
+      <td style="${tdS}">
+        <div style="display:flex;align-items:center;gap:7px">
+          <span style="font-family:monospace;font-weight:600">${sym}</span>
+          ${pos ? `<span class="badge ${pos.direction === "long" ? "ok" : "warn"}" style="font-size:9px">${pos.direction}</span>` : ""}
+        </div>
+        ${pos ? `<div style="font-size:11px;color:var(--muted);margin-top:3px">Entry ${number.format(pos.entry_price)} · ${number.format(pos.size)} contracts</div>` : ""}
+      </td>
       <td style="${tdS}">
         <div style="display:flex;align-items:center;gap:4px">
-          <input class="inline-input pair-input" type="number" step="0.1" min="0" value="${p.tp_pct ?? ""}" placeholder="TP"
-            data-bot-id="${botId}" data-symbol="${p.symbol}" data-field="tp_pct" style="width:52px" />
+          <input class="inline-input pair-input" type="number" step="0.1" min="0" value="${pair?.tp_pct ?? ""}" placeholder="TP"
+            data-bot-id="${botId}" data-symbol="${sym}" data-field="tp_pct" style="width:52px" />
           <span style="color:var(--muted);font-size:10px">/</span>
-          <input class="inline-input pair-input" type="number" step="0.1" min="0" value="${p.sl_pct ?? ""}" placeholder="SL"
-            data-bot-id="${botId}" data-symbol="${p.symbol}" data-field="sl_pct" style="width:52px" />
+          <input class="inline-input pair-input" type="number" step="0.1" min="0" value="${pair?.sl_pct ?? ""}" placeholder="SL"
+            data-bot-id="${botId}" data-symbol="${sym}" data-field="sl_pct" style="width:52px" />
         </div>
       </td>
       <td style="${tdS}">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-          <input class="inline-input pair-input" type="number" step="1" min="1" value="${p.max_cycles ?? ""}" placeholder="∞"
-            data-bot-id="${botId}" data-symbol="${p.symbol}" data-field="max_cycles" style="width:52px" />
-          <span style="font-size:11px;color:var(--muted)">${p.cycles_completed}${p.max_cycles ? "/" + p.max_cycles : ""}</span>
+          <input class="inline-input pair-input" type="number" step="1" min="1" value="${pair?.max_cycles ?? ""}" placeholder="∞"
+            data-bot-id="${botId}" data-symbol="${sym}" data-field="max_cycles" style="width:52px" />
+          <span style="font-size:11px;color:var(--muted)">${pair?.cycles_completed ?? 0}${pair?.max_cycles ? "/" + pair.max_cycles : ""}</span>
         </div>
         ${cycBar}
       </td>
       <td style="${tdS}">
-        <div class="${pnlCls}" style="font-family:monospace;font-weight:700">${p.session_pnl >= 0 ? "+" : ""}${currency.format(p.session_pnl)}</div>
+        ${pos && upl !== null
+          ? `<div class="${uplCls}" style="font-family:monospace;font-weight:700">${upl >= 0 ? "+" : ""}${currency.format(upl)}</div>
+             <div style="font-size:10px;color:var(--muted)">unrealized</div>`
+          : `<div class="${pnlCls}" style="font-family:monospace;font-weight:700">${currency.format(pair?.session_pnl || 0)}</div>
+             <div style="font-size:10px;color:var(--muted)">session</div>`}
       </td>
       <td style="${tdS}">
-        <button class="mini-switch ${p.enabled ? "on" : ""}" data-pair-bot="${botId}" data-pair-sym="${p.symbol}" data-pair-enabled="${p.enabled}">
-          ${p.enabled ? "Active" : "Paused"}
-        </button>
+        ${pos
+          ? `<span class="badge ok" style="font-size:10px">In position</span>`
+          : `<button class="mini-switch ${pair?.enabled ? "on" : ""}" data-pair-bot="${botId}" data-pair-sym="${sym}" data-pair-enabled="${pair?.enabled}">
+               ${pair?.enabled ? "Active" : "Paused"}
+             </button>`}
       </td>
     </tr>`;
   }).join("");
@@ -1267,14 +1296,22 @@ async function refreshBots() {
     const cycBar = b.max_cycles ? `<div style="height:3px;background:var(--border);border-radius:999px;margin-top:4px"><div style="height:100%;width:${cycPct}%;background:var(--blue);border-radius:999px"></div></div>` : "";
     const tpsl   = `${b.tp_pct ? "+" + b.tp_pct + "%" : "—"} / ${b.sl_pct ? "-" + b.sl_pct + "%" : "—"}`;
 
+    const openPairs = (latestState.positions || []).filter(p => p.strategy_name === b.name);
+    const pairBadges = openPairs.map(p => {
+      const pUpl = uplData[`${p.symbol}_${p.direction}`] ?? uplData[p.symbol] ?? null;
+      const uplStr = pUpl !== null ? ` ${pUpl >= 0 ? "+" : ""}${currency.format(pUpl)}` : "";
+      return `<span class="badge ${p.direction === "long" ? "ok" : "warn"}" style="font-size:9px;margin-right:3px">${p.symbol}${uplStr}</span>`;
+    }).join("");
+
     return `
-    <tr data-expand="${b.id}" style="cursor:pointer">
+    <tr data-expand="${b.id}" data-bot-name="${escapeAttr(b.name)}" style="cursor:pointer">
       <td>
         <div style="display:flex;align-items:center;gap:8px">
           <span id="chev-${b.id}" style="font-size:9px;color:var(--muted);transition:transform 150ms;display:inline-block">▶</span>
           <span class="bot-dot ${b.enabled ? "active" : "paused"}"></span>
           <span style="font-weight:600">${b.name}</span>
         </div>
+        ${pairBadges ? `<div style="margin-top:5px;padding-left:22px">${pairBadges}</div>` : ""}
       </td>
       <td style="font-family:monospace;font-size:12px">${tpsl}</td>
       <td>
@@ -1389,7 +1426,7 @@ async function refreshBots() {
       const open = detail.style.display !== "none";
       detail.style.display = open ? "none" : "table-row";
       if (chev) chev.style.transform = open ? "" : "rotate(90deg)";
-      if (!open) loadBotPairs(id);
+      if (!open) loadBotPairs(id, row.dataset.botName);
     });
   });
 
