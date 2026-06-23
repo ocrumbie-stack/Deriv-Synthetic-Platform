@@ -1465,6 +1465,11 @@ function wireBotForm() {
     if (form) form.style.display = form.style.display === "none" ? "block" : "none";
   });
 
+  document.querySelector("#enablePairTpsl")?.addEventListener("change", function() {
+    const fields = document.querySelector("#pairTpslFields");
+    if (fields) fields.style.display = this.checked ? "grid" : "none";
+  });
+
   document.querySelector("#generateMsgBtn")?.addEventListener("click", () => {
     const name = (document.querySelector("#botName")?.value || "").trim();
     const errEl = document.querySelector("#botError");
@@ -1491,15 +1496,24 @@ function wireBotForm() {
     }
     if (errEl) errEl.style.display = "none";
 
-    const hedge_mode  = document.querySelector("#botHedge")?.checked || false;
-    const tp_raw      = parseFloat(document.querySelector("#botTp")?.value || "");
-    const sl_raw      = parseFloat(document.querySelector("#botSl")?.value || "");
-    const cycles_raw  = parseInt(document.querySelector("#botCycles")?.value || "");
+    const hedge_mode    = document.querySelector("#botHedge")?.checked || false;
+    const tp_raw        = parseFloat(document.querySelector("#botTp")?.value || "");
+    const sl_raw        = parseFloat(document.querySelector("#botSl")?.value || "");
+    const cycles_raw    = parseInt(document.querySelector("#botCycles")?.value || "");
+    const pairEnabled   = document.querySelector("#enablePairTpsl")?.checked || false;
+    const pair_tp_raw   = parseFloat(document.querySelector("#botPairTp")?.value || "");
+    const pair_sl_raw   = parseFloat(document.querySelector("#botPairSl")?.value || "");
+    const pair_cyc_raw  = parseInt(document.querySelector("#botPairCycles")?.value || "");
     const body = { name, size, leverage, hedge_mode };
     if (symbol) body.symbol = symbol.toUpperCase();
-    if (!isNaN(tp_raw) && tp_raw > 0)    body.tp_pct     = tp_raw;
-    if (!isNaN(sl_raw) && sl_raw > 0)    body.sl_pct     = sl_raw;
-    if (!isNaN(cycles_raw) && cycles_raw > 0) body.max_cycles = cycles_raw;
+    if (!isNaN(tp_raw) && tp_raw > 0)          body.tp_pct               = tp_raw;
+    if (!isNaN(sl_raw) && sl_raw > 0)          body.sl_pct               = sl_raw;
+    if (!isNaN(cycles_raw) && cycles_raw > 0)  body.max_cycles           = cycles_raw;
+    if (pairEnabled) {
+      if (!isNaN(pair_tp_raw) && pair_tp_raw > 0)   body.default_pair_tp_pct     = pair_tp_raw;
+      if (!isNaN(pair_sl_raw) && pair_sl_raw > 0)   body.default_pair_sl_pct     = pair_sl_raw;
+      if (!isNaN(pair_cyc_raw) && pair_cyc_raw > 0) body.default_pair_max_cycles = pair_cyc_raw;
+    }
     const res = await fetch("/api/signal-bots", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1519,11 +1533,12 @@ function wireBotForm() {
     if (form) form.style.display = "none";
     const preview = document.querySelector("#botTemplatePreview");
     if (preview) preview.style.display = "none";
-    ["#botName","#botSymbol","#botSize","#botLeverage","#botTp","#botSl","#botCycles"].forEach(sel => {
+    ["#botName","#botSymbol","#botSize","#botLeverage","#botTp","#botSl","#botCycles","#botPairTp","#botPairSl","#botPairCycles"].forEach(sel => {
       const el = document.querySelector(sel); if (el) el.value = "";
     });
-    const hedge = document.querySelector("#botHedge");
-    if (hedge) hedge.checked = false;
+    const hedge = document.querySelector("#botHedge"); if (hedge) hedge.checked = false;
+    const pairChk = document.querySelector("#enablePairTpsl"); if (pairChk) pairChk.checked = false;
+    const pairFields = document.querySelector("#pairTpslFields"); if (pairFields) pairFields.style.display = "none";
   });
 }
 

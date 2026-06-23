@@ -77,10 +77,16 @@ def get_signal_bot(db: Session, name: str) -> SignalBot | None:
     return db.scalar(select(SignalBot).where(SignalBot.name == name))
 
 
-def get_or_create_bot_pair(db: Session, bot_id: int, symbol: str) -> BotPair:
-    pair = db.scalar(select(BotPair).where(BotPair.bot_id == bot_id, BotPair.symbol == symbol))
+def get_or_create_bot_pair(db: Session, bot: SignalBot, symbol: str) -> BotPair:
+    pair = db.scalar(select(BotPair).where(BotPair.bot_id == bot.id, BotPair.symbol == symbol))
     if not pair:
-        pair = BotPair(bot_id=bot_id, symbol=symbol)
+        pair = BotPair(
+            bot_id=bot.id,
+            symbol=symbol,
+            tp_pct=bot.default_pair_tp_pct,
+            sl_pct=bot.default_pair_sl_pct,
+            max_cycles=bot.default_pair_max_cycles,
+        )
         db.add(pair)
         db.flush()
     return pair
@@ -152,6 +158,7 @@ def validate_signal(db: Session, payload: WebhookSignal, strategy: Strategy, bot
         pair = db.scalar(select(BotPair).where(BotPair.bot_id == bot.id, BotPair.symbol == payload.symbol))
         if pair and not pair.enabled:
             return f"{payload.symbol} is paused for this bot."
+
     if not strategy.enabled:
         return "Strategy is disabled."
     if risk.duplicate_blocking and payload.signal_id:
@@ -294,7 +301,7 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
             trade.closed_at = datetime.utcnow()
             signal.status = ExecutionStatus.closed
             if bot:
-                pair = get_or_create_bot_pair(db, bot.id, trade.symbol)
+                pair = get_or_create_bot_pair(db, bot, trade.symbol)
                 update_pair_session(db, pair, bot, net)
                 update_bot_session(db, bot, net)
 
