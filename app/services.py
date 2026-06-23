@@ -157,6 +157,9 @@ def calculate_trade_result(trade: Trade, exit_price: float) -> tuple[float, floa
     return gross, net
 
 
+_configured_symbols: set[tuple[str, int, bool]] = set()  # (symbol, leverage, hedge_mode)
+
+
 async def process_webhook_signal(db: Session, payload: WebhookSignal) -> ProcessedSignal:
     strategy = get_or_create_strategy(db, payload.strategy)
     bot = get_signal_bot(db, payload.strategy)
@@ -224,8 +227,11 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
         try:
             client = BitgetClient()
             hedge = bot.hedge_mode if bot else False
-            await client.set_position_mode(hedge)
-            await client.set_leverage(payload.symbol, int(payload.leverage), hedge)
+            cache_key = (payload.symbol, int(payload.leverage), hedge)
+            if cache_key not in _configured_symbols:
+                await client.set_position_mode(hedge)
+                await client.set_leverage(payload.symbol, int(payload.leverage), hedge)
+                _configured_symbols.add(cache_key)
             result = await client.place_order(payload, hedge_mode=hedge)
             trade.exchange_order_id = str(result.get("order_id") or result.get("data", {}).get("orderId") or "")
             trade.execution_status = ExecutionStatus.executed
