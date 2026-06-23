@@ -284,7 +284,8 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
         if trade:
             try:
                 result = await BitgetClient().close_order(trade.symbol, trade.direction.value, trade.size, hedge_mode=bot.hedge_mode if bot else False)
-                trade.exchange_order_id = str(result.get("order_id") or result.get("data", {}).get("orderId") or "")
+                if result.get("message") != "no_position":
+                    trade.exchange_order_id = str(result.get("order_id") or result.get("data", {}).get("orderId") or "")
             except BitgetExecutionError as exc:
                 signal.status = ExecutionStatus.failed
                 signal.rejection_reason = str(exc)
