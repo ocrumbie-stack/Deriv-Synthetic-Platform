@@ -78,7 +78,8 @@ class BitgetClient:
     ) -> None:
         if settings.execution_mode.lower() != "live":
             return
-        for plan_type, trigger_price in (("pos_profit", tp_price), ("pos_loss", sl_price)):
+        # Bitget V2: profit_plan = take profit, loss_plan = stop loss
+        for plan_type, trigger_price in (("profit_plan", tp_price), ("loss_plan", sl_price)):
             if not trigger_price:
                 continue
             body_data: dict[str, Any] = {
@@ -88,9 +89,8 @@ class BitgetClient:
                 "planType": plan_type,
                 "triggerPrice": str(round(trigger_price, 8)),
                 "triggerType": "mark_price",
+                "holdSide": direction,
             }
-            if hedge_mode:
-                body_data["holdSide"] = direction
             body = json.dumps(body_data, separators=(",", ":"))
             timestamp = self._timestamp()
             path = "/api/v2/mix/order/place-tpsl"
@@ -103,7 +103,12 @@ class BitgetClient:
                 "locale": "en-US",
             }
             async with httpx.AsyncClient(timeout=10) as client:
-                await client.post(f"{self.base_url}{path}", headers=headers, content=body)
+                response = await client.post(f"{self.base_url}{path}", headers=headers, content=body)
+            if response.status_code >= 400:
+                raise BitgetExecutionError(f"Bitget rejected {plan_type} order: {response.text}")
+            data = response.json()
+            if data.get("code") not in (None, "00000"):
+                raise BitgetExecutionError(f"Bitget {plan_type} error: {data}")
 
     async def set_leverage(self, symbol: str, leverage: int, hedge_mode: bool = False) -> None:
         holds = ["long", "short"] if hedge_mode else [None]

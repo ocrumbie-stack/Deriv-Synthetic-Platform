@@ -294,10 +294,13 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
             if bot and payload.direction and payload.price:
                 pair = get_or_create_bot_pair(db, bot, payload.symbol)
                 if pair.tp_pct or pair.sl_pct:
-                    await arm_pair_tpsl(
-                        payload.symbol, payload.direction.value, payload.price,
-                        pair.tp_pct, pair.sl_pct, hedge,
-                    )
+                    try:
+                        await arm_pair_tpsl(
+                            payload.symbol, payload.direction.value, payload.price,
+                            pair.tp_pct, pair.sl_pct, hedge,
+                        )
+                    except BitgetExecutionError as exc:
+                        signal.rejection_reason = (signal.rejection_reason or "") + f" | TP/SL arm failed: {exc}"
         except BitgetExecutionError as exc:
             trade.execution_status = ExecutionStatus.failed
             signal.status = ExecutionStatus.failed
