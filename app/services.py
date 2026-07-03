@@ -130,15 +130,8 @@ def update_bot_session(db: Session, bot: SignalBot, trade_net: float) -> str | N
     bot.session_pnl = round((bot.session_pnl or 0.0) + trade_net, 8)
     bot.cycles_completed = (bot.cycles_completed or 0) + 1
 
-    target_base = bot.size if bot.size > 0 else 1.0
-    net_pct = (bot.session_pnl / target_base) * 100
     reason = None
-
-    if bot.tp_pct and net_pct >= bot.tp_pct:
-        reason = f"Take profit target reached ({net_pct:.1f}% of allocated size)"
-    elif bot.sl_pct and net_pct <= -abs(bot.sl_pct):
-        reason = f"Stop loss target reached ({net_pct:.1f}% of allocated size)"
-    elif bot.max_cycles and bot.cycles_completed >= bot.max_cycles:
+    if bot.max_cycles and bot.cycles_completed >= bot.max_cycles:
         reason = f"Cycle limit reached ({bot.cycles_completed}/{bot.max_cycles} cycles)"
 
     if reason:

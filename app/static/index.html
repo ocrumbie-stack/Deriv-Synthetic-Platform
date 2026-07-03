@@ -244,7 +244,7 @@
 
             <div id="newBotForm" style="display:none" class="risk-panel">
               <p class="panel-title" style="margin-bottom:4px">New Signal Bot</p>
-              <p style="font-size:11px;color:var(--muted);margin-bottom:16px">Size and leverage are stored here — no need to include them in your TradingView alert. Which pairs this bot trades is controlled by your TradingView alerts — set up one alert per symbol using the same strategy name. TP / SL / Cycles are optional circuit breakers.</p>
+              <p style="font-size:11px;color:var(--muted);margin-bottom:16px">Size and leverage are stored here — no need to include them in your TradingView alert. Which pairs this bot trades is controlled by your TradingView alerts — set up one alert per symbol using the same strategy name. TP / SL apply to each coin individually (you can still override a specific coin later). Max Cycles below is a whole-bot cap.</p>
               <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr 1fr 1fr auto;gap:12px;align-items:end">
                 <div>
                   <label class="bot-field-label">Strategy name</label>
@@ -259,15 +259,15 @@
                   <input id="botLeverage" type="number" step="1" min="1" placeholder="1" />
                 </div>
                 <div>
-                  <label class="bot-field-label">TP %</label>
+                  <label class="bot-field-label">TP % (per coin)</label>
                   <input id="botTp" type="number" step="0.1" min="0.1" placeholder="optional" />
                 </div>
                 <div>
-                  <label class="bot-field-label">SL %</label>
+                  <label class="bot-field-label">SL % (per coin)</label>
                   <input id="botSl" type="number" step="0.1" min="0.1" placeholder="optional" />
                 </div>
                 <div>
-                  <label class="bot-field-label">Max Cycles</label>
+                  <label class="bot-field-label">Max Cycles (bot)</label>
                   <input id="botCycles" type="number" step="1" min="1" placeholder="optional" />
                 </div>
                 <div style="display:flex;flex-direction:column;gap:6px;align-self:end">
@@ -283,22 +283,14 @@
               <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
                   <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-                    <input id="enablePairTpsl" type="checkbox" />
-                    <span style="font-size:12px;font-weight:600">Enable default pair TP / SL</span>
+                    <input id="enablePairCycles" type="checkbox" />
+                    <span style="font-size:12px;font-weight:600">Enable default max cycles per coin</span>
                   </label>
                   <span style="font-size:11px;color:var(--muted)">Applied automatically to every new pair when a signal arrives</span>
                 </div>
-                <div id="pairTpslFields" style="display:none;display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:10px">
+                <div id="pairCyclesField" style="display:none;grid-template-columns:1fr;gap:12px;margin-bottom:10px">
                   <div>
-                    <label class="bot-field-label">Pair TP %</label>
-                    <input id="botPairTp" type="number" step="0.1" min="0.1" placeholder="optional" />
-                  </div>
-                  <div>
-                    <label class="bot-field-label">Pair SL %</label>
-                    <input id="botPairSl" type="number" step="0.1" min="0.1" placeholder="optional" />
-                  </div>
-                  <div>
-                    <label class="bot-field-label">Pair Max Cycles</label>
+                    <label class="bot-field-label">Max Cycles (per coin)</label>
                     <input id="botPairCycles" type="number" step="1" min="1" placeholder="optional" />
                   </div>
                 </div>
