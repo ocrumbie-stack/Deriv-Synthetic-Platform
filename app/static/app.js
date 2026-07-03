@@ -15,47 +15,36 @@ let pnlRange = "1D";
 const pnlChartState          = { data: null };
 const signalActivityState    = { data: null };
 
-const SIGNAL_DATA = [
-  { t: "09:30", passed: 4, blocked: 0 },
-  { t: "10:00", passed: 7, blocked: 1 },
-  { t: "10:30", passed: 3, blocked: 2 },
-  { t: "11:00", passed: 9, blocked: 0 },
-  { t: "11:30", passed: 5, blocked: 1 },
-  { t: "12:00", passed: 2, blocked: 3 },
-  { t: "12:30", passed: 6, blocked: 0 },
-  { t: "13:00", passed: 8, blocked: 1 },
-  { t: "13:30", passed: 4, blocked: 2 },
-  { t: "14:00", passed: 3, blocked: 0 },
-  { t: "14:30", passed: 1, blocked: 3 },
-];
+function equityCurveToPnlSeries(curve, period) {
+  return (curve || []).map(p => ({
+    t: new Date(utc(p.time)).toLocaleString(undefined,
+      period === "today" ? { hour: "2-digit", minute: "2-digit" } : { month: "numeric", day: "numeric" }),
+    pnl: p.cumulative_net,
+  }));
+}
 
-const PNL_DATA = {
-  "1D": [
-    { t: "09:30", pnl: 0 },    { t: "09:45", pnl: 420 },
-    { t: "10:00", pnl: 890 },  { t: "10:15", pnl: 1350 },
-    { t: "10:30", pnl: 1820 }, { t: "10:45", pnl: 2100 },
-    { t: "11:00", pnl: 1650 }, { t: "11:15", pnl: 1200 },
-    { t: "11:30", pnl: 650 },  { t: "11:45", pnl: 100 },
-    { t: "12:00", pnl: -450 }, { t: "12:15", pnl: -1200 },
-    { t: "12:30", pnl: -2100 },{ t: "12:45", pnl: -3100 },
-    { t: "13:00", pnl: -4200 },{ t: "13:15", pnl: -5100 },
-    { t: "13:30", pnl: -5900 },{ t: "13:45", pnl: -6600 },
-    { t: "14:00", pnl: -7100 },{ t: "14:15", pnl: -7500 },
-    { t: "14:30", pnl: -7820 },
-  ],
-  "5D": [
-    { t: "Mon", pnl: 3200 }, { t: "Tue", pnl: 1800 },
-    { t: "Wed", pnl: -2100 }, { t: "Thu", pnl: -4600 }, { t: "Fri", pnl: -7820 },
-  ],
-  "MTD": [
-    { t: "Jun 2", pnl: 1200 },  { t: "Jun 3", pnl: 2800 },
-    { t: "Jun 4", pnl: 1900 },  { t: "Jun 5", pnl: 3500 },
-    { t: "Jun 6", pnl: 2100 },  { t: "Jun 9", pnl: 4200 },
-    { t: "Jun 10", pnl: 3100 }, { t: "Jun 11", pnl: 1500 },
-    { t: "Jun 12", pnl: -800 }, { t: "Jun 13", pnl: -3200 },
-    { t: "Jun 16", pnl: -7820 },
-  ],
-};
+function buildActivityBuckets(signals, period) {
+  const numBuckets = 12;
+  const now     = Date.now();
+  const range   = period === "today" ? 8 * 3600e3 : period === "week" ? 5 * 86400e3 : 30 * 86400e3;
+  const start   = now - range;
+  const bucketMs = range / numBuckets;
+  const buckets = Array.from({ length: numBuckets }, (_, i) => ({ tRaw: start + i * bucketMs, passed: 0, blocked: 0 }));
+
+  (signals || []).forEach(s => {
+    const t = new Date(utc(s.created_at)).getTime();
+    if (t < start) return;
+    const idx = Math.min(numBuckets - 1, Math.floor((t - start) / bucketMs));
+    if (s.status === "rejected" || s.status === "failed") buckets[idx].blocked++;
+    else buckets[idx].passed++;
+  });
+
+  return buckets.map(b => ({
+    t: new Date(b.tRaw).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
+    passed: b.passed,
+    blocked: b.blocked,
+  }));
+}
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -577,8 +566,8 @@ function topRoundRect(ctx, x, y, w, h, r) {
 // ─── P&L Chart ───────────────────────────────────────────────────────────────
 
 function renderPnlChart() {
-  const data = PNL_DATA[pnlRange];
-  const lastPnl = data[data.length - 1].pnl;
+  const data = equityCurveToPnlSeries(latestState.analytics.equity_curve, activePeriod);
+  const lastPnl = data.length ? data[data.length - 1].pnl : 0;
   const isPos = lastPnl >= 0;
   const pnlEl = document.querySelector("#pnlHeadline");
   if (pnlEl) {
@@ -794,7 +783,7 @@ function renderCharts(curve, performance, analytics, signals) {
 
   renderPnlChart();
   drawEquityChart(document.querySelector("#equityChart2"), curve, equityState2, null);
-  drawSignalActivityChart(document.querySelector("#activityChart"), SIGNAL_DATA, null);
+  drawSignalActivityChart(document.querySelector("#activityChart"), buildActivityBuckets(signals, activePeriod), null);
   drawActivityChart(document.querySelector("#activityChart2"), signals);
   drawStatusChart(document.querySelector("#statusChart"), analytics.status_counts);
 }
@@ -1057,25 +1046,34 @@ function drawStatusChart(canvas, counts) {
   }
 })();
 
+function periodToPnlRange(period) {
+  return period === "today" ? "1D" : period === "week" ? "5D" : "MTD";
+}
+function pnlRangeToPeriod(range) {
+  return range === "1D" ? "today" : range === "5D" ? "week" : "month";
+}
+function syncPeriodControls() {
+  document.querySelectorAll(".pnl-range-btn").forEach(b => b.classList.toggle("active", b.dataset.pnlRange === pnlRange));
+  document.querySelectorAll("[data-period]").forEach(b => b.classList.toggle("active", b.dataset.period === activePeriod));
+  document.querySelectorAll("[data-period-table]").forEach(b => b.classList.toggle("active", b.dataset.periodTable === activePeriod));
+}
+
 // P&L range switcher
 document.querySelectorAll(".pnl-range-btn").forEach(btn => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll(".pnl-range-btn").forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
     pnlRange = btn.dataset.pnlRange;
-    renderPnlChart();
+    activePeriod = pnlRangeToPeriod(pnlRange);
+    syncPeriodControls();
+    refresh();
   });
 });
 
 // Period tabs — Dashboard (1D / 5D / MTD / ALL)
 document.querySelectorAll("[data-period]").forEach(btn => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll("[data-period]").forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
     activePeriod = btn.dataset.period;
-    document.querySelectorAll("[data-period-table]").forEach(b => {
-      b.classList.toggle("active", b.dataset.periodTable === activePeriod);
-    });
+    pnlRange = periodToPnlRange(activePeriod);
+    syncPeriodControls();
     refresh();
   });
 });
@@ -1083,12 +1081,9 @@ document.querySelectorAll("[data-period]").forEach(btn => {
 // Period tabs — Strategies Ranking (Today / Week / Month / All)
 document.querySelectorAll("[data-period-table]").forEach(btn => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll("[data-period-table]").forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
     activePeriod = btn.dataset.periodTable;
-    document.querySelectorAll("[data-period]").forEach(b => {
-      b.classList.toggle("active", b.dataset.period === activePeriod);
-    });
+    pnlRange = periodToPnlRange(activePeriod);
+    syncPeriodControls();
     refresh();
   });
 });
