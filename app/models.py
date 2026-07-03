@@ -112,7 +112,6 @@ class SignalBot(Base):
     leverage: Mapped[float] = mapped_column(Float, default=1.0)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     hedge_mode: Mapped[bool] = mapped_column(Boolean, default=False)
-    max_cycles: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cycles_completed: Mapped[int] = mapped_column(Integer, default=0)
     session_pnl: Mapped[float] = mapped_column(Float, default=0.0)
     default_pair_tp_pct: Mapped[float | None] = mapped_column(Float, nullable=True)

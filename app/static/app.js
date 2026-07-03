@@ -1301,8 +1301,6 @@ async function refreshBots() {
     const total  = b.session_pnl + upl;
     const pnlCls = total > 0 ? "positive" : total < 0 ? "negative" : "neutral";
     const pnlPct = b.size > 0 ? ((total / b.size) * 100).toFixed(1) : "0.0";
-    const cycPct = b.max_cycles ? Math.min(b.cycles_completed / b.max_cycles * 100, 100).toFixed(0) : 0;
-    const cycBar = b.max_cycles ? `<div style="height:3px;background:var(--border);border-radius:999px;margin-top:4px"><div style="height:100%;width:${cycPct}%;background:var(--blue);border-radius:999px"></div></div>` : "";
     const tpsl   = `${b.default_pair_tp_pct ? "+" + b.default_pair_tp_pct + "%" : "—"} / ${b.default_pair_sl_pct ? "-" + b.default_pair_sl_pct + "%" : "—"}`;
 
     const openPairs = (latestState.positions || []).filter(p => p.strategy_name === b.name);
@@ -1328,8 +1326,7 @@ async function refreshBots() {
         <div style="font-size:10px;color:var(--muted)">${pnlPct}%${upl !== 0 ? ` · <span style="font-style:italic">${upl >= 0 ? "+" : ""}${currency.format(upl)} unrlzd</span>` : ""}</div>
       </td>
       <td>
-        <div style="font-size:12px">${b.cycles_completed}${b.max_cycles ? "/" + b.max_cycles : ""}</div>
-        ${cycBar}
+        <div style="font-size:12px">${b.cycles_completed} total${b.default_pair_max_cycles ? ` <span style="color:var(--muted)">· ${b.default_pair_max_cycles}/coin cap</span>` : ""}</div>
       </td>
       <td>
         <button class="mini-switch ${b.hedge_mode ? "on" : ""}" data-bot-id="${b.id}" data-hedge="${b.hedge_mode}">
@@ -1392,10 +1389,9 @@ async function refreshBots() {
               <input class="inline-input" type="number" step="0.1" min="0" value="${b.default_pair_sl_pct ?? ""}" placeholder="—" data-bot-id="${b.id}" data-field="default_pair_sl_pct" style="width:100%" />
             </div>
             <div>
-              <label class="bot-field-label">Max Cycles (bot)</label>
-              <input class="inline-input" type="number" step="1" min="1" value="${b.max_cycles ?? ""}" placeholder="∞" data-bot-id="${b.id}" data-field="max_cycles" style="width:100%" />
-              <div style="font-size:11px;color:var(--muted);margin-top:5px">${b.cycles_completed}${b.max_cycles ? "/" + b.max_cycles : ""} completed</div>
-              ${cycBar}
+              <label class="bot-field-label">Max Cycles (per coin)</label>
+              <input class="inline-input" type="number" step="1" min="1" value="${b.default_pair_max_cycles ?? ""}" placeholder="∞" data-bot-id="${b.id}" data-field="default_pair_max_cycles" style="width:100%" />
+              <div style="font-size:11px;color:var(--muted);margin-top:5px">${b.cycles_completed} total completed</div>
             </div>
             <div>
               <label class="bot-field-label">Session P&amp;L</label>
@@ -1459,7 +1455,7 @@ async function refreshBots() {
 
   el.querySelectorAll(".inline-input").forEach(inp => {
     inp.addEventListener("change", async () => {
-      const nullableFields = ["default_pair_tp_pct", "default_pair_sl_pct", "max_cycles"];
+      const nullableFields = ["default_pair_tp_pct", "default_pair_sl_pct", "default_pair_max_cycles"];
       const val = inp.value === "" && nullableFields.includes(inp.dataset.field)
         ? null : Number(inp.value);
       await patchJson(`/api/signal-bots/${inp.dataset.botId}`, { [inp.dataset.field]: val });
@@ -1510,11 +1506,6 @@ function wireBotForm() {
     if (form) form.style.display = form.style.display === "none" ? "block" : "none";
   });
 
-  document.querySelector("#enablePairCycles")?.addEventListener("change", function() {
-    const fields = document.querySelector("#pairCyclesField");
-    if (fields) fields.style.display = this.checked ? "grid" : "none";
-  });
-
   document.querySelector("#generateMsgBtn")?.addEventListener("click", () => {
     const name = (document.querySelector("#botName")?.value || "").trim();
     const errEl = document.querySelector("#botError");
@@ -1545,14 +1536,11 @@ function wireBotForm() {
     const tp_raw        = parseFloat(document.querySelector("#botTp")?.value || "");
     const sl_raw        = parseFloat(document.querySelector("#botSl")?.value || "");
     const cycles_raw    = parseInt(document.querySelector("#botCycles")?.value || "");
-    const pairCycEnabled = document.querySelector("#enablePairCycles")?.checked || false;
-    const pair_cyc_raw  = parseInt(document.querySelector("#botPairCycles")?.value || "");
     const body = { name, size, leverage, hedge_mode };
     if (symbol) body.symbol = symbol.toUpperCase();
-    if (!isNaN(tp_raw) && tp_raw > 0)          body.default_pair_tp_pct  = tp_raw;
-    if (!isNaN(sl_raw) && sl_raw > 0)          body.default_pair_sl_pct  = sl_raw;
-    if (!isNaN(cycles_raw) && cycles_raw > 0)  body.max_cycles           = cycles_raw;
-    if (pairCycEnabled && !isNaN(pair_cyc_raw) && pair_cyc_raw > 0) body.default_pair_max_cycles = pair_cyc_raw;
+    if (!isNaN(tp_raw) && tp_raw > 0)          body.default_pair_tp_pct     = tp_raw;
+    if (!isNaN(sl_raw) && sl_raw > 0)          body.default_pair_sl_pct     = sl_raw;
+    if (!isNaN(cycles_raw) && cycles_raw > 0)  body.default_pair_max_cycles = cycles_raw;
     const res = await fetch("/api/signal-bots", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1572,12 +1560,10 @@ function wireBotForm() {
     if (form) form.style.display = "none";
     const preview = document.querySelector("#botTemplatePreview");
     if (preview) preview.style.display = "none";
-    ["#botName","#botSymbol","#botSize","#botLeverage","#botTp","#botSl","#botCycles","#botPairCycles"].forEach(sel => {
+    ["#botName","#botSymbol","#botSize","#botLeverage","#botTp","#botSl","#botCycles"].forEach(sel => {
       const el = document.querySelector(sel); if (el) el.value = "";
     });
     const hedge = document.querySelector("#botHedge"); if (hedge) hedge.checked = false;
-    const pairChk = document.querySelector("#enablePairCycles"); if (pairChk) pairChk.checked = false;
-    const pairFields = document.querySelector("#pairCyclesField"); if (pairFields) pairFields.style.display = "none";
   });
 }
 

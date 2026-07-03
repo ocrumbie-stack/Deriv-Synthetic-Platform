@@ -41,7 +41,6 @@ class SignalBotCreate(BaseModel):
     size: float = Field(default=0.01, gt=0)
     leverage: float = Field(default=1.0, ge=1)
     hedge_mode: bool = False
-    max_cycles: int | None = Field(default=None, gt=0)
     default_pair_tp_pct: float | None = Field(default=None, gt=0)
     default_pair_sl_pct: float | None = Field(default=None, gt=0)
     default_pair_max_cycles: int | None = Field(default=None, gt=0)
@@ -54,7 +53,6 @@ class SignalBotUpdate(BaseModel):
     leverage: float | None = Field(default=None, ge=1)
     enabled: bool | None = None
     hedge_mode: bool | None = None
-    max_cycles: int | None = Field(default=None, gt=0)
     default_pair_tp_pct: float | None = Field(default=None, gt=0)
     default_pair_sl_pct: float | None = Field(default=None, gt=0)
     default_pair_max_cycles: int | None = Field(default=None, gt=0)
@@ -90,7 +88,6 @@ class SignalBotOut(BaseModel):
     leverage: float
     enabled: bool
     hedge_mode: bool
-    max_cycles: int | None
     cycles_completed: int
     session_pnl: float
     default_pair_tp_pct: float | None

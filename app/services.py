@@ -126,19 +126,10 @@ async def arm_pair_tpsl(
     await BitgetClient().place_tpsl(symbol, direction, tp_price, sl_price, hedge_mode)
 
 
-def update_bot_session(db: Session, bot: SignalBot, trade_net: float) -> str | None:
+def update_bot_session(db: Session, bot: SignalBot, trade_net: float) -> None:
     bot.session_pnl = round((bot.session_pnl or 0.0) + trade_net, 8)
     bot.cycles_completed = (bot.cycles_completed or 0) + 1
-
-    reason = None
-    if bot.max_cycles and bot.cycles_completed >= bot.max_cycles:
-        reason = f"Cycle limit reached ({bot.cycles_completed}/{bot.max_cycles} cycles)"
-
-    if reason:
-        bot.enabled = False
-
     db.flush()
-    return reason
 
 
 def find_open_trade(db: Session, strategy_id: int, symbol: str) -> Trade | None:
