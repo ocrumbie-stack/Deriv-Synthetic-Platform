@@ -1181,14 +1181,23 @@ async function loadBotPairs(botId, botName) {
   ]);
 
   const openPositions = (latestState.positions || []).filter(p => p.strategy_name === botName);
+  const openSymbols = new Set(openPositions.map(p => p.symbol));
+  const hasOverrides = p => p.tp_pct != null || p.sl_pct != null || p.max_cycles != null;
+  const needsAttention = p => openSymbols.has(p.symbol) || !p.enabled || hasOverrides(p);
   const allSymbols = [...new Set([
     ...openPositions.map(p => p.symbol),
-    ...pairs.map(p => p.symbol),
+    ...pairs.filter(needsAttention).map(p => p.symbol),
   ])].sort();
 
-  if (!allSymbols.length) return;
-
   const tdS = "padding:10px 16px;border-bottom:1px solid var(--border)";
+
+  if (!allSymbols.length) {
+    const msg = pairs.length
+      ? "No pairs need attention — open positions, paused pairs, or pairs with custom TP/SL/Cycles will appear here. See Open Positions and Trade History for full activity."
+      : "No pairs traded yet — pairs appear here automatically when signals arrive.";
+    tbody.innerHTML = `<tr><td colspan="5" style="${tdS}color:var(--muted);font-size:12px">${msg}</td></tr>`;
+    return;
+  }
 
   tbody.innerHTML = allSymbols.map(sym => {
     const pos  = openPositions.find(p => p.symbol === sym);
@@ -1338,64 +1347,63 @@ async function refreshBots() {
     </tr>
     <tr id="detail-${b.id}" style="display:none">
       <td colspan="7" style="padding:0;border-bottom:2px solid var(--border)">
-        <table style="width:100%;border-collapse:collapse;background:var(--panel-2)">
-          <thead><tr>
-            <th style="${thStyle}">Bot</th>
-            <th style="${thStyle}">Size · Lev</th>
-            <th style="${thStyle}">TP / SL</th>
-            <th style="${thStyle}">Cycles</th>
-            <th style="${thStyle}">Session P&amp;L</th>
-            <th style="${thStyle}">Hedge</th>
-            <th style="${thStyle}">Status</th>
-          </tr></thead>
-          <tbody><tr>
-            <td style="${tdStyle}">
-              <div style="font-weight:600;margin-bottom:6px">${b.name}</div>
+        <div style="background:var(--panel-2);padding:18px 20px">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px">
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-weight:700;font-size:15px">${b.name}</span>
               <button class="nav-link-btn" data-toggle-tpl="${b.id}" style="font-size:10px;padding:2px 8px">TradingView Alert ▾</button>
-              <div id="bot-tpl-${b.id}" style="display:none;margin-top:8px">
-                <div class="url-row">
-                  <code class="url-display dim" style="font-size:10px;white-space:pre;overflow-x:auto;line-height:1.6">${escapeAttr(botTemplate(b.name))}</code>
-                  <button class="copy-btn" data-copy-tpl="${escapeAttr(b.name)}" style="align-self:stretch;font-size:11px">Copy</button>
-                </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:20px">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span class="bot-field-label" style="margin-bottom:0">Hedge</span>
+                <button class="mini-switch ${b.hedge_mode ? "on" : ""}" data-bot-id="${b.id}" data-hedge="${b.hedge_mode}">
+                  ${b.hedge_mode ? "On" : "Off"}
+                </button>
               </div>
-            </td>
-            <td style="${tdStyle}">
-              <div style="display:flex;align-items:center;gap:4px">
-                <input class="inline-input" type="number" step="1" min="1" value="${b.size}" data-bot-id="${b.id}" data-field="size" style="width:64px" />
-                <span style="color:var(--muted);font-size:11px">×</span>
-                <input class="inline-input" type="number" step="1" min="1" value="${b.leverage}" data-bot-id="${b.id}" data-field="leverage" style="width:46px" />
+              <div style="display:flex;align-items:center;gap:8px">
+                <span class="bot-field-label" style="margin-bottom:0">Status</span>
+                <button class="mini-switch ${b.enabled ? "on" : ""}" data-bot-id="${b.id}" data-enabled="${b.enabled}">
+                  ${b.enabled ? "Active" : "Paused"}
+                </button>
               </div>
-            </td>
-            <td style="${tdStyle}">
-              <div style="display:flex;align-items:center;gap:4px">
-                <input class="inline-input" type="number" step="0.1" min="0" value="${b.tp_pct ?? ""}" placeholder="TP" data-bot-id="${b.id}" data-field="tp_pct" style="width:52px" />
-                <span style="color:var(--muted);font-size:10px">/</span>
-                <input class="inline-input" type="number" step="0.1" min="0" value="${b.sl_pct ?? ""}" placeholder="SL" data-bot-id="${b.id}" data-field="sl_pct" style="width:52px" />
-              </div>
-            </td>
-            <td style="${tdStyle}">
-              <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-                <input class="inline-input" type="number" step="1" min="1" value="${b.max_cycles ?? ""}" placeholder="∞" data-bot-id="${b.id}" data-field="max_cycles" style="width:52px" />
-                <span style="font-size:11px;color:var(--muted)">${b.cycles_completed}${b.max_cycles ? "/" + b.max_cycles : ""}</span>
-              </div>
+            </div>
+          </div>
+          <div id="bot-tpl-${b.id}" style="display:none;margin-bottom:18px">
+            <div class="url-row">
+              <code class="url-display dim" style="font-size:10px;white-space:pre;overflow-x:auto;line-height:1.6">${escapeAttr(botTemplate(b.name))}</code>
+              <button class="copy-btn" data-copy-tpl="${escapeAttr(b.name)}" style="align-self:stretch;font-size:11px">Copy</button>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:18px 28px">
+            <div>
+              <label class="bot-field-label">Size (USDT)</label>
+              <input class="inline-input" type="number" step="1" min="1" value="${b.size}" data-bot-id="${b.id}" data-field="size" style="width:100%" />
+            </div>
+            <div>
+              <label class="bot-field-label">Leverage</label>
+              <input class="inline-input" type="number" step="1" min="1" value="${b.leverage}" data-bot-id="${b.id}" data-field="leverage" style="width:100%" />
+            </div>
+            <div>
+              <label class="bot-field-label">TP %</label>
+              <input class="inline-input" type="number" step="0.1" min="0" value="${b.tp_pct ?? ""}" placeholder="—" data-bot-id="${b.id}" data-field="tp_pct" style="width:100%" />
+            </div>
+            <div>
+              <label class="bot-field-label">SL %</label>
+              <input class="inline-input" type="number" step="0.1" min="0" value="${b.sl_pct ?? ""}" placeholder="—" data-bot-id="${b.id}" data-field="sl_pct" style="width:100%" />
+            </div>
+            <div>
+              <label class="bot-field-label">Max Cycles</label>
+              <input class="inline-input" type="number" step="1" min="1" value="${b.max_cycles ?? ""}" placeholder="∞" data-bot-id="${b.id}" data-field="max_cycles" style="width:100%" />
+              <div style="font-size:11px;color:var(--muted);margin-top:5px">${b.cycles_completed}${b.max_cycles ? "/" + b.max_cycles : ""} completed</div>
               ${cycBar}
-            </td>
-            <td style="${tdStyle}">
-              <div class="${pnlCls}" style="font-family:monospace;font-weight:700">${total >= 0 ? "+" : ""}${currency.format(total)}</div>
-              <div style="font-size:10px;color:var(--muted)">${pnlPct}%</div>
-            </td>
-            <td style="${tdStyle}">
-              <button class="mini-switch ${b.hedge_mode ? "on" : ""}" data-bot-id="${b.id}" data-hedge="${b.hedge_mode}">
-                ${b.hedge_mode ? "On" : "Off"}
-              </button>
-            </td>
-            <td style="${tdStyle}">
-              <button class="mini-switch ${b.enabled ? "on" : ""}" data-bot-id="${b.id}" data-enabled="${b.enabled}">
-                ${b.enabled ? "Active" : "Paused"}
-              </button>
-            </td>
-          </tr></tbody>
-        </table>
+            </div>
+            <div>
+              <label class="bot-field-label">Session P&amp;L</label>
+              <div class="${pnlCls}" style="font-family:monospace;font-weight:700;font-size:15px">${total >= 0 ? "+" : ""}${currency.format(total)}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px">${pnlPct}%</div>
+            </div>
+          </div>
+        </div>
         <div style="padding:0 0 0 0;border-top:1px solid var(--border)">
           <div style="padding:10px 16px 6px;font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)">Pairs</div>
           <table style="width:100%;border-collapse:collapse;background:var(--bg)">
