@@ -474,7 +474,7 @@ function renderPositions(rows) {
       <td>${statusBadge(t.status)}</td>
       <td>${fmtDate(t.opened_at)}</td>
     </tr>`).join("");
-  // Fetch live unrealized P&L from Bitget
+  // Fetch live unrealized P&L from Deriv
   getJson("/api/unrealized-pnl").then(upl => {
     el.querySelectorAll("[data-upl]").forEach(cell => {
       const key = cell.dataset.upl;

@@ -1,6 +1,6 @@
-# Trading Execution and Strategy Monitoring Platform
+# Deriv Synthetic Trading Platform
 
-Railway-ready MVP for receiving TradingView strategy webhooks, validating signals, logging strategy-linked trades, and monitoring strategy performance before optionally executing on Bitget Futures.
+Railway-ready MVP for receiving TradingView strategy webhooks, validating signals, logging strategy-linked trades, and monitoring strategy performance before optionally executing on Deriv synthetic markets.
 
 ## What is included
 
@@ -9,7 +9,7 @@ Railway-ready MVP for receiving TradingView strategy webhooks, validating signal
 - Duplicate signal blocking with `signal_id`
 - Open-position checks per strategy and symbol
 - Strategy-level maximum position size and daily loss guardrails
-- Paper execution by default, with a gated Bitget live execution client
+- Paper execution by default, with a gated Deriv live execution client
 - Signal journal, open positions, trade history, and strategy performance dashboard
 - Period views for today, this week, this month, and all time
 - Railway deployment files: `Procfile` and `railway.json`
@@ -71,7 +71,8 @@ Copy `.env.example` to `.env` locally or set these variables in Railway.
 - `EXECUTION_MODE`: `paper` or `live`. Keep this as `paper` until the dashboard and rules are verified.
 - `EMERGENCY_STOP`: set to `true` to reject all incoming signals.
 - `DATABASE_URL`: defaults to SQLite. On Railway, point this at a managed Postgres database when ready.
-- `BITGET_API_KEY`, `BITGET_API_SECRET`, `BITGET_API_PASSPHRASE`: required only for `EXECUTION_MODE=live`.
+- `DERIV_APP_ID`, `DERIV_API_TOKEN`: required only for `EXECUTION_MODE=live`.
+- `DERIV_API_URL`: optional override for the Deriv API endpoint.
 
 ## API
 
@@ -85,4 +86,4 @@ Copy `.env.example` to `.env` locally or set these variables in Railway.
 
 ## Live trading note
 
-Live exchange execution is deliberately behind `EXECUTION_MODE=live` and requires Bitget credentials. Before enabling it, test webhook formatting, strategy limits, duplicate handling, entry/exit lifecycle, and Railway database persistence in paper mode.
+Live exchange execution is deliberately behind `EXECUTION_MODE=live` and requires valid Deriv credentials. Before enabling it, test webhook formatting, strategy limits, duplicate handling, entry/exit lifecycle, and Railway database persistence in paper mode.

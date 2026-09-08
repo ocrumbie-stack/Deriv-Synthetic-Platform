@@ -6,9 +6,9 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.bitget import BitgetClient
 from app.config import settings
 from app.database import Base, SessionLocal, engine, get_db, sync_schema
+from app.deriv import DerivClient
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalBot, Strategy, Trade
 from app.schemas import BotPairOut, BotPairUpdate, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, TradeOut, WebhookSignal
 from app.services import account_exposure, arm_pair_tpsl, daily_account_net, get_risk_settings, get_signal_bot, process_webhook_signal
@@ -75,20 +75,20 @@ async def receive_webhook(payload: WebhookSignal, background_tasks: BackgroundTa
 
 @app.get("/api/unrealized-pnl")
 async def unrealized_pnl() -> dict:
-    positions = await BitgetClient().get_positions()
+    positions = await DerivClient().get_positions()
     result: dict[str, float] = {}
     for p in positions:
-        symbol   = p.get("symbol", "")
-        hold     = p.get("holdSide", "")
-        upl      = float(p.get("unrealizedPL") or p.get("upl") or 0)
-        key      = f"{symbol}_{hold}" if hold else symbol
+        symbol = p.get("symbol", "")
+        hold = p.get("holdSide", "")
+        upl = float(p.get("unrealizedPL") or p.get("upl") or 0)
+        key = f"{symbol}_{hold}" if hold else symbol
         result[key] = round(upl, 8)
     return result
 
 
 @app.get("/api/symbols")
 async def list_symbols() -> list[str]:
-    return await BitgetClient().get_contracts()
+    return await DerivClient().get_contracts()
 
 
 @app.get("/api/signal-bots/{bot_id}/pairs", response_model=list[BotPairOut])
@@ -114,7 +114,7 @@ async def update_bot_pair(bot_id: int, symbol: str, updates: BotPairUpdate, db: 
         setattr(pair, field, value)
     db.commit()
     db.refresh(pair)
-    # Arm TP/SL on Bitget if an open trade exists for this pair
+    # Arm TP/SL on Deriv if an open trade exists for this pair
     open_trade = db.scalar(
         select(Trade).where(
             Trade.strategy_name == bot.name,
@@ -333,7 +333,7 @@ async def account_balance() -> dict:
     if settings.execution_mode.lower() != "live":
         return {"mode": "paper", "equity": None, "available": None, "unrealized_pnl": None}
     try:
-        data = await BitgetClient().get_account_balance()
+        data = await DerivClient().get_account_balance()
         if not data:
             return {"mode": "live", "equity": None, "available": None, "unrealized_pnl": None, "error": "fetch_failed"}
         return {

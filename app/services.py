@@ -5,8 +5,8 @@ from datetime import datetime, time
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
-from app.bitget import BitgetClient, BitgetExecutionError
 from app.config import settings
+from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, Trade
 from app.schemas import WebhookSignal
 
@@ -123,7 +123,7 @@ async def arm_pair_tpsl(
     is_long = direction == "long"
     tp_price = entry_price * (1 + tp_pct / 100) if tp_pct and is_long else (entry_price * (1 - tp_pct / 100) if tp_pct else None)
     sl_price = entry_price * (1 - sl_pct / 100) if sl_pct and is_long else (entry_price * (1 + sl_pct / 100) if sl_pct else None)
-    await BitgetClient().place_tpsl(symbol, direction, tp_price, sl_price, hedge_mode)
+    await DerivClient().place_tpsl(symbol, direction, tp_price, sl_price, hedge_mode)
 
 
 def update_bot_session(db: Session, bot: SignalBot, trade_net: float) -> None:
@@ -263,7 +263,7 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
         db.flush()
 
         try:
-            client = BitgetClient()
+            client = DerivClient()
             hedge = bot.hedge_mode if bot else False
             cache_key = (payload.symbol, hedge)
             desired_leverage = int(payload.leverage)
@@ -275,7 +275,7 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
             trade.exchange_order_id = str(result.get("order_id") or result.get("data", {}).get("orderId") or "")
             trade.execution_status = ExecutionStatus.executed
             signal.status = ExecutionStatus.executed
-            # Arm pair-level TP/SL on Bitget if configured
+            # Arm pair-level TP/SL on Deriv if configured
             if bot and payload.direction and payload.price:
                 pair = get_or_create_bot_pair(db, bot, payload.symbol)
                 if pair.tp_pct or pair.sl_pct:
@@ -284,9 +284,9 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
                             payload.symbol, payload.direction.value, payload.price,
                             pair.tp_pct, pair.sl_pct, hedge,
                         )
-                    except BitgetExecutionError as exc:
+                    except DerivExecutionError as exc:
                         signal.rejection_reason = (signal.rejection_reason or "") + f" | TP/SL arm failed: {exc}"
-        except BitgetExecutionError as exc:
+        except DerivExecutionError as exc:
             trade.execution_status = ExecutionStatus.failed
             signal.status = ExecutionStatus.failed
             signal.rejection_reason = str(exc)
@@ -295,10 +295,10 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
         trade = find_open_trade(db, strategy.id, payload.symbol.upper())
         if trade:
             try:
-                result = await BitgetClient().close_order(trade.symbol, trade.direction.value, trade.size, hedge_mode=bot.hedge_mode if bot else False)
+                result = await DerivClient().close_order(trade.symbol, trade.direction.value, trade.size, hedge_mode=bot.hedge_mode if bot else False)
                 if result.get("message") != "no_position":
                     trade.exchange_order_id = str(result.get("order_id") or result.get("data", {}).get("orderId") or "")
-            except BitgetExecutionError as exc:
+            except DerivExecutionError as exc:
                 signal.status = ExecutionStatus.failed
                 signal.rejection_reason = str(exc)
                 db.commit()

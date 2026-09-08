@@ -2,16 +2,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    app_name: str = "Trading Execution Platform"
+    app_name: str = "Deriv Synthetic Trading Platform"
     database_url: str = "sqlite:///./trading_platform.db"
     webhook_secret: str = "change-me"
     execution_mode: str = "paper"
     emergency_stop: bool = False
 
-    bitget_api_key: str = ""
-    bitget_api_secret: str = ""
-    bitget_api_passphrase: str = ""
-    bitget_base_url: str = "https://api.bitget.com"
+    deriv_app_id: str = ""
+    deriv_api_token: str = ""
+    deriv_api_url: str = "https://api.deriv.com"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
