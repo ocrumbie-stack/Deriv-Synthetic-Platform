@@ -31,7 +31,7 @@ Open `http://127.0.0.1:8000`.
 Set TradingView's webhook URL to:
 
 ```text
-https://your-railway-app.up.railway.app/webhook
+https://web-production-a0f10.up.railway.app/webhook
 ```
 
 Example entry:
@@ -39,8 +39,8 @@ Example entry:
 ```json
 {
   "secret": "change-me",
-  "strategy": "BTC Trend Breakout",
-  "symbol": "BTCUSDT",
+  "strategy": "Synthetic Momentum",
+  "symbol": "R_100",
   "action": "entry",
   "direction": "long",
   "price": 65000,
@@ -55,8 +55,8 @@ Example exit:
 ```json
 {
   "secret": "change-me",
-  "strategy": "BTC Trend Breakout",
-  "symbol": "BTCUSDT",
+  "strategy": "Synthetic Momentum",
+  "symbol": "R_100",
   "action": "exit",
   "price": 66250,
   "signal_id": "exit-{{time}}"
