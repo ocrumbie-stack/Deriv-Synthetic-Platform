@@ -1104,7 +1104,12 @@ tr.clickable:hover td, tr.selected td { background: var(--panel-2, #16161e); }
   .charts-row, .analytics-grid, .risk-grid,
   .risk-status-grid, .integration-cards { grid-template-columns: 1fr; }
   .pnl-panel { grid-column: span 1; }
-  .metrics-highlights, .metrics { grid-template-columns: repeat(2, 1fr); }
+  #summary, .page-body, .metrics-highlights, .metrics, .charts-row,
+  .webhook-panel, .chart-panel, .webhook-section { min-width: 0; max-width: 100%; }
+  .metrics-highlights { grid-template-columns: 1fr !important; }
+  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric, .metric.highlight { min-width: 0; }
+  .url-row { min-width: 0; }
   .page-header { padding: 14px 16px; }
   .page-body { padding: 16px 16px 40px; }
 }
