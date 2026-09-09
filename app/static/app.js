@@ -111,7 +111,19 @@ async function patchJson(url, body) {
 
 // ─── Navigation ──────────────────────────────────────────────────────────────
 
-function navigate(pageId) {
+const pageIds = new Set([
+  "dashboard-overview",
+  "trading-bots",
+  "trading-positions",
+  "trading-history",
+  "signals-journal",
+  "strategies-ranking",
+  "strategies-settings",
+  "system-risk",
+]);
+
+function navigate(pageId, updateUrl = true) {
+  if (!pageIds.has(pageId)) pageId = "dashboard-overview";
   document.querySelectorAll(".nav-item").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.page === pageId);
   });
@@ -127,7 +139,18 @@ function navigate(pageId) {
     refreshBots();
     wireBotForm();
   }
+  if (updateUrl && window.location.hash !== `#${pageId}`) {
+    history.pushState(null, "", `#${pageId}`);
+  }
 }
+
+window.addEventListener("hashchange", () => {
+  navigate(window.location.hash.slice(1), false);
+});
+
+window.addEventListener("popstate", () => {
+  navigate(window.location.hash.slice(1), false);
+});
 
 document.querySelectorAll(".nav-item[data-page]").forEach(btn => {
   btn.addEventListener("click", () => navigate(btn.dataset.page));
@@ -137,6 +160,8 @@ document.querySelectorAll(".nav-item[data-page]").forEach(btn => {
 document.querySelectorAll(".nav-link-btn[data-page]").forEach(btn => {
   btn.addEventListener("click", () => navigate(btn.dataset.page));
 });
+
+navigate(window.location.hash.slice(1) || "dashboard-overview", false);
 
 // ─── Render: Summary cards ───────────────────────────────────────────────────
 
