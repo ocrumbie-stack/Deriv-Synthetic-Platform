@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     deriv_app_id: str = ""
     deriv_api_token: str = ""
-    deriv_api_url: str = "https://api.deriv.com"
+    deriv_ws_url: str = "wss://ws.derivws.com/websockets/v3"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

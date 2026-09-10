@@ -244,30 +244,26 @@
 
             <div id="newBotForm" style="display:none" class="risk-panel">
               <p class="panel-title" style="margin-bottom:4px">New Signal Bot</p>
-              <p style="font-size:11px;color:var(--muted);margin-bottom:16px">Size and leverage are stored here — no need to include them in your TradingView alert. Which pairs this bot trades is controlled by your TradingView alerts — set up one alert per symbol using the same strategy name. TP / SL / Max Cycles all apply to each coin individually (you can still override a specific coin later).</p>
-              <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr 1fr 1fr auto;gap:12px;align-items:end">
+              <p style="font-size:11px;color:var(--muted);margin-bottom:16px">Stake and risk controls are stored here — no need to include them in your TradingView alert. Which symbols this bot trades is controlled by your TradingView alerts — set up one alert per symbol using the same strategy name. TP / SL / Max Cycles apply to each symbol individually.</p>
+              <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr 1fr auto;gap:12px;align-items:end">
                 <div>
                   <label class="bot-field-label">Strategy name</label>
                   <input id="botName" type="text" placeholder="MyStrategy" />
                 </div>
                 <div>
-                  <label class="bot-field-label">Size (USDT)</label>
-                  <input id="botSize" type="number" step="1" min="1" placeholder="100" />
+                  <label class="bot-field-label">Stake (USD)</label>
+                  <input id="botSize" type="number" step="0.01" min="0.01" placeholder="1" />
                 </div>
                 <div>
-                  <label class="bot-field-label">Leverage</label>
-                  <input id="botLeverage" type="number" step="1" min="1" placeholder="1" />
-                </div>
-                <div>
-                  <label class="bot-field-label">TP % (per coin)</label>
+                  <label class="bot-field-label">TP % (per symbol)</label>
                   <input id="botTp" type="number" step="0.1" min="0.1" placeholder="optional" />
                 </div>
                 <div>
-                  <label class="bot-field-label">SL % (per coin)</label>
+                  <label class="bot-field-label">SL % (per symbol)</label>
                   <input id="botSl" type="number" step="0.1" min="0.1" placeholder="optional" />
                 </div>
                 <div>
-                  <label class="bot-field-label">Max Cycles (per coin)</label>
+                  <label class="bot-field-label">Max Cycles (per symbol)</label>
                   <input id="botCycles" type="number" step="1" min="1" placeholder="optional" />
                 </div>
                 <div style="display:flex;flex-direction:column;gap:6px;align-self:end">
@@ -317,7 +313,7 @@
               <table>
                 <thead><tr>
                   <th>Strategy</th><th>Symbol</th><th>Direction</th>
-                  <th>Entry price</th><th>Size</th><th>Leverage</th>
+                  <th>Entry price</th><th>Stake</th>
                   <th>Unrealized P/L</th><th>Status</th><th>Opened</th>
                 </tr></thead>
                 <tbody id="positions"></tbody>

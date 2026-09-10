@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-import httpx
+import websockets
 
 from app.config import settings
 from app.schemas import WebhookSignal
@@ -13,9 +13,6 @@ class DerivExecutionError(RuntimeError):
 
 
 class DerivClient:
-    def __init__(self) -> None:
-        self.base_url = settings.deriv_api_url.rstrip("/")
-
     def _timestamp(self) -> str:
         return str(int(datetime.now(timezone.utc).timestamp() * 1000))
 
@@ -36,21 +33,25 @@ class DerivClient:
                 "Live execution is missing Deriv credentials: " + ", ".join(missing)
             )
 
-        payload: dict[str, Any] = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": method,
-            "params": params or {},
-        }
-        async with httpx.AsyncClient(timeout=15) as client:
-            response = await client.post(f"{self.base_url}/api/v3", json=payload, headers={"Content-Type": "application/json"})
-        if response.status_code >= 400:
-            raise DerivExecutionError(f"Deriv rejected {method}: {response.text}")
-
-        data = response.json()
+        request = dict(params or {})
+        request[method] = request.pop(method, 1)
+        uri = f"{settings.deriv_ws_url}?app_id={settings.deriv_app_id}"
+        try:
+            async with websockets.connect(uri, open_timeout=15, close_timeout=5) as socket:
+                if method not in {"active_symbols", "proposal"}:
+                    await socket.send(json.dumps({"authorize": settings.deriv_api_token}))
+                    authorization = json.loads(await socket.recv())
+                    if authorization.get("error"):
+                        raise DerivExecutionError(f"Deriv authorization error: {authorization['error']}")
+                await socket.send(json.dumps(request))
+                data = json.loads(await socket.recv())
+        except DerivExecutionError:
+            raise
+        except Exception as exc:
+            raise DerivExecutionError(f"Deriv {method} request failed: {exc}") from exc
         if data.get("error"):
             raise DerivExecutionError(f"Deriv {method} error: {data['error']}")
-        return data.get("result") or {}
+        return data
 
     async def get_account_balance(self) -> dict[str, Any] | None:
         if settings.execution_mode.lower() != "live":
@@ -77,7 +78,8 @@ class DerivClient:
         except DerivExecutionError:
             return []
 
-        entries = result.get("contracts") if isinstance(result, dict) else None
+        portfolio = result.get("portfolio", result) if isinstance(result, dict) else None
+        entries = portfolio.get("contracts") if isinstance(portfolio, dict) else None
         if not isinstance(entries, list):
             return []
 
@@ -104,7 +106,7 @@ class DerivClient:
         if settings.execution_mode.lower() != "live":
             return []
         try:
-            result = await self._rpc("active_symbols", {"product_type": "synthetic_index"})
+            result = await self._rpc("active_symbols", {"active_symbols": "brief"})
         except DerivExecutionError:
             return []
 
@@ -126,18 +128,25 @@ class DerivClient:
 
         symbol = signal.symbol.upper()
         contract_type = "CALL" if signal.direction.value == "long" else "PUT"
-        params = {
-            "symbol": symbol,
+        proposal = await self._rpc("proposal", {
+            "proposal": 1,
+            "underlying_symbol": symbol,
             "contract_type": contract_type,
             "currency": "USD",
             "amount": float(signal.size),
             "basis": "stake",
-        }
-        if signal.price and signal.price > 0:
-            params["price"] = float(signal.price)
+            "duration": 1,
+            "duration_unit": "t",
+        })
+        proposal_data = proposal.get("proposal", proposal)
+        proposal_id = proposal_data.get("id") if isinstance(proposal_data, dict) else None
+        ask_price = proposal_data.get("ask_price") if isinstance(proposal_data, dict) else None
+        if not proposal_id or ask_price is None:
+            raise DerivExecutionError("Deriv returned an incomplete contract proposal.")
 
-        result = await self._rpc("buy_contract", params)
-        order_id = result.get("contract_id") or result.get("contractId") or result.get("buy")
+        result = await self._rpc("buy", {"buy": proposal_id, "price": float(ask_price)})
+        buy_data = result.get("buy", result)
+        order_id = buy_data.get("contract_id") if isinstance(buy_data, dict) else None
         return {"order_id": str(order_id or self._timestamp()), "mode": "live", "result": result}
 
     async def close_order(self, symbol: str, direction: str, size: float, hedge_mode: bool = False) -> dict[str, Any]:
@@ -161,14 +170,10 @@ class DerivClient:
         if contract_id is None:
             return {"mode": "live", "message": "no_position"}
 
-        result = await self._rpc("sell_contract", {"contract_id": contract_id, "price": 0})
-        return {"mode": "live", "order_id": str(result.get("sell") or contract_id), "result": result}
-
-    async def set_leverage(self, symbol: str, leverage: int, hedge_mode: bool = False) -> None:
-        return None
-
-    async def set_position_mode(self, hedge_mode: bool) -> None:
-        return None
+        result = await self._rpc("sell", {"sell": contract_id, "price": 0})
+        sell_data = result.get("sell", result)
+        order_id = sell_data.get("transaction_id") if isinstance(sell_data, dict) else None
+        return {"mode": "live", "order_id": str(order_id or contract_id), "result": result}
 
     async def place_tpsl(
         self,

@@ -44,8 +44,7 @@ Example entry:
   "action": "entry",
   "direction": "long",
   "price": 65000,
-  "size": 0.01,
-  "leverage": 5,
+  "size": 1,
   "signal_id": "{{strategy.order.id}}-{{time}}"
 }
 ```
@@ -72,7 +71,7 @@ Copy `.env.example` to `.env` locally or set these variables in Railway.
 - `EMERGENCY_STOP`: set to `true` to reject all incoming signals.
 - `DATABASE_URL`: defaults to SQLite. On Railway, point this at a managed Postgres database when ready.
 - `DERIV_APP_ID`, `DERIV_API_TOKEN`: required only for `EXECUTION_MODE=live`.
-- `DERIV_API_URL`: optional override for the Deriv API endpoint.
+- `DERIV_WS_URL`: optional override for the Deriv WebSocket endpoint.
 
 ## API
 

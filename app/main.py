@@ -316,7 +316,7 @@ def analytics(period: str = "all", db: Session = Depends(get_db)) -> dict:
     symbol_exposure: dict[str, float] = {}
     for trade in trades:
         if trade.status == PositionStatus.open:
-            symbol_exposure[trade.symbol] = symbol_exposure.get(trade.symbol, 0.0) + trade.size * trade.leverage
+            symbol_exposure[trade.symbol] = symbol_exposure.get(trade.symbol, 0.0) + trade.size
 
     return {
         "equity_curve": equity_curve,
@@ -338,7 +338,7 @@ async def account_balance() -> dict:
             return {"mode": "live", "equity": None, "available": None, "unrealized_pnl": None, "error": "fetch_failed"}
         return {
             "mode": "live",
-            "equity": float(data.get("usdtEquity") or data.get("equity") or 0),
+            "equity": float(data.get("equity") or 0),
             "available": float(data.get("available") or 0),
             "unrealized_pnl": float(data.get("unrealizedPL") or 0),
         }

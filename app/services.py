@@ -66,7 +66,7 @@ def daily_account_net(db: Session) -> float:
 
 def account_exposure(db: Session) -> float:
     total = db.scalar(
-        select(func.coalesce(func.sum(Trade.size * Trade.leverage), 0.0)).where(
+        select(func.coalesce(func.sum(Trade.size), 0.0)).where(
             Trade.status == PositionStatus.open,
         )
     )
@@ -176,7 +176,7 @@ def validate_signal(db: Session, payload: WebhookSignal, strategy: Strategy, bot
             return "Account daily loss limit has been reached."
         if strategy.daily_loss_limit and daily_strategy_net(db, strategy.id) <= -abs(strategy.daily_loss_limit):
             return "Strategy daily loss limit has been reached."
-        projected_exposure = account_exposure(db) + (payload.size * payload.leverage)
+        projected_exposure = account_exposure(db) + payload.size
         if risk.max_account_exposure and projected_exposure > risk.max_account_exposure:
             return "Signal would exceed max account exposure."
         if find_open_trade(db, strategy.id, payload.symbol):
@@ -195,35 +195,15 @@ def calculate_trade_result(trade: Trade, exit_price: float) -> tuple[float, floa
     return gross, net
 
 
-_configured_leverage: dict[tuple[str, bool], int] = {}  # (symbol, hedge_mode) -> last leverage set on the exchange
-
-
 async def process_webhook_signal(db: Session, payload: WebhookSignal) -> ProcessedSignal:
     strategy = get_or_create_strategy(db, payload.strategy)
     bot = get_signal_bot(db, payload.strategy)
     if bot:
-        if payload.action == SignalAction.entry and (not payload.price or payload.price <= 0):
-            # Can't size the position without a price — the TradingView template always sends {{close}}
-            rejection = "Bot entry signals must include price for USDT-to-contracts conversion."
-            signal = Signal(
-                strategy_id=strategy.id, strategy_name=strategy.name,
-                symbol=payload.symbol.upper(), action=payload.action,
-                direction=payload.direction, price=payload.price,
-                size=payload.size, leverage=payload.leverage,
-                signal_id=payload.signal_id,
-                status=ExecutionStatus.rejected, rejection_reason=rejection,
-                raw_payload=json.dumps(payload.model_dump(mode="json")),
-            )
-            db.add(signal)
-            db.commit()
-            db.refresh(signal)
-            return ProcessedSignal(signal=signal, trade=None)
-        # bot.size is USDT margin; position contracts = (margin × leverage) / price
-        if payload.price and payload.price > 0:
-            size_contracts = round((bot.size * bot.leverage) / payload.price, 8)
-        else:
-            size_contracts = bot.size
-        payload = payload.model_copy(update={"size": size_contracts, "leverage": bot.leverage})
+        # Deriv contracts use a stake amount. TradingView's price is recorded for
+        # analytics, but it does not determine the stake or contract quantity.
+        payload = payload.model_copy(update={"size": bot.size, "leverage": 1.0})
+    else:
+        payload = payload.model_copy(update={"leverage": 1.0})
     rejection = validate_signal(db, payload, strategy, bot)
     signal = Signal(
         strategy_id=strategy.id,
@@ -265,12 +245,6 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
         try:
             client = DerivClient()
             hedge = bot.hedge_mode if bot else False
-            cache_key = (payload.symbol, hedge)
-            desired_leverage = int(payload.leverage)
-            if _configured_leverage.get(cache_key) != desired_leverage:
-                await client.set_position_mode(hedge)
-                await client.set_leverage(payload.symbol, desired_leverage, hedge)
-                _configured_leverage[cache_key] = desired_leverage
             result = await client.place_order(payload, hedge_mode=hedge)
             trade.exchange_order_id = str(result.get("order_id") or result.get("data", {}).get("orderId") or "")
             trade.execution_status = ExecutionStatus.executed
