@@ -61,14 +61,19 @@ class DerivClient:
         except DerivExecutionError:
             return None
 
-        balance = result.get("balance") if isinstance(result, dict) else None
-        if isinstance(balance, dict):
-            return {
-                "equity": float(balance.get("balance", 0) or 0),
-                "available": float(balance.get("available", 0) or 0),
-                "unrealized_pnl": 0.0,
-            }
-        return {"equity": 0.0, "available": 0.0, "unrealized_pnl": 0.0}
+        if not isinstance(result, dict):
+            return None
+        balance = result.get("balance", result)
+        if not isinstance(balance, dict):
+            return None
+        equity = float(balance.get("balance", balance.get("equity", 0)) or 0)
+        available = float(balance.get("available", balance.get("available_balance", equity)) or 0)
+        return {
+            "equity": equity,
+            "available": available,
+            "unrealized_pnl": float(balance.get("unrealized_pnl", 0) or 0),
+            "currency": str(balance.get("currency", "")),
+        }
 
     async def get_positions(self) -> list[dict[str, Any]]:
         if settings.execution_mode.lower() != "live":
