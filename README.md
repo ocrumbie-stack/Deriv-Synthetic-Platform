@@ -71,6 +71,7 @@ Copy `.env.example` to `.env` locally or set these variables in Railway.
 - `EMERGENCY_STOP`: set to `true` to reject all incoming signals.
 - `DATABASE_URL`: defaults to SQLite. On Railway, point this at a managed Postgres database when ready.
 - `DERIV_APP_ID`, `DERIV_API_TOKEN`: required only for `EXECUTION_MODE=live`.
+- `DERIV_ACCOUNT_ID`: optional Deriv login ID such as `CR...` to select a linked account (CFD, financial, or TradingView) after authorization.
 - `DERIV_WS_URL`: optional override for the Deriv WebSocket endpoint.
 
 ## API

@@ -43,11 +43,23 @@ class DerivClient:
                     authorization = json.loads(await socket.recv())
                     if authorization.get("error"):
                         raise DerivExecutionError(f"Deriv authorization error: {authorization['error']}")
+                    if settings.deriv_account_id:
+                        await socket.send(json.dumps({
+                            "switch_account": 1,
+                            "loginid": settings.deriv_account_id,
+                        }))
+                        switched = json.loads(await socket.recv())
+                        if switched.get("error"):
+                            raise DerivExecutionError(f"Deriv account switch error: {switched['error']}")
                 await socket.send(json.dumps(request))
                 data = json.loads(await socket.recv())
         except DerivExecutionError:
             raise
         except Exception as exc:
+            if "HTTP 401" in str(exc):
+                raise DerivExecutionError(
+                    "Deriv rejected DERIV_APP_ID (HTTP 401). Use a valid Deriv app ID, such as 1089."
+                ) from exc
             raise DerivExecutionError(f"Deriv {method} request failed: {exc}") from exc
         if data.get("error"):
             raise DerivExecutionError(f"Deriv {method} error: {data['error']}")

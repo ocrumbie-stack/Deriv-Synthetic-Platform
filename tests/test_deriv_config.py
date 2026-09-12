@@ -8,6 +8,7 @@ class DerivConfigTests(unittest.TestCase):
         settings = Settings()
         self.assertTrue(hasattr(settings, "deriv_app_id"))
         self.assertTrue(hasattr(settings, "deriv_api_token"))
+        self.assertTrue(hasattr(settings, "deriv_account_id"))
         self.assertEqual(settings.execution_mode, "paper")
 
 
