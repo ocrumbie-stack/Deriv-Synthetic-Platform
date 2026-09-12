@@ -20,12 +20,15 @@ class DerivClient:
         if settings.execution_mode.lower() != "live":
             return {}
 
+        app_id = settings.deriv_app_id.strip()
+        api_token = settings.deriv_api_token.strip()
+        account_id = settings.deriv_account_id.strip()
         missing = [
             name
             for name, value in {
-                "DERIV_APP_ID": settings.deriv_app_id,
-                "DERIV_API_TOKEN": settings.deriv_api_token,
-                "DERIV_ACCOUNT_ID": settings.deriv_account_id,
+                "DERIV_APP_ID": app_id,
+                "DERIV_API_TOKEN": api_token,
+                "DERIV_ACCOUNT_ID": account_id,
             }.items()
             if not value
         ]
@@ -42,14 +45,14 @@ class DerivClient:
         try:
             async with websockets.connect(uri, open_timeout=15, close_timeout=5) as socket:
                 if method not in {"active_symbols", "proposal"}:
-                    await socket.send(json.dumps({"authorize": settings.deriv_api_token}))
+                    await socket.send(json.dumps({"authorize": api_token}))
                     authorization = json.loads(await socket.recv())
                     if authorization.get("error"):
                         raise DerivExecutionError(f"Deriv authorization error: {authorization['error']}")
-                    if settings.deriv_account_id:
+                    if account_id:
                         await socket.send(json.dumps({
                             "switch_account": 1,
-                            "loginid": settings.deriv_account_id,
+                            "loginid": account_id,
                         }))
                         switched = json.loads(await socket.recv())
                         if switched.get("error"):
