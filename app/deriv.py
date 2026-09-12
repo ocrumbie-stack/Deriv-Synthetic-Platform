@@ -25,6 +25,7 @@ class DerivClient:
             for name, value in {
                 "DERIV_APP_ID": settings.deriv_app_id,
                 "DERIV_API_TOKEN": settings.deriv_api_token,
+                "DERIV_ACCOUNT_ID": settings.deriv_account_id,
             }.items()
             if not value
         ]
