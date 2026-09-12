@@ -195,7 +195,7 @@ function renderSummary() {
   const balVal     = equity !== null ? currency.format(equity) : "—";
   const balSub     = avail !== null
     ? `${currency.format(avail)} avail · UPL ${upl !== null ? (upl >= 0 ? "+" : "") + currency.format(upl) : "—"}${!isLive ? " (demo)" : ""}`
-    : "failed to fetch";
+    : (balance?.error || "failed to fetch");
   const gaugeRatio = (equity && avail != null && equity > 0) ? Math.min(avail / equity, 1) : 0;
   const gaugeClr   = gaugeRatio < 0.25 ? "var(--red)" : gaugeRatio < 0.5 ? "var(--yellow)" : "var(--green)";
 

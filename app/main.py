@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import Base, SessionLocal, engine, get_db, sync_schema
-from app.deriv import DerivClient
+from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalBot, Strategy, Trade
 from app.schemas import BotPairOut, BotPairUpdate, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, TradeOut, WebhookSignal
 from app.services import account_exposure, arm_pair_tpsl, daily_account_net, get_risk_settings, get_signal_bot, process_webhook_signal
@@ -340,7 +340,15 @@ async def account_balance() -> dict:
             "mode": "live",
             "equity": float(data.get("equity") or 0),
             "available": float(data.get("available") or 0),
-            "unrealized_pnl": float(data.get("unrealizedPL") or 0),
+            "unrealized_pnl": float(data.get("unrealized_pnl") or 0),
+        }
+    except DerivExecutionError as exc:
+        return {
+            "mode": "live",
+            "equity": None,
+            "available": None,
+            "unrealized_pnl": None,
+            "error": str(exc),
         }
     except Exception:
         return {"mode": "live", "equity": None, "available": None, "unrealized_pnl": None, "error": "fetch_failed"}

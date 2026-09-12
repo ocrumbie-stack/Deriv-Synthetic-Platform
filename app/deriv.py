@@ -56,10 +56,7 @@ class DerivClient:
     async def get_account_balance(self) -> dict[str, Any] | None:
         if settings.execution_mode.lower() != "live":
             return None
-        try:
-            result = await self._rpc("balance")
-        except DerivExecutionError:
-            return None
+        result = await self._rpc("balance")
 
         if not isinstance(result, dict):
             return None
