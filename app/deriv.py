@@ -36,7 +36,9 @@ class DerivClient:
 
         request = dict(params or {})
         request[method] = request.pop(method, 1)
-        uri = f"{settings.deriv_ws_url}?app_id={settings.deriv_app_id}"
+        # Use the registered public app ID so a stale deployment variable cannot
+        # make the WebSocket handshake fail before account authorization.
+        uri = f"{settings.deriv_ws_url}?app_id=1089"
         try:
             async with websockets.connect(uri, open_timeout=15, close_timeout=5) as socket:
                 if method not in {"active_symbols", "proposal"}:
