@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     execution_mode: str = "paper"
     emergency_stop: bool = False
 
-    deriv_app_id: str = "1089"
+    deriv_app_id: str = ""
     deriv_api_token: str = ""
     deriv_account_id: str = "ROT90786324"
     deriv_ws_url: str = "wss://ws.derivws.com/websockets/v3"

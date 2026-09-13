@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import websockets
+import httpx
 
 from app.config import settings
 from app.schemas import WebhookSignal
@@ -29,6 +30,7 @@ class DerivClient:
                 "DERIV_APP_ID": app_id,
                 "DERIV_API_TOKEN": api_token,
                 "DERIV_ACCOUNT_ID": account_id,
+                "DERIV_APP_ID": app_id,
             }.items()
             if not value
         ]
@@ -39,24 +41,28 @@ class DerivClient:
 
         request = dict(params or {})
         request[method] = request.pop(method, 1)
-        # Use the registered public app ID so a stale deployment variable cannot
-        # make the WebSocket handshake fail before account authorization.
-        uri = f"{settings.deriv_ws_url}?app_id=1089"
         try:
+            if method in {"active_symbols", "proposal"}:
+                uri = f"{settings.deriv_ws_url}?app_id={app_id or '1089'}"
+            else:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    otp_response = await client.post(
+                        f"https://api.derivws.com/trading/v1/options/accounts/{account_id}/otp",
+                        headers={
+                            "Authorization": f"Bearer {api_token}",
+                            "Deriv-App-ID": app_id,
+                        },
+                    )
+                if otp_response.is_error:
+                    raise DerivExecutionError(
+                        f"Deriv OTP request failed ({otp_response.status_code}): {otp_response.text}"
+                    )
+                otp_data = otp_response.json()
+                uri = ((otp_data.get("data") or {}).get("url")) if isinstance(otp_data, dict) else None
+                if not uri:
+                    raise DerivExecutionError("Deriv OTP response did not include a WebSocket URL.")
+
             async with websockets.connect(uri, open_timeout=15, close_timeout=5) as socket:
-                if method not in {"active_symbols", "proposal"}:
-                    await socket.send(json.dumps({"authorize": api_token}))
-                    authorization = json.loads(await socket.recv())
-                    if authorization.get("error"):
-                        raise DerivExecutionError(f"Deriv authorization error: {authorization['error']}")
-                    if account_id:
-                        await socket.send(json.dumps({
-                            "switch_account": 1,
-                            "loginid": account_id,
-                        }))
-                        switched = json.loads(await socket.recv())
-                        if switched.get("error"):
-                            raise DerivExecutionError(f"Deriv account switch error: {switched['error']}")
                 await socket.send(json.dumps(request))
                 data = json.loads(await socket.recv())
         except DerivExecutionError:
