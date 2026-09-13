@@ -110,7 +110,12 @@ async def list_symbols() -> dict:
         ),
         key=lambda row: row["symbol"],
     )
-    return {"symbols": symbols, "error": None if symbols else DerivClient._symbol_catalog_error}
+    return {
+        "symbols": symbols,
+        "error": None if symbols else DerivClient._symbol_catalog_error,
+        "raw_count": len(catalog),
+        "raw_sample": catalog[:3],
+    }
 
 
 @app.get("/api/signal-bots/{bot_id}/pairs", response_model=list[BotPairOut])
