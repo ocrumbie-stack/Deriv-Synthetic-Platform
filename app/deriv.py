@@ -30,7 +30,6 @@ class DerivClient:
                 "DERIV_APP_ID": app_id,
                 "DERIV_API_TOKEN": api_token,
                 "DERIV_ACCOUNT_ID": account_id,
-                "DERIV_APP_ID": app_id,
             }.items()
             if not value
         ]
@@ -80,19 +79,41 @@ class DerivClient:
     async def get_account_balance(self) -> dict[str, Any] | None:
         if settings.execution_mode.lower() != "live":
             return None
-        result = await self._rpc("balance")
+        app_id = settings.deriv_app_id.strip()
+        api_token = settings.deriv_api_token.strip()
+        account_id = settings.deriv_account_id.strip()
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                response = await client.get(
+                    "https://api.derivws.com/trading/v1/options/accounts",
+                    headers={
+                        "Authorization": f"Bearer {api_token}",
+                        "Deriv-App-ID": app_id,
+                    },
+                )
+            if response.is_error:
+                raise DerivExecutionError(
+                    f"Deriv accounts request failed ({response.status_code}): {response.text}"
+                )
+            payload = response.json()
+            accounts = payload.get("data") if isinstance(payload, dict) else None
+            balance = next(
+                (item for item in accounts or [] if item.get("account_id") == account_id),
+                None,
+            )
+        except DerivExecutionError:
+            raise
+        except Exception as exc:
+            raise DerivExecutionError(f"Deriv accounts request failed: {exc}") from exc
 
-        if not isinstance(result, dict):
-            return None
-        balance = result.get("balance", result)
         if not isinstance(balance, dict):
-            return None
-        equity = float(balance.get("balance", balance.get("equity", 0)) or 0)
-        available = float(balance.get("available", balance.get("available_balance", equity)) or 0)
+            raise DerivExecutionError(f"Deriv account {account_id} was not returned.")
+        equity = float(balance.get("balance") or 0)
+        available = equity
         return {
             "equity": equity,
             "available": available,
-            "unrealized_pnl": float(balance.get("unrealized_pnl", 0) or 0),
+            "unrealized_pnl": 0.0,
             "currency": str(balance.get("currency", "")),
         }
 
