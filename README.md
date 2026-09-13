@@ -74,6 +74,21 @@ Copy `.env.example` to `.env` locally or set these variables in Railway.
 - `DERIV_ACCOUNT_ID`: required in live mode. Set this to the TradingView account login ID, such as `ROT90786324`, so balance reads and all trades target that account.
 - `DERIV_WS_URL`: optional override for the Deriv WebSocket endpoint.
 
+## Persisting data on Railway
+
+Railway's filesystem is ephemeral, so the SQLite database is wiped on every
+redeploy unless a volume is attached. To make signal bots, strategies, and
+trade history survive deploys:
+
+1. In the Railway dashboard, open this service and add a Volume (Command
+   Palette or right-click the service on the canvas).
+2. Set its mount path to `/data`.
+
+That's it — the app detects Railway's `RAILWAY_VOLUME_MOUNT_PATH` automatically
+and stores the SQLite file there. No environment variables need to be set by
+hand. This has to be done once through the dashboard; Railway does not support
+declaring volumes in `railway.json`.
+
 ## API
 
 - `GET /api/summary`

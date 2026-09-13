@@ -1,9 +1,21 @@
+import os
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _default_database_url() -> str:
+    # Railway's filesystem is ephemeral and gets wiped on every deploy unless
+    # a volume is mounted. Once one is mounted, RAILWAY_VOLUME_MOUNT_PATH is
+    # set automatically, so put the SQLite file there instead of losing it.
+    volume_path = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH")
+    if volume_path:
+        return f"sqlite:///{volume_path}/trading_platform.db"
+    return "sqlite:///./trading_platform.db"
 
 
 class Settings(BaseSettings):
     app_name: str = "Deriv Synthetic Trading Platform"
-    database_url: str = "sqlite:///./trading_platform.db"
+    database_url: str = _default_database_url()
     webhook_secret: str = "change-me"
     execution_mode: str = "paper"
     emergency_stop: bool = False
