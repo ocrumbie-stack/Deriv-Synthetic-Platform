@@ -104,18 +104,13 @@ async def list_symbols() -> dict:
     catalog = await DerivClient().get_symbol_catalog()
     symbols = sorted(
         (
-            {"symbol": item.get("symbol"), "display_name": item.get("display_name")}
+            {"symbol": item.get("underlying_symbol"), "display_name": item.get("underlying_symbol_name")}
             for item in catalog
-            if item.get("symbol")
+            if item.get("underlying_symbol")
         ),
         key=lambda row: row["symbol"],
     )
-    return {
-        "symbols": symbols,
-        "error": None if symbols else DerivClient._symbol_catalog_error,
-        "raw_count": len(catalog),
-        "raw_sample": catalog[:3],
-    }
+    return {"symbols": symbols, "error": None if symbols else DerivClient._symbol_catalog_error}
 
 
 @app.get("/api/signal-bots/{bot_id}/pairs", response_model=list[BotPairOut])

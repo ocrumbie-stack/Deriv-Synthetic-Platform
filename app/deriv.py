@@ -176,7 +176,7 @@ class DerivClient:
 
     async def get_contracts(self) -> list[str]:
         catalog = await self.get_symbol_catalog()
-        return sorted(str(item.get("symbol", "")) for item in catalog if item.get("symbol"))
+        return sorted(str(item.get("underlying_symbol", "")) for item in catalog if item.get("underlying_symbol"))
 
     async def resolve_symbol(self, raw_symbol: str) -> str:
         candidate = raw_symbol.strip().upper()
@@ -187,14 +187,14 @@ class DerivClient:
             )
 
         for item in catalog:
-            code = str(item.get("symbol") or "")
+            code = str(item.get("underlying_symbol") or "")
             if code.upper() == candidate:
                 return code
 
         candidate_key = _normalize_symbol_key(candidate)
         for item in catalog:
-            code = str(item.get("symbol") or "")
-            display_name = str(item.get("display_name") or "")
+            code = str(item.get("underlying_symbol") or "")
+            display_name = str(item.get("underlying_symbol_name") or "")
             if code and display_name and _normalize_symbol_key(display_name) == candidate_key:
                 return code
 
