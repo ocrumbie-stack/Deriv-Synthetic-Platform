@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -13,7 +14,13 @@ class DerivExecutionError(RuntimeError):
     pass
 
 
+def _normalize_symbol_key(value: str) -> str:
+    return re.sub(r"[^A-Z0-9]+", "_", value.upper()).strip("_")
+
+
 class DerivClient:
+    _symbol_catalog: list[dict[str, Any]] | None = None
+
     def _timestamp(self) -> str:
         return str(int(datetime.now(timezone.utc).timestamp() * 1000))
 
@@ -41,25 +48,22 @@ class DerivClient:
         request = dict(params or {})
         request[method] = request.pop(method, 1)
         try:
-            if method == "active_symbols":
-                uri = f"{settings.deriv_ws_url}?app_id={app_id or '1089'}"
-            else:
-                async with httpx.AsyncClient(timeout=15) as client:
-                    otp_response = await client.post(
-                        f"https://api.derivws.com/trading/v1/options/accounts/{account_id}/otp",
-                        headers={
-                            "Authorization": f"Bearer {api_token}",
-                            "Deriv-App-ID": app_id,
-                        },
-                    )
-                if otp_response.is_error:
-                    raise DerivExecutionError(
-                        f"Deriv OTP request failed ({otp_response.status_code}): {otp_response.text}"
-                    )
-                otp_data = otp_response.json()
-                uri = ((otp_data.get("data") or {}).get("url")) if isinstance(otp_data, dict) else None
-                if not uri:
-                    raise DerivExecutionError("Deriv OTP response did not include a WebSocket URL.")
+            async with httpx.AsyncClient(timeout=15) as client:
+                otp_response = await client.post(
+                    f"https://api.derivws.com/trading/v1/options/accounts/{account_id}/otp",
+                    headers={
+                        "Authorization": f"Bearer {api_token}",
+                        "Deriv-App-ID": app_id,
+                    },
+                )
+            if otp_response.is_error:
+                raise DerivExecutionError(
+                    f"Deriv OTP request failed ({otp_response.status_code}): {otp_response.text}"
+                )
+            otp_data = otp_response.json()
+            uri = ((otp_data.get("data") or {}).get("url")) if isinstance(otp_data, dict) else None
+            if not uri:
+                raise DerivExecutionError("Deriv OTP response did not include a WebSocket URL.")
 
             async with websockets.connect(uri, open_timeout=15, close_timeout=5) as socket:
                 await socket.send(json.dumps(request))
@@ -149,18 +153,49 @@ class DerivClient:
             )
         return positions
 
-    async def get_contracts(self) -> list[str]:
+    async def get_symbol_catalog(self) -> list[dict[str, Any]]:
         if settings.execution_mode.lower() != "live":
             return []
+        if DerivClient._symbol_catalog is not None:
+            return DerivClient._symbol_catalog
         try:
             result = await self._rpc("active_symbols", {"active_symbols": "brief"})
         except DerivExecutionError:
             return []
 
         symbols = result.get("active_symbols") if isinstance(result, dict) else None
-        if not isinstance(symbols, list):
-            return []
-        return sorted(str(item.get("symbol", "")) for item in symbols if item.get("symbol"))
+        catalog = [item for item in symbols if isinstance(item, dict)] if isinstance(symbols, list) else []
+        if catalog:
+            DerivClient._symbol_catalog = catalog
+        return catalog
+
+    async def get_contracts(self) -> list[str]:
+        catalog = await self.get_symbol_catalog()
+        return sorted(str(item.get("symbol", "")) for item in catalog if item.get("symbol"))
+
+    async def resolve_symbol(self, raw_symbol: str) -> str:
+        candidate = raw_symbol.strip().upper()
+        catalog = await self.get_symbol_catalog()
+        if not catalog:
+            raise DerivExecutionError(
+                "Could not load the Deriv symbol catalog to validate the requested symbol."
+            )
+
+        for item in catalog:
+            code = str(item.get("symbol") or "")
+            if code.upper() == candidate:
+                return code
+
+        candidate_key = _normalize_symbol_key(candidate)
+        for item in catalog:
+            code = str(item.get("symbol") or "")
+            display_name = str(item.get("display_name") or "")
+            if code and display_name and _normalize_symbol_key(display_name) == candidate_key:
+                return code
+
+        raise DerivExecutionError(
+            f"Unknown Deriv symbol '{raw_symbol}'. It did not match any Deriv symbol code or display name."
+        )
 
     async def place_order(self, signal: WebhookSignal, hedge_mode: bool = False) -> dict[str, Any]:
         if settings.execution_mode.lower() != "live":
@@ -173,7 +208,7 @@ class DerivClient:
         if signal.direction is None:
             raise DerivExecutionError("Entry orders require a direction.")
 
-        symbol = signal.symbol.upper()
+        symbol = await self.resolve_symbol(signal.symbol)
         contract_type = "CALL" if signal.direction.value == "long" else "PUT"
         proposal = await self._rpc("proposal", {
             "proposal": 1,
@@ -200,10 +235,15 @@ class DerivClient:
         if settings.execution_mode.lower() != "live":
             return {"mode": "paper", "order_id": f"paper-close-{self._timestamp()}"}
 
+        try:
+            resolved_symbol = await self.resolve_symbol(symbol)
+        except DerivExecutionError:
+            resolved_symbol = symbol
+
         positions = await self.get_positions()
         target = None
         for item in positions:
-            if item.get("symbol", "").upper() != symbol.upper():
+            if item.get("symbol", "").upper() != resolved_symbol.upper():
                 continue
             if direction and item.get("holdSide") and str(item.get("holdSide")).lower() != str(direction).lower():
                 continue

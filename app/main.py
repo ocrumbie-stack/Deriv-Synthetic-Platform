@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, time, timedelta
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
@@ -13,6 +14,8 @@ from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, S
 from app.schemas import BotPairOut, BotPairUpdate, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, TradeOut, WebhookSignal
 from app.services import account_exposure, arm_pair_tpsl, daily_account_net, get_risk_settings, get_signal_bot, process_webhook_signal
 
+
+logger = logging.getLogger("uvicorn.error")
 
 Base.metadata.create_all(bind=engine)
 sync_schema()
@@ -65,6 +68,7 @@ async def _process_in_background(payload: WebhookSignal) -> None:
         await process_webhook_signal(db, payload)
     except Exception:
         db.rollback()
+        logger.exception("Failed to process webhook signal: %s", payload.model_dump(mode="json"))
     finally:
         db.close()
 
@@ -96,8 +100,16 @@ async def unrealized_pnl() -> dict:
 
 
 @app.get("/api/symbols")
-async def list_symbols() -> list[str]:
-    return await DerivClient().get_contracts()
+async def list_symbols() -> list[dict]:
+    catalog = await DerivClient().get_symbol_catalog()
+    return sorted(
+        (
+            {"symbol": item.get("symbol"), "display_name": item.get("display_name")}
+            for item in catalog
+            if item.get("symbol")
+        ),
+        key=lambda row: row["symbol"],
+    )
 
 
 @app.get("/api/signal-bots/{bot_id}/pairs", response_model=list[BotPairOut])
