@@ -42,7 +42,7 @@ class DerivClient:
         request = dict(params or {})
         request[method] = request.pop(method, 1)
         try:
-            if method in {"active_symbols", "proposal"}:
+            if method == "active_symbols":
                 uri = f"{settings.deriv_ws_url}?app_id={app_id or '1089'}"
             else:
                 async with httpx.AsyncClient(timeout=15) as client:
