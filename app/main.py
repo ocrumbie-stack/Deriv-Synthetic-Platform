@@ -57,6 +57,20 @@ def health() -> dict[str, str]:
     return {"status": "ok", "execution_mode": settings.execution_mode}
 
 
+@app.get("/api/debug-storage")
+def debug_storage() -> dict:
+    import os as _os
+
+    db_path = settings.database_url.replace("sqlite:///", "", 1)
+    return {
+        "database_url": settings.database_url,
+        "railway_volume_mount_path": _os.environ.get("RAILWAY_VOLUME_MOUNT_PATH"),
+        "db_file_exists": _os.path.exists(db_path),
+        "db_file_size": _os.path.getsize(db_path) if _os.path.exists(db_path) else None,
+        "cwd": _os.getcwd(),
+    }
+
+
 @app.get("/api/config")
 def config() -> dict[str, str]:
     return {"webhook_secret": settings.webhook_secret}
