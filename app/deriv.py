@@ -1,5 +1,6 @@
 import json
 import re
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -25,10 +26,7 @@ class DerivClient:
     def _timestamp(self) -> str:
         return str(int(datetime.now(timezone.utc).timestamp() * 1000))
 
-    async def _rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        if settings.execution_mode.lower() != "live":
-            return {}
-
+    async def _authenticated_uri(self) -> str:
         app_id = settings.deriv_app_id.strip()
         api_token = settings.deriv_api_token.strip()
         account_id = settings.deriv_account_id.strip()
@@ -46,28 +44,37 @@ class DerivClient:
                 "Live execution is missing Deriv credentials: " + ", ".join(missing)
             )
 
+        async with httpx.AsyncClient(timeout=15) as client:
+            otp_response = await client.post(
+                f"https://api.derivws.com/trading/v1/options/accounts/{account_id}/otp",
+                headers={
+                    "Authorization": f"Bearer {api_token}",
+                    "Deriv-App-ID": app_id,
+                },
+            )
+        if otp_response.is_error:
+            raise DerivExecutionError(
+                f"Deriv OTP request failed ({otp_response.status_code}): {otp_response.text}"
+            )
+        otp_data = otp_response.json()
+        uri = ((otp_data.get("data") or {}).get("url")) if isinstance(otp_data, dict) else None
+        if not uri:
+            raise DerivExecutionError("Deriv OTP response did not include a WebSocket URL.")
+        return uri
+
+    @staticmethod
+    def _build_request(method: str, params: dict[str, Any] | None) -> dict[str, Any]:
         request = dict(params or {})
         request[method] = request.pop(method, 1)
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                otp_response = await client.post(
-                    f"https://api.derivws.com/trading/v1/options/accounts/{account_id}/otp",
-                    headers={
-                        "Authorization": f"Bearer {api_token}",
-                        "Deriv-App-ID": app_id,
-                    },
-                )
-            if otp_response.is_error:
-                raise DerivExecutionError(
-                    f"Deriv OTP request failed ({otp_response.status_code}): {otp_response.text}"
-                )
-            otp_data = otp_response.json()
-            uri = ((otp_data.get("data") or {}).get("url")) if isinstance(otp_data, dict) else None
-            if not uri:
-                raise DerivExecutionError("Deriv OTP response did not include a WebSocket URL.")
+        return request
 
+    async def _rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if settings.execution_mode.lower() != "live":
+            return {}
+        try:
+            uri = await self._authenticated_uri()
             async with websockets.connect(uri, open_timeout=15, close_timeout=5) as socket:
-                await socket.send(json.dumps(request))
+                await socket.send(json.dumps(self._build_request(method, params)))
                 data = json.loads(await socket.recv())
         except DerivExecutionError:
             raise
@@ -80,6 +87,45 @@ class DerivClient:
         if data.get("error"):
             raise DerivExecutionError(f"Deriv {method} error: {data['error']}")
         return data
+
+    async def _rpc_chain(
+        self,
+        first_method: str,
+        first_params: dict[str, Any],
+        second_builder: Callable[[dict[str, Any]], tuple[str, dict[str, Any]]],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Run two RPCs on the same authenticated connection.
+
+        Deriv scopes things like proposal IDs to the connection that created
+        them, so proposal -> buy must share one WebSocket session instead of
+        each going through separate _rpc() calls (which would each open a
+        fresh connection and make the second request fail).
+        """
+        if settings.execution_mode.lower() != "live":
+            return {}, {}
+        second_method = first_method
+        try:
+            uri = await self._authenticated_uri()
+            async with websockets.connect(uri, open_timeout=15, close_timeout=5) as socket:
+                await socket.send(json.dumps(self._build_request(first_method, first_params)))
+                first_data = json.loads(await socket.recv())
+                if first_data.get("error"):
+                    raise DerivExecutionError(f"Deriv {first_method} error: {first_data['error']}")
+
+                second_method, second_params = second_builder(first_data)
+                await socket.send(json.dumps(self._build_request(second_method, second_params)))
+                second_data = json.loads(await socket.recv())
+        except DerivExecutionError:
+            raise
+        except Exception as exc:
+            if "HTTP 401" in str(exc):
+                raise DerivExecutionError(
+                    "Deriv rejected DERIV_APP_ID (HTTP 401). Use a valid Deriv app ID, such as 1089."
+                ) from exc
+            raise DerivExecutionError(f"Deriv {first_method}/{second_method} request failed: {exc}") from exc
+        if second_data.get("error"):
+            raise DerivExecutionError(f"Deriv {second_method} error: {second_data['error']}")
+        return first_data, second_data
 
     async def get_account_balance(self) -> dict[str, Any] | None:
         if settings.execution_mode.lower() != "live":
@@ -215,23 +261,29 @@ class DerivClient:
 
         symbol = await self.resolve_symbol(signal.symbol)
         contract_type = "CALL" if signal.direction.value == "long" else "PUT"
-        proposal = await self._rpc("proposal", {
-            "proposal": 1,
-            "underlying_symbol": symbol,
-            "contract_type": contract_type,
-            "currency": "USD",
-            "amount": float(signal.size),
-            "basis": "stake",
-            "duration": 1,
-            "duration_unit": "t",
-        })
-        proposal_data = proposal.get("proposal", proposal)
-        proposal_id = proposal_data.get("id") if isinstance(proposal_data, dict) else None
-        ask_price = proposal_data.get("ask_price") if isinstance(proposal_data, dict) else None
-        if not proposal_id or ask_price is None:
-            raise DerivExecutionError("Deriv returned an incomplete contract proposal.")
 
-        result = await self._rpc("buy", {"buy": proposal_id, "price": float(ask_price)})
+        def _build_buy(proposal_response: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+            proposal_data = proposal_response.get("proposal", proposal_response)
+            proposal_id = proposal_data.get("id") if isinstance(proposal_data, dict) else None
+            ask_price = proposal_data.get("ask_price") if isinstance(proposal_data, dict) else None
+            if not proposal_id or ask_price is None:
+                raise DerivExecutionError("Deriv returned an incomplete contract proposal.")
+            return "buy", {"buy": proposal_id, "price": float(ask_price)}
+
+        _, result = await self._rpc_chain(
+            "proposal",
+            {
+                "proposal": 1,
+                "underlying_symbol": symbol,
+                "contract_type": contract_type,
+                "currency": "USD",
+                "amount": float(signal.size),
+                "basis": "stake",
+                "duration": 1,
+                "duration_unit": "t",
+            },
+            _build_buy,
+        )
         buy_data = result.get("buy", result)
         order_id = buy_data.get("contract_id") if isinstance(buy_data, dict) else None
         return {"order_id": str(order_id or self._timestamp()), "mode": "live", "result": result}
