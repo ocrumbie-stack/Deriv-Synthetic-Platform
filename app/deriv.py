@@ -161,10 +161,12 @@ class DerivClient:
             raise DerivExecutionError(f"Deriv account {account_id} was not returned.")
         equity = float(balance.get("balance") or 0)
         available = equity
+        positions = await self.get_positions()
+        unrealized = sum(float(p.get("unrealizedPL") or 0) for p in positions)
         return {
             "equity": equity,
             "available": available,
-            "unrealized_pnl": 0.0,
+            "unrealized_pnl": unrealized,
             "currency": str(balance.get("currency", "")),
         }
 
@@ -260,7 +262,9 @@ class DerivClient:
             raise DerivExecutionError("Entry orders require a direction.")
 
         symbol = await self.resolve_symbol(signal.symbol)
-        contract_type = "CALL" if signal.direction.value == "long" else "PUT"
+        # Multipliers (not fixed-duration digital options) so the position
+        # stays open with live-moving P&L until a matching exit signal sells it.
+        contract_type = "MULTUP" if signal.direction.value == "long" else "MULTDOWN"
 
         def _build_buy(proposal_response: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             proposal_data = proposal_response.get("proposal", proposal_response)
@@ -279,8 +283,7 @@ class DerivClient:
                 "currency": "USD",
                 "amount": float(signal.size),
                 "basis": "stake",
-                "duration": 1,
-                "duration_unit": "t",
+                "multiplier": settings.deriv_multiplier,
             },
             _build_buy,
         )
@@ -317,7 +320,16 @@ class DerivClient:
         result = await self._rpc("sell", {"sell": contract_id, "price": 0})
         sell_data = result.get("sell", result)
         order_id = sell_data.get("transaction_id") if isinstance(sell_data, dict) else None
-        return {"mode": "live", "order_id": str(order_id or contract_id), "result": result}
+        # Use Deriv's own reported P&L for this contract rather than
+        # recomputing it from raw underlying prices, which don't share a unit
+        # with the dollar stake.
+        profit = target.get("unrealizedPL")
+        return {
+            "mode": "live",
+            "order_id": str(order_id or contract_id),
+            "result": result,
+            "profit": float(profit) if profit is not None else None,
+        }
 
     async def place_tpsl(
         self,

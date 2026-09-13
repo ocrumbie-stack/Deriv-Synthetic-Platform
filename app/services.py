@@ -270,6 +270,7 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
     elif payload.action == SignalAction.exit:
         trade = find_open_trade(db, strategy.id, payload.symbol.upper())
         if trade:
+            result: dict = {}
             try:
                 result = await DerivClient().close_order(trade.symbol, trade.direction.value, trade.size, hedge_mode=bot.hedge_mode if bot else False)
                 if result.get("message") != "no_position":
@@ -281,7 +282,15 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
                 db.refresh(signal)
                 return ProcessedSignal(signal=signal, trade=trade)
             exit_price = payload.price or trade.entry_price
-            gross, net = calculate_trade_result(trade, exit_price)
+            # In live mode, use Deriv's own reported P&L for the contract
+            # rather than recomputing it from raw underlying prices, which
+            # don't share a unit with the dollar stake.
+            live_profit = result.get("profit")
+            if settings.execution_mode.lower() == "live" and isinstance(live_profit, (int, float)):
+                gross = float(live_profit)
+                net = gross - trade.fees
+            else:
+                gross, net = calculate_trade_result(trade, exit_price)
             trade.exit_price = exit_price
             trade.profit_loss = gross
             trade.net_result = net

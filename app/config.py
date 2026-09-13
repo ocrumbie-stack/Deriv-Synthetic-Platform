@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     deriv_api_token: str = ""
     deriv_account_id: str = "ROT90786324"
     deriv_ws_url: str = "wss://ws.derivws.com/websockets/v3"
+    deriv_multiplier: int = 100
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
