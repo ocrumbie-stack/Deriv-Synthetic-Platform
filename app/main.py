@@ -3,7 +3,7 @@ from datetime import datetime, time, timedelta
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -16,6 +16,15 @@ from app.services import account_exposure, arm_pair_tpsl, daily_account_net, get
 
 Base.metadata.create_all(bind=engine)
 sync_schema()
+
+# Failed exchange requests must not remain as open platform positions after a restart.
+with SessionLocal() as startup_db:
+    startup_db.execute(
+        update(Trade)
+        .where(Trade.execution_status == ExecutionStatus.failed, Trade.status != PositionStatus.closed)
+        .values(status=PositionStatus.closed, closed_at=datetime.utcnow())
+    )
+    startup_db.commit()
 
 app = FastAPI(title=settings.app_name)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")

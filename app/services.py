@@ -262,6 +262,8 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
                         signal.rejection_reason = (signal.rejection_reason or "") + f" | TP/SL arm failed: {exc}"
         except DerivExecutionError as exc:
             trade.execution_status = ExecutionStatus.failed
+            trade.status = PositionStatus.closed
+            trade.closed_at = datetime.utcnow()
             signal.status = ExecutionStatus.failed
             signal.rejection_reason = str(exc)
 
