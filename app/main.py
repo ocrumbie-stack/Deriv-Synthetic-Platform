@@ -100,9 +100,9 @@ async def unrealized_pnl() -> dict:
 
 
 @app.get("/api/symbols")
-async def list_symbols() -> list[dict]:
+async def list_symbols() -> dict:
     catalog = await DerivClient().get_symbol_catalog()
-    return sorted(
+    symbols = sorted(
         (
             {"symbol": item.get("symbol"), "display_name": item.get("display_name")}
             for item in catalog
@@ -110,6 +110,7 @@ async def list_symbols() -> list[dict]:
         ),
         key=lambda row: row["symbol"],
     )
+    return {"symbols": symbols, "error": None if symbols else DerivClient._symbol_catalog_error}
 
 
 @app.get("/api/signal-bots/{bot_id}/pairs", response_model=list[BotPairOut])

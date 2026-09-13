@@ -20,6 +20,7 @@ def _normalize_symbol_key(value: str) -> str:
 
 class DerivClient:
     _symbol_catalog: list[dict[str, Any]] | None = None
+    _symbol_catalog_error: str | None = None
 
     def _timestamp(self) -> str:
         return str(int(datetime.now(timezone.utc).timestamp() * 1000))
@@ -160,13 +161,17 @@ class DerivClient:
             return DerivClient._symbol_catalog
         try:
             result = await self._rpc("active_symbols", {"active_symbols": "brief"})
-        except DerivExecutionError:
+        except DerivExecutionError as exc:
+            DerivClient._symbol_catalog_error = str(exc)
             return []
 
         symbols = result.get("active_symbols") if isinstance(result, dict) else None
         catalog = [item for item in symbols if isinstance(item, dict)] if isinstance(symbols, list) else []
         if catalog:
             DerivClient._symbol_catalog = catalog
+            DerivClient._symbol_catalog_error = None
+        else:
+            DerivClient._symbol_catalog_error = "Deriv returned zero active symbols."
         return catalog
 
     async def get_contracts(self) -> list[str]:
