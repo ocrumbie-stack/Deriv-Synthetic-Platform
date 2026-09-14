@@ -201,9 +201,7 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
     if bot:
         # Deriv contracts use a stake amount. TradingView's price is recorded for
         # analytics, but it does not determine the stake or contract quantity.
-        payload = payload.model_copy(update={"size": bot.size, "leverage": 1.0})
-    else:
-        payload = payload.model_copy(update={"leverage": 1.0})
+        payload = payload.model_copy(update={"size": bot.size, "leverage": bot.leverage})
     rejection = validate_signal(db, payload, strategy, bot)
     signal = Signal(
         strategy_id=strategy.id,

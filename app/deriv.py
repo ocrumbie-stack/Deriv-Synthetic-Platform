@@ -316,7 +316,7 @@ class DerivClient:
                 "currency": "USD",
                 "amount": float(signal.size),
                 "basis": "stake",
-                "multiplier": settings.deriv_multiplier,
+                "multiplier": max(1, round(signal.leverage)),
             },
             _build_buy,
         )
