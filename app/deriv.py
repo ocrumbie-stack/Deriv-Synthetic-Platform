@@ -235,6 +235,22 @@ class DerivClient:
         except Exception:
             return []
 
+    async def get_contract_status(self, contract_id: str) -> dict[str, Any] | None:
+        """Look up a specific contract's current state on Deriv.
+
+        Used to detect contracts Deriv has already closed (e.g. via its
+        guaranteed stop-out) that our own DB doesn't know about yet, since we
+        otherwise only learn of a close when a matching exit webhook arrives.
+        """
+        if settings.execution_mode.lower() != "live" or not contract_id:
+            return None
+        try:
+            result = await self._rpc("proposal_open_contract", {"contract_id": contract_id})
+        except DerivExecutionError:
+            return None
+        poc = result.get("proposal_open_contract") if isinstance(result, dict) else None
+        return poc if isinstance(poc, dict) else None
+
     async def get_symbol_catalog(self) -> list[dict[str, Any]]:
         if settings.execution_mode.lower() != "live":
             return []

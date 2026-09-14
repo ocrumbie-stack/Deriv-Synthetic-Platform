@@ -195,6 +195,33 @@ def calculate_trade_result(trade: Trade, exit_price: float) -> tuple[float, floa
     return gross, net
 
 
+async def reconcile_open_trade(db: Session, trade: Trade) -> bool:
+    """Close a DB trade that Deriv has already sold/stopped-out.
+
+    We only learn a trade closed when a matching exit webhook arrives from
+    TradingView. If Deriv's own guaranteed stop-out closed the contract first,
+    the trade would otherwise stay "open" here forever and block every new
+    entry signal for that strategy/symbol. Returns True if the trade was
+    closed as a result of this check.
+    """
+    if settings.execution_mode.lower() != "live" or not trade.exchange_order_id:
+        return False
+    poc = await DerivClient().get_contract_status(trade.exchange_order_id)
+    if not poc or not poc.get("is_sold"):
+        return False
+
+    profit = float(poc.get("profit") or 0)
+    sell_time = poc.get("sell_time")
+    trade.exit_price = float(poc.get("sell_spot") or poc.get("current_spot") or trade.entry_price)
+    trade.profit_loss = profit
+    trade.net_result = profit - trade.fees
+    trade.status = PositionStatus.closed
+    trade.execution_status = ExecutionStatus.closed
+    trade.closed_at = datetime.utcfromtimestamp(float(sell_time)) if sell_time else datetime.utcnow()
+    db.flush()
+    return True
+
+
 async def process_webhook_signal(db: Session, payload: WebhookSignal) -> ProcessedSignal:
     strategy = get_or_create_strategy(db, payload.strategy)
     bot = get_signal_bot(db, payload.strategy)
@@ -202,6 +229,12 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
         # Deriv contracts use a stake amount. TradingView's price is recorded for
         # analytics, but it does not determine the stake or contract quantity.
         payload = payload.model_copy(update={"size": bot.size, "leverage": bot.leverage})
+
+    if payload.action == SignalAction.entry:
+        existing = find_open_trade(db, strategy.id, payload.symbol.upper())
+        if existing:
+            await reconcile_open_trade(db, existing)
+
     rejection = validate_signal(db, payload, strategy, bot)
     signal = Signal(
         strategy_id=strategy.id,
