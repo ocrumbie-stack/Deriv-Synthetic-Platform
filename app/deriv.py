@@ -174,33 +174,66 @@ class DerivClient:
         if settings.execution_mode.lower() != "live":
             return []
         try:
-            result = await self._rpc("portfolio")
+            uri = await self._authenticated_uri()
+            async with websockets.connect(uri, open_timeout=15, close_timeout=5) as socket:
+                await socket.send(json.dumps(self._build_request("portfolio", None)))
+                portfolio_data = json.loads(await socket.recv())
+                if portfolio_data.get("error"):
+                    raise DerivExecutionError(f"Deriv portfolio error: {portfolio_data['error']}")
+
+                portfolio = portfolio_data.get("portfolio", portfolio_data)
+                entries = portfolio.get("contracts") if isinstance(portfolio, dict) else None
+                if not isinstance(entries, list):
+                    return []
+
+                positions: list[dict[str, Any]] = []
+                for item in entries:
+                    if not isinstance(item, dict):
+                        continue
+                    symbol = str(item.get("symbol") or item.get("display_name") or "")
+                    contract_id = item.get("contract_id") or item.get("contractId")
+                    if not symbol or contract_id is None:
+                        continue
+
+                    # portfolio only returns static contract metadata (buy price,
+                    # payout, etc). Live/per-tick profit requires a dedicated
+                    # proposal_open_contract lookup for this specific contract.
+                    profit: float = 0.0
+                    direction = ""
+                    amount = item.get("buy_price") or 0
+                    try:
+                        await socket.send(
+                            json.dumps(
+                                self._build_request(
+                                    "proposal_open_contract", {"contract_id": contract_id}
+                                )
+                            )
+                        )
+                        poc_data = json.loads(await socket.recv())
+                        poc = poc_data.get("proposal_open_contract") if isinstance(poc_data, dict) else None
+                        if isinstance(poc, dict):
+                            profit = float(poc.get("profit") or 0)
+                            amount = poc.get("buy_price") or amount
+                            contract_type = str(poc.get("contract_type") or "")
+                            direction = "long" if contract_type == "MULTUP" else "short" if contract_type == "MULTDOWN" else ""
+                    except Exception:
+                        pass
+
+                    positions.append(
+                        {
+                            "symbol": symbol,
+                            "holdSide": direction,
+                            "total": amount,
+                            "available": amount,
+                            "unrealizedPL": profit,
+                            "contract_id": contract_id,
+                        }
+                    )
+                return positions
         except DerivExecutionError:
             return []
-
-        portfolio = result.get("portfolio", result) if isinstance(result, dict) else None
-        entries = portfolio.get("contracts") if isinstance(portfolio, dict) else None
-        if not isinstance(entries, list):
+        except Exception:
             return []
-
-        positions: list[dict[str, Any]] = []
-        for item in entries:
-            if not isinstance(item, dict):
-                continue
-            symbol = str(item.get("symbol") or item.get("display_name") or "")
-            if not symbol:
-                continue
-            positions.append(
-                {
-                    "symbol": symbol,
-                    "holdSide": item.get("direction") or "",
-                    "total": item.get("amount") or 0,
-                    "available": item.get("amount") or 0,
-                    "unrealizedPL": item.get("profit") or 0,
-                    "contract_id": item.get("contract_id") or item.get("contractId"),
-                }
-            )
-        return positions
 
     async def get_symbol_catalog(self) -> list[dict[str, Any]]:
         if settings.execution_mode.lower() != "live":
