@@ -12,7 +12,7 @@ from app.database import Base, SessionLocal, engine, get_db, sync_schema
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalBot, Strategy, Trade
 from app.schemas import BotPairOut, BotPairUpdate, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, TradeOut, WebhookSignal
-from app.services import account_exposure, arm_pair_tpsl, daily_account_net, get_risk_settings, get_signal_bot, process_webhook_signal
+from app.services import account_exposure, arm_pair_tpsl, daily_account_net, get_risk_settings, get_signal_bot, process_webhook_signal, reconcile_open_trade
 
 
 logger = logging.getLogger("uvicorn.error")
@@ -245,14 +245,24 @@ def list_signals(limit: int = 100, db: Session = Depends(get_db)) -> list[Signal
 
 
 @app.get("/api/open-positions", response_model=list[TradeOut])
-def open_positions(db: Session = Depends(get_db)) -> list[Trade]:
-    return list(
+async def open_positions(db: Session = Depends(get_db)) -> list[Trade]:
+    trades = list(
         db.scalars(
             select(Trade)
             .where(Trade.status == PositionStatus.open)
             .order_by(Trade.opened_at.desc())
         )
     )
+    # Deriv may have already stopped-out/sold a contract without a matching
+    # exit webhook ever arriving, so double-check each open trade against
+    # Deriv's real status before showing it as open.
+    reconciled = False
+    for trade in trades:
+        if await reconcile_open_trade(db, trade):
+            reconciled = True
+    if reconciled:
+        db.commit()
+    return [trade for trade in trades if trade.status == PositionStatus.open]
 
 
 @app.get("/api/trade-history", response_model=list[TradeOut])
