@@ -99,6 +99,19 @@ async def unrealized_pnl() -> dict:
     return result
 
 
+@app.get("/api/debug/contracts-for")
+async def debug_contracts_for(symbol: str) -> dict:
+    # Temporary: inspect Deriv's real contracts_for schema for multiplier
+    # contract types to fix the multiplier-range lookup. Remove after use.
+    resolved = await DerivClient().resolve_symbol(symbol)
+    result = await DerivClient()._rpc("contracts_for", {"contracts_for": resolved, "currency": "USD"})
+    available = result.get("contracts_for", {}).get("available") if isinstance(result, dict) else None
+    multiplier_entries = [
+        item for item in (available or []) if isinstance(item, dict) and "MULT" in str(item.get("contract_type", ""))
+    ]
+    return {"resolved_symbol": resolved, "multiplier_entries": multiplier_entries}
+
+
 @app.get("/api/symbols")
 async def list_symbols() -> dict:
     catalog = await DerivClient().get_symbol_catalog()
