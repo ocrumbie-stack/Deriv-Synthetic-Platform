@@ -86,6 +86,26 @@ async def receive_webhook(payload: WebhookSignal, background_tasks: BackgroundTa
     return {"status": "received"}
 
 
+@app.get("/api/debug/multiplier-map")
+async def debug_multiplier_map(symbols: str) -> dict:
+    # Temporary: report Deriv's real accepted multiplier range for a batch of
+    # symbols. Remove after use.
+    client = DerivClient()
+    out: dict[str, object] = {}
+    for raw in symbols.split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            resolved = await client.resolve_symbol(raw)
+            up = await client.get_multiplier_range(resolved, "MULTUP")
+            down = await client.get_multiplier_range(resolved, "MULTDOWN")
+            out[raw] = {"resolved": resolved, "MULTUP": up, "MULTDOWN": down}
+        except Exception as exc:
+            out[raw] = {"error": f"{type(exc).__name__}: {exc}"}
+    return out
+
+
 @app.get("/api/unrealized-pnl")
 async def unrealized_pnl() -> dict:
     positions = await DerivClient().get_positions()
