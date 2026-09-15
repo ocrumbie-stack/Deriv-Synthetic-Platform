@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, time, timedelta
+from typing import Any
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -84,6 +85,26 @@ async def receive_webhook(payload: WebhookSignal, background_tasks: BackgroundTa
     payload.symbol = symbol
     background_tasks.add_task(_process_in_background, payload)
     return {"status": "received"}
+
+
+@app.get("/api/debug/multiplier-map")
+async def debug_multiplier_map(symbols: str) -> dict:
+    # Temporary: report Deriv's real accepted multiplier range for a batch of
+    # symbols, so trading can be scoped away from high-leverage-only symbols.
+    client = DerivClient()
+    out: dict[str, Any] = {}
+    for raw in symbols.split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            resolved = await client.resolve_symbol(raw)
+            up = await client.get_multiplier_range(resolved, "MULTUP")
+            down = await client.get_multiplier_range(resolved, "MULTDOWN")
+            out[raw] = {"resolved": resolved, "MULTUP": up, "MULTDOWN": down}
+        except Exception as exc:
+            out[raw] = {"error": f"{type(exc).__name__}: {exc}"}
+    return out
 
 
 @app.get("/api/unrealized-pnl")
