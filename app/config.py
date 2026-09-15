@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     deriv_api_token: str = ""
     deriv_account_id: str = "ROT90786324"
     deriv_ws_url: str = "wss://ws.derivws.com/websockets/v3"
+    # Deriv enforces a fixed, symbol-specific minimum multiplier for Multiplier
+    # contracts (e.g. 40x-2000x on most synthetic indices) with no way to trade
+    # lower. Refuse entries on any symbol whose minimum exceeds this, so a
+    # stray/misconfigured alert can't burn capital on a near-guaranteed
+    # stop-out. 20x matches the lowest-leverage symbols Deriv offers
+    # (Jump 50/75/100, Boom/Crash 300, Range Break 100/200).
+    max_multiplier_floor: int = 20
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

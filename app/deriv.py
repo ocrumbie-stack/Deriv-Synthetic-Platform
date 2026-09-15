@@ -344,6 +344,11 @@ class DerivClient:
 
         requested_multiplier = max(1, round(signal.leverage))
         allowed_multipliers = await self.get_multiplier_range(symbol, contract_type)
+        if allowed_multipliers and min(allowed_multipliers) > settings.max_multiplier_floor:
+            raise DerivExecutionError(
+                f"{symbol} requires at least {min(allowed_multipliers)}x leverage, "
+                f"above the configured safety cap of {settings.max_multiplier_floor}x."
+            )
         multiplier = (
             min(allowed_multipliers, key=lambda value: abs(value - requested_multiplier))
             if allowed_multipliers
