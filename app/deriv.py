@@ -22,6 +22,7 @@ def _normalize_symbol_key(value: str) -> str:
 class DerivClient:
     _symbol_catalog: list[dict[str, Any]] | None = None
     _symbol_catalog_error: str | None = None
+    _multiplier_ranges: dict[str, list[int]] = {}
 
     def _timestamp(self) -> str:
         return str(int(datetime.now(timezone.utc).timestamp() * 1000))
@@ -299,6 +300,32 @@ class DerivClient:
             f"Unknown Deriv symbol '{raw_symbol}'. It did not match any Deriv symbol code or display name."
         )
 
+    async def get_multiplier_range(self, symbol: str, contract_type: str) -> list[int]:
+        """Deriv only accepts a fixed, per-symbol set of multiplier values for
+        Multiplier contracts (e.g. Step indices only accept 100/300/500/700/1000,
+        while 1s Volatility indices accept a completely different set). Look it
+        up via contracts_for instead of guessing.
+        """
+        cache_key = f"{symbol}:{contract_type}"
+        if cache_key in DerivClient._multiplier_ranges:
+            return DerivClient._multiplier_ranges[cache_key]
+        try:
+            result = await self._rpc("contracts_for", {"contracts_for": symbol, "currency": "USD"})
+        except DerivExecutionError:
+            return []
+        available = result.get("contracts_for", {}).get("available") if isinstance(result, dict) else None
+        if not isinstance(available, list):
+            return []
+        for item in available:
+            if not isinstance(item, dict) or item.get("contract_type") != contract_type:
+                continue
+            values = item.get("multiplier_range")
+            if isinstance(values, list) and values:
+                parsed = sorted(int(v) for v in values)
+                DerivClient._multiplier_ranges[cache_key] = parsed
+                return parsed
+        return []
+
     async def place_order(self, signal: WebhookSignal, hedge_mode: bool = False) -> dict[str, Any]:
         if settings.execution_mode.lower() != "live":
             return {
@@ -314,6 +341,14 @@ class DerivClient:
         # Multipliers (not fixed-duration digital options) so the position
         # stays open with live-moving P&L until a matching exit signal sells it.
         contract_type = "MULTUP" if signal.direction.value == "long" else "MULTDOWN"
+
+        requested_multiplier = max(1, round(signal.leverage))
+        allowed_multipliers = await self.get_multiplier_range(symbol, contract_type)
+        multiplier = (
+            min(allowed_multipliers, key=lambda value: abs(value - requested_multiplier))
+            if allowed_multipliers
+            else requested_multiplier
+        )
 
         def _build_buy(proposal_response: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             proposal_data = proposal_response.get("proposal", proposal_response)
@@ -332,7 +367,7 @@ class DerivClient:
                 "currency": "USD",
                 "amount": float(signal.size),
                 "basis": "stake",
-                "multiplier": max(1, round(signal.leverage)),
+                "multiplier": multiplier,
             },
             _build_buy,
         )
