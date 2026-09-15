@@ -105,7 +105,7 @@ async def debug_contracts_for(symbol: str) -> dict:
     # contract types to fix the multiplier-range lookup. Remove after use.
     try:
         resolved = await DerivClient().resolve_symbol(symbol)
-        result = await DerivClient()._rpc("contracts_for", {"contracts_for": resolved, "currency": "USD"})
+        result = await DerivClient()._rpc("contracts_for", {"contracts_for": resolved})
     except DerivExecutionError as exc:
         return {"error": str(exc)}
     except Exception as exc:
