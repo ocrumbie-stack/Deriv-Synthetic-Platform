@@ -310,7 +310,7 @@ class DerivClient:
         if cache_key in DerivClient._multiplier_ranges:
             return DerivClient._multiplier_ranges[cache_key]
         try:
-            result = await self._rpc("contracts_for", {"contracts_for": symbol, "currency": "USD"})
+            result = await self._rpc("contracts_for", {"contracts_for": symbol})
         except DerivExecutionError:
             return []
         available = result.get("contracts_for", {}).get("available") if isinstance(result, dict) else None
