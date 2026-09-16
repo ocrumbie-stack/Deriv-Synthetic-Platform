@@ -1,8 +1,10 @@
 import logging
+import os
+import re
 from datetime import datetime, time, timedelta
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
@@ -48,8 +50,18 @@ def period_start(period: str) -> datetime | None:
 
 
 @app.get("/")
-def dashboard() -> FileResponse:
-    return FileResponse("app/static/index.html")
+def dashboard() -> HTMLResponse:
+    # Force browsers to fetch the current app.js instead of a stale cached
+    # copy after a deploy, by stamping the script tag with app.js's own
+    # mtime instead of a hand-maintained version number that's easy to
+    # forget to bump.
+    html_path = "app/static/index.html"
+    app_js_path = "app/static/app.js"
+    with open(html_path, "r", encoding="utf-8") as f:
+        html = f.read()
+    version = int(os.path.getmtime(app_js_path))
+    html = re.sub(r'(/static/app\.js)(\?v=\d+)?"', rf'\1?v={version}"', html)
+    return HTMLResponse(content=html, headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/health")
