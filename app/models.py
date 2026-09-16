@@ -145,4 +145,8 @@ class SymbolLeverage(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     symbol: Mapped[str] = mapped_column(String(40), unique=True, index=True)
     leverage: Mapped[int] = mapped_column(Integer)
+    # Comma-separated ints, e.g. "40,100,200,300,400" - cached from Deriv's
+    # contracts_for so a process restart doesn't need 39 fresh Deriv round
+    # trips just to render this list again.
+    allowed_multipliers: Mapped[str | None] = mapped_column(String(200), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

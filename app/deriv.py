@@ -309,6 +309,7 @@ class DerivClient:
         cache_key = f"{symbol}:{contract_type}"
         if cache_key in DerivClient._multiplier_ranges:
             return DerivClient._multiplier_ranges[cache_key]
+
         try:
             result = await self._rpc("contracts_for", {"contracts_for": symbol})
         except DerivExecutionError:
@@ -316,15 +317,22 @@ class DerivClient:
         available = result.get("contracts_for", {}).get("available") if isinstance(result, dict) else None
         if not isinstance(available, list):
             return []
+
+        # One contracts_for call returns both MULTUP and MULTDOWN entries, so
+        # cache whichever of the two we find rather than re-fetching per
+        # direction - halves the round trips when both get requested.
+        found: list[int] = []
         for item in available:
-            if not isinstance(item, dict) or item.get("contract_type") != contract_type:
+            if not isinstance(item, dict) or "MULT" not in str(item.get("contract_type", "")):
                 continue
             values = item.get("multiplier_range")
-            if isinstance(values, list) and values:
-                parsed = sorted(int(v) for v in values)
-                DerivClient._multiplier_ranges[cache_key] = parsed
-                return parsed
-        return []
+            if not (isinstance(values, list) and values):
+                continue
+            parsed = sorted(int(v) for v in values)
+            DerivClient._multiplier_ranges[f"{symbol}:{item['contract_type']}"] = parsed
+            if item.get("contract_type") == contract_type:
+                found = parsed
+        return found
 
     async def place_order(self, signal: WebhookSignal, hedge_mode: bool = False) -> dict[str, Any]:
         if settings.execution_mode.lower() != "live":

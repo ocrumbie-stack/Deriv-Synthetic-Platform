@@ -97,10 +97,18 @@ function duration(start, end) {
   return h ? `${h}h ${m}m` : `${m}m`;
 }
 
-async function getJson(url) {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`Request failed: ${url}`);
-  return r.json();
+async function getJson(url, timeoutMs = 12000) {
+  // A single slow/hanging endpoint must never block the whole dashboard's
+  // refresh cycle indefinitely (fetch has no default timeout).
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, { signal: controller.signal });
+    if (!r.ok) throw new Error(`Request failed: ${url}`);
+    return await r.json();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function patchJson(url, body) {

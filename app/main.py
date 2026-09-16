@@ -135,24 +135,32 @@ def _is_synthetic_index(code: str) -> bool:
 @app.get("/api/symbol-leverage", response_model=list[SymbolLeverageOut])
 async def list_symbol_leverage(db: Session = Depends(get_db)) -> list[SymbolLeverageOut]:
     client = DerivClient()
-    catalog = await client.get_symbol_catalog()
+    catalog = await client.get_symbol_catalog()  # cached after the first call, not the bottleneck
+    rows_by_symbol = {row.symbol: row for row in db.scalars(select(SymbolLeverage))}
     out: list[SymbolLeverageOut] = []
     dirty = False
+
     for item in catalog:
         code = str(item.get("underlying_symbol") or "")
         if not code or not _is_synthetic_index(code):
             continue
-        up = await client.get_multiplier_range(code, "MULTUP")
-        down = await client.get_multiplier_range(code, "MULTDOWN")
-        allowed = up or down
-        if not allowed:
-            continue  # Multipliers aren't offered on this symbol at all (e.g. RDBEAR/RDBULL).
 
-        row = db.scalar(select(SymbolLeverage).where(SymbolLeverage.symbol == code))
-        if not row:
-            row = SymbolLeverage(symbol=code, leverage=min(allowed))
-            db.add(row)
+        row = rows_by_symbol.get(code)
+        if row and row.allowed_multipliers:
+            # Fast path: already known, no Deriv round trip needed - this is
+            # what keeps this endpoint fast after every restart, instead of
+            # re-fetching all ~39 symbols from Deriv on every cold start.
+            allowed = [int(v) for v in row.allowed_multipliers.split(",")]
+        else:
+            allowed = await client.get_multiplier_range(code, "MULTUP")
+            if not allowed:
+                continue  # Multipliers aren't offered on this symbol at all (e.g. RDBEAR/RDBULL).
+            if not row:
+                row = SymbolLeverage(symbol=code, leverage=min(allowed))
+                db.add(row)
+            row.allowed_multipliers = ",".join(str(v) for v in allowed)
             dirty = True
+
         out.append(
             SymbolLeverageOut(
                 symbol=code,
@@ -175,16 +183,20 @@ async def update_symbol_leverage(symbol: str, updates: SymbolLeverageUpdate, db:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     catalog = await client.get_symbol_catalog()
     match = next((item for item in catalog if item.get("underlying_symbol") == code), None)
-    up = await client.get_multiplier_range(code, "MULTUP")
-    down = await client.get_multiplier_range(code, "MULTDOWN")
-    allowed = up or down
 
     row = db.scalar(select(SymbolLeverage).where(SymbolLeverage.symbol == code))
+    if row and row.allowed_multipliers:
+        allowed = [int(v) for v in row.allowed_multipliers.split(",")]
+    else:
+        allowed = await client.get_multiplier_range(code, "MULTUP")
+
     if not row:
         row = SymbolLeverage(symbol=code, leverage=updates.leverage)
         db.add(row)
     else:
         row.leverage = updates.leverage
+    if allowed:
+        row.allowed_multipliers = ",".join(str(v) for v in allowed)
     db.commit()
     db.refresh(row)
     return SymbolLeverageOut(
