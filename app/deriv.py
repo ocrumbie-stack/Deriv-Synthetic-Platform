@@ -1,5 +1,6 @@
 import json
 import re
+import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -23,6 +24,15 @@ class DerivClient:
     _symbol_catalog: list[dict[str, Any]] | None = None
     _symbol_catalog_error: str | None = None
     _multiplier_ranges: dict[str, list[int]] = {}
+    # Every RPC call opens a brand-new authenticated WebSocket connection, so
+    # polling several open contracts every dashboard refresh multiplies fast
+    # and can trip Deriv's rate limit. A short cache collapses repeated
+    # lookups of the same contract within one refresh cycle (and across the
+    # unrealized-pnl and open-positions endpoints, which both check the same
+    # contracts) into a single real call.
+    _contract_status_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
+    _CONTRACT_STATUS_CACHE_TTL = 5.0
+    _account_balance_cache: tuple[float, dict[str, Any]] | None = None
 
     def _timestamp(self) -> str:
         return str(int(datetime.now(timezone.utc).timestamp() * 1000))
@@ -131,6 +141,10 @@ class DerivClient:
     async def get_account_balance(self) -> dict[str, Any] | None:
         if settings.execution_mode.lower() != "live":
             return None
+        now = time.monotonic()
+        cached = DerivClient._account_balance_cache
+        if cached and now - cached[0] < DerivClient._CONTRACT_STATUS_CACHE_TTL:
+            return cached[1]
         app_id = settings.deriv_app_id.strip()
         api_token = settings.deriv_api_token.strip()
         account_id = settings.deriv_account_id.strip()
@@ -161,15 +175,18 @@ class DerivClient:
         if not isinstance(balance, dict):
             raise DerivExecutionError(f"Deriv account {account_id} was not returned.")
         equity = float(balance.get("balance") or 0)
-        available = equity
-        positions = await self.get_positions()
-        unrealized = sum(float(p.get("unrealizedPL") or 0) for p in positions)
-        return {
+        # Unrealized P&L isn't included here - callers with DB access should
+        # sum it from their own tracked open trades via get_contract_status
+        # per contract, since the portfolio-wide lookup this used to use
+        # (get_positions) has been observed to silently miss genuinely open
+        # contracts.
+        result = {
             "equity": equity,
-            "available": available,
-            "unrealized_pnl": unrealized,
+            "available": equity,
             "currency": str(balance.get("currency", "")),
         }
+        DerivClient._account_balance_cache = (now, result)
+        return result
 
     async def get_positions(self) -> list[dict[str, Any]]:
         if settings.execution_mode.lower() != "live":
@@ -236,21 +253,32 @@ class DerivClient:
         except Exception:
             return []
 
-    async def get_contract_status(self, contract_id: str) -> dict[str, Any] | None:
+    async def get_contract_status(self, contract_id: str, use_cache: bool = True) -> dict[str, Any] | None:
         """Look up a specific contract's current state on Deriv.
 
         Used to detect contracts Deriv has already closed (e.g. via its
         guaranteed stop-out) that our own DB doesn't know about yet, since we
         otherwise only learn of a close when a matching exit webhook arrives.
+
+        Pass use_cache=False when the result must be guaranteed fresh (e.g.
+        confirming a sale that was just made) - everywhere else this collapses
+        repeated lookups of the same contract into one real Deriv call.
         """
         if settings.execution_mode.lower() != "live" or not contract_id:
             return None
+        now = time.monotonic()
+        if use_cache:
+            cached = DerivClient._contract_status_cache.get(contract_id)
+            if cached and now - cached[0] < DerivClient._CONTRACT_STATUS_CACHE_TTL:
+                return cached[1]
         try:
             result = await self._rpc("proposal_open_contract", {"contract_id": contract_id})
         except DerivExecutionError:
             return None
         poc = result.get("proposal_open_contract") if isinstance(result, dict) else None
-        return poc if isinstance(poc, dict) else None
+        poc = poc if isinstance(poc, dict) else None
+        DerivClient._contract_status_cache[contract_id] = (now, poc)
+        return poc
 
     async def get_symbol_catalog(self) -> list[dict[str, Any]]:
         if settings.execution_mode.lower() != "live":
@@ -414,8 +442,10 @@ class DerivClient:
         order_id = sell_data.get("transaction_id") if isinstance(sell_data, dict) else None
 
         # Confirm the real realized profit from Deriv's own post-sale record
-        # rather than trusting a pre-sale snapshot.
-        final = await self.get_contract_status(contract_id)
+        # rather than trusting a pre-sale snapshot. Must bypass the cache -
+        # the pre-sale check above may have just cached a stale "still open"
+        # result for this exact contract_id moments ago.
+        final = await self.get_contract_status(contract_id, use_cache=False)
         profit = float(final["profit"]) if final and final.get("profit") is not None else None
 
         return {
