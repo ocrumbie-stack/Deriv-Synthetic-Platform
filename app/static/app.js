@@ -7,6 +7,7 @@ let activeStrategy = "all";
 let latestState    = {
   summary: {}, risk: {}, balance: {}, performance: [], positions: [],
   signals: [], history: [], analytics: { equity_curve: [], status_counts: {}, symbol_exposure: [] },
+  symbolLeverage: [],
 };
 
 const equityState2 = { points: [], pad: null, width: 0, height: 0 };
