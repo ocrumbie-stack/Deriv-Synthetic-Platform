@@ -318,28 +318,19 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
         if trade:
             result: dict = {}
             try:
-                result = await DerivClient().close_order(trade.symbol, trade.direction.value, trade.size, hedge_mode=bot.hedge_mode if bot else False)
-                if result.get("message") != "no_position":
+                # Target the exact contract we already recorded rather than
+                # searching Deriv's portfolio by symbol/direction - that
+                # search has been observed to silently miss genuinely open
+                # contracts, which would wrongly conclude "no position" and
+                # leave the real contract running, untracked, on Deriv.
+                result = await DerivClient().close_order(trade.exchange_order_id)
+                if result.get("message") not in ("no_position", "already_sold"):
                     trade.exchange_order_id = str(result.get("order_id") or result.get("data", {}).get("orderId") or "")
             except DerivExecutionError as exc:
                 signal.status = ExecutionStatus.failed
                 signal.rejection_reason = str(exc)
                 db.commit()
                 db.refresh(signal)
-                return ProcessedSignal(signal=signal, trade=trade)
-
-            if result.get("message") == "no_position" and await reconcile_open_trade(db, trade):
-                # Deriv had already closed this contract itself (e.g. a
-                # stop-out) before this exit signal arrived. reconcile_open_trade
-                # already pulled the real reported profit and closed the trade -
-                # recomputing from raw underlying prices below would be wrong
-                # (that formula doesn't know about the multiplier at all and can
-                # report a "loss" far exceeding the stake, which isn't possible
-                # on a real Multiplier contract).
-                signal.status = ExecutionStatus.closed
-                db.commit()
-                db.refresh(signal)
-                db.refresh(trade)
                 return ProcessedSignal(signal=signal, trade=trade)
 
             exit_price = payload.price or trade.entry_price

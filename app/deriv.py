@@ -388,44 +388,41 @@ class DerivClient:
         order_id = buy_data.get("contract_id") if isinstance(buy_data, dict) else None
         return {"order_id": str(order_id or self._timestamp()), "mode": "live", "result": result}
 
-    async def close_order(self, symbol: str, direction: str, size: float, hedge_mode: bool = False) -> dict[str, Any]:
+    async def close_order(self, contract_id: str) -> dict[str, Any]:
         if settings.execution_mode.lower() != "live":
             return {"mode": "paper", "order_id": f"paper-close-{self._timestamp()}"}
-
-        try:
-            resolved_symbol = await self.resolve_symbol(symbol)
-        except DerivExecutionError:
-            resolved_symbol = symbol
-
-        positions = await self.get_positions()
-        target = None
-        for item in positions:
-            if item.get("symbol", "").upper() != resolved_symbol.upper():
-                continue
-            if direction and item.get("holdSide") and str(item.get("holdSide")).lower() != str(direction).lower():
-                continue
-            target = item
-            break
-
-        if target is None:
+        if not contract_id:
             return {"mode": "live", "message": "no_position"}
 
-        contract_id = target.get("contract_id")
-        if contract_id is None:
-            return {"mode": "live", "message": "no_position"}
+        # portfolio (used by get_positions) has been observed to silently omit
+        # genuinely open contracts, which would make a symbol/direction search
+        # wrongly conclude "no position" and sell nothing while the real
+        # contract keeps running. Target this exact contract_id directly
+        # instead - we already know it from the trade we're closing.
+        poc = await self.get_contract_status(contract_id)
+        if poc and poc.get("is_sold"):
+            # Deriv already closed this itself (e.g. a stop-out) - nothing to sell.
+            return {
+                "mode": "live",
+                "message": "already_sold",
+                "order_id": contract_id,
+                "profit": float(poc.get("profit") or 0),
+            }
 
         result = await self._rpc("sell", {"sell": contract_id, "price": 0})
         sell_data = result.get("sell", result)
         order_id = sell_data.get("transaction_id") if isinstance(sell_data, dict) else None
-        # Use Deriv's own reported P&L for this contract rather than
-        # recomputing it from raw underlying prices, which don't share a unit
-        # with the dollar stake.
-        profit = target.get("unrealizedPL")
+
+        # Confirm the real realized profit from Deriv's own post-sale record
+        # rather than trusting a pre-sale snapshot.
+        final = await self.get_contract_status(contract_id)
+        profit = float(final["profit"]) if final and final.get("profit") is not None else None
+
         return {
             "mode": "live",
             "order_id": str(order_id or contract_id),
             "result": result,
-            "profit": float(profit) if profit is not None else None,
+            "profit": profit,
         }
 
     async def place_tpsl(
