@@ -61,7 +61,14 @@ def dashboard() -> HTMLResponse:
         html = f.read()
     version = int(os.path.getmtime(app_js_path))
     html = re.sub(r'(/static/app\.js)(\?v=\d+)?"', rf'\1?v={version}"', html)
-    return HTMLResponse(content=html, headers={"Cache-Control": "no-cache"})
+    return HTMLResponse(
+        content=html,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @app.get("/health")
