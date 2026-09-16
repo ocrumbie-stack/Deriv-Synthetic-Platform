@@ -327,6 +327,21 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
                 db.commit()
                 db.refresh(signal)
                 return ProcessedSignal(signal=signal, trade=trade)
+
+            if result.get("message") == "no_position" and await reconcile_open_trade(db, trade):
+                # Deriv had already closed this contract itself (e.g. a
+                # stop-out) before this exit signal arrived. reconcile_open_trade
+                # already pulled the real reported profit and closed the trade -
+                # recomputing from raw underlying prices below would be wrong
+                # (that formula doesn't know about the multiplier at all and can
+                # report a "loss" far exceeding the stake, which isn't possible
+                # on a real Multiplier contract).
+                signal.status = ExecutionStatus.closed
+                db.commit()
+                db.refresh(signal)
+                db.refresh(trade)
+                return ProcessedSignal(signal=signal, trade=trade)
+
             exit_price = payload.price or trade.entry_price
             # In live mode, use Deriv's own reported P&L for the contract
             # rather than recomputing it from raw underlying prices, which
