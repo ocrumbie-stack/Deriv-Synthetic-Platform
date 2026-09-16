@@ -26,11 +26,12 @@ class Settings(BaseSettings):
     deriv_ws_url: str = "wss://ws.derivws.com/websockets/v3"
     # Deriv enforces a fixed, symbol-specific minimum multiplier for Multiplier
     # contracts (e.g. 40x-2000x on most synthetic indices) with no way to trade
-    # lower. Refuse entries on any symbol whose minimum exceeds this, so a
+    # lower. Entries on a symbol whose minimum exceeds this get refused, so a
     # stray/misconfigured alert can't burn capital on a near-guaranteed
-    # stop-out. 20x matches the lowest-leverage symbols Deriv offers
-    # (Jump 50/75/100, Boom/Crash 300, Range Break 100/200).
-    max_multiplier_floor: int = 20
+    # stop-out. Set high (above the highest known floor, 7500x on Step 100) at
+    # the user's request to allow every symbol through on the demo account -
+    # lower this again before trading real money on symbols above ~20x-50x.
+    max_multiplier_floor: int = 10000
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
