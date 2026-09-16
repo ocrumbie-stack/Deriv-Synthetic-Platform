@@ -200,6 +200,27 @@ def calculate_trade_result(trade: Trade, exit_price: float) -> tuple[float, floa
     return gross, net
 
 
+async def get_live_unrealized_pnl(db: Session) -> dict[str, float]:
+    """Per-open-trade unrealized P&L, queried directly per contract_id.
+
+    Deriv's portfolio enumeration (used by DerivClient.get_positions) has
+    been observed to silently omit contracts that are genuinely still open,
+    which would make this look empty even with real positions running. A
+    direct proposal_open_contract lookup per known contract_id is reliable.
+    """
+    client = DerivClient()
+    open_trades = list(db.scalars(select(Trade).where(Trade.status == PositionStatus.open)))
+    result: dict[str, float] = {}
+    for trade in open_trades:
+        if not trade.exchange_order_id:
+            continue
+        poc = await client.get_contract_status(trade.exchange_order_id)
+        if not poc:
+            continue
+        result[f"{trade.symbol}_{trade.direction.value}"] = round(float(poc.get("profit") or 0), 8)
+    return result
+
+
 async def reconcile_open_trade(db: Session, trade: Trade) -> bool:
     """Close a DB trade that Deriv has already sold/stopped-out.
 

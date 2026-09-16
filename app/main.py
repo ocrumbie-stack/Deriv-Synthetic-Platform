@@ -14,7 +14,7 @@ from app.database import Base, SessionLocal, engine, get_db, sync_schema
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalBot, Strategy, SymbolLeverage, Trade
 from app.schemas import BotPairOut, BotPairUpdate, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
-from app.services import account_exposure, arm_pair_tpsl, daily_account_net, get_risk_settings, get_signal_bot, process_webhook_signal, reconcile_open_trade
+from app.services import account_exposure, arm_pair_tpsl, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, process_webhook_signal, reconcile_open_trade
 
 
 logger = logging.getLogger("uvicorn.error")
@@ -156,16 +156,8 @@ async def debug_fix_impossible_pnl(db: Session = Depends(get_db)) -> dict:
 
 
 @app.get("/api/unrealized-pnl")
-async def unrealized_pnl() -> dict:
-    positions = await DerivClient().get_positions()
-    result: dict[str, float] = {}
-    for p in positions:
-        symbol = p.get("symbol", "")
-        hold = p.get("holdSide", "")
-        upl = float(p.get("unrealizedPL") or p.get("upl") or 0)
-        key = f"{symbol}_{hold}" if hold else symbol
-        result[key] = round(upl, 8)
-    return result
+async def unrealized_pnl(db: Session = Depends(get_db)) -> dict:
+    return await get_live_unrealized_pnl(db)
 
 
 @app.get("/api/symbols")
@@ -518,18 +510,22 @@ def analytics(period: str = "all", db: Session = Depends(get_db)) -> dict:
 
 
 @app.get("/api/account-balance")
-async def account_balance() -> dict:
+async def account_balance(db: Session = Depends(get_db)) -> dict:
     if settings.execution_mode.lower() != "live":
         return {"mode": "paper", "equity": None, "available": None, "unrealized_pnl": None}
     try:
         data = await DerivClient().get_account_balance()
         if not data:
             return {"mode": "live", "equity": None, "available": None, "unrealized_pnl": None, "error": "fetch_failed"}
+        # data["unrealized_pnl"] comes from the same unreliable portfolio
+        # enumeration as get_positions() (can silently omit real open
+        # contracts) - recompute it from our own tracked open trades instead.
+        per_position = await get_live_unrealized_pnl(db)
         return {
             "mode": "live",
             "equity": float(data.get("equity") or 0),
             "available": float(data.get("available") or 0),
-            "unrealized_pnl": float(data.get("unrealized_pnl") or 0),
+            "unrealized_pnl": round(sum(per_position.values()), 8),
         }
     except DerivExecutionError as exc:
         return {
