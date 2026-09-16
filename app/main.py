@@ -105,6 +105,31 @@ async def receive_webhook(payload: WebhookSignal, background_tasks: BackgroundTa
     return {"status": "received"}
 
 
+@app.post("/api/debug/fix-impossible-pnl")
+async def debug_fix_impossible_pnl(db: Session = Depends(get_db)) -> dict:
+    # Temporary: correct historical trades whose recorded P&L came from the
+    # since-fixed naive-formula fallback and exceeds what's possible on a
+    # real Multiplier contract (loss capped at stake). Pulls the real
+    # reported profit from Deriv for each and updates the row. Remove after use.
+    client = DerivClient()
+    trades = list(db.scalars(select(Trade).where(Trade.status == PositionStatus.closed)))
+    fixed = []
+    for trade in trades:
+        if abs(trade.net_result) <= trade.size or not trade.exchange_order_id:
+            continue
+        poc = await client.get_contract_status(trade.exchange_order_id)
+        if not poc:
+            fixed.append({"id": trade.id, "status": "no_data_from_deriv"})
+            continue
+        profit = float(poc.get("profit") or 0)
+        old = trade.net_result
+        trade.profit_loss = profit
+        trade.net_result = profit - trade.fees
+        fixed.append({"id": trade.id, "old_net_result": old, "new_net_result": trade.net_result, "is_sold": poc.get("is_sold")})
+    db.commit()
+    return {"corrected": fixed}
+
+
 @app.get("/api/unrealized-pnl")
 async def unrealized_pnl() -> dict:
     positions = await DerivClient().get_positions()
