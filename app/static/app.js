@@ -502,11 +502,15 @@ function renderSymbolLeverage(rows) {
     <tr>
       <td>${r.display_name} <span style="color:var(--muted)">(${r.symbol})</span></td>
       <td style="color:var(--muted);font-size:12px">${r.allowed_multipliers.join(", ")}</td>
-      <td><input class="inline-input" type="number" min="1" step="1" value="${r.leverage}" data-symbol="${r.symbol}" style="width:90px"/>x</td>
+      <td>
+        <select class="inline-input" data-symbol="${r.symbol}" style="width:90px">
+          ${r.allowed_multipliers.map(v => `<option value="${v}" ${v === r.leverage ? "selected" : ""}>${v}x</option>`).join("")}
+        </select>
+      </td>
     </tr>`).join("");
-  el.querySelectorAll(".inline-input").forEach(inp => {
-    inp.addEventListener("change", async () => {
-      await patchJson(`/api/symbol-leverage/${inp.dataset.symbol}`, { leverage: Number(inp.value || 1) });
+  el.querySelectorAll(".inline-input").forEach(sel => {
+    sel.addEventListener("change", async () => {
+      await patchJson(`/api/symbol-leverage/${sel.dataset.symbol}`, { leverage: Number(sel.value) });
       await refresh();
     });
   });

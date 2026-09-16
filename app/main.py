@@ -197,6 +197,12 @@ async def update_symbol_leverage(symbol: str, updates: SymbolLeverageUpdate, db:
     else:
         allowed = await client.get_multiplier_range(code, "MULTUP")
 
+    if allowed and updates.leverage not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{code} only accepts a multiplier of {', '.join(str(v) for v in allowed)}.",
+        )
+
     if not row:
         row = SymbolLeverage(symbol=code, leverage=updates.leverage)
         db.add(row)
