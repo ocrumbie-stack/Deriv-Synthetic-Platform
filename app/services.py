@@ -233,11 +233,14 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
     if bot:
         # Deriv contracts use a stake amount. TradingView's price is recorded for
         # analytics, but it does not determine the stake or contract quantity.
-        payload = payload.model_copy(update={"size": bot.size, "leverage": bot.leverage})
+        payload = payload.model_copy(update={"size": bot.size})
+
+    # A bot's own leverage (when explicitly set above 0) overrides the
+    # platform default; otherwise every signal - bot or not - inherits
+    # whatever's configured on the Leverage page for this symbol.
+    if bot and bot.leverage > 0:
+        payload = payload.model_copy(update={"leverage": bot.leverage})
     else:
-        # No bot is registered for this strategy, so fall back to the
-        # per-symbol leverage configured on the dashboard, if any. A bot's
-        # own leverage always wins when one is registered.
         symbol_leverage = get_symbol_leverage(db, payload.symbol.upper())
         if symbol_leverage is not None:
             payload = payload.model_copy(update={"leverage": symbol_leverage})

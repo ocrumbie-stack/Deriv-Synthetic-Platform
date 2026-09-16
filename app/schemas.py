@@ -39,7 +39,9 @@ class SignalBotCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     symbol: str | None = Field(default=None, max_length=200)
     size: float = Field(default=0.01, gt=0)
-    leverage: float = Field(default=1.0, ge=1)
+    # 0 (the default) means "inherit the per-symbol leverage set on the
+    # Leverage page" - only set this to explicitly override it for this bot.
+    leverage: float = Field(default=0.0, ge=0)
     hedge_mode: bool = False
     default_pair_tp_pct: float | None = Field(default=None, gt=0)
     default_pair_sl_pct: float | None = Field(default=None, gt=0)
@@ -50,7 +52,7 @@ class SignalBotUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     symbol: str | None = Field(default=None, max_length=200)
     size: float | None = Field(default=None, gt=0)
-    leverage: float | None = Field(default=None, ge=1)
+    leverage: float | None = Field(default=None, ge=0)
     enabled: bool | None = None
     hedge_mode: bool | None = None
     default_pair_tp_pct: float | None = Field(default=None, gt=0)

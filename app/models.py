@@ -109,7 +109,11 @@ class SignalBot(Base):
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     symbol: Mapped[str | None] = mapped_column(String(200), nullable=True)
     size: Mapped[float] = mapped_column(Float, default=0.01)
-    leverage: Mapped[float] = mapped_column(Float, default=1.0)
+    # 0 means "inherit whatever's set on the Leverage page for this symbol"
+    # (kept NOT NULL - the existing column can't be relaxed without a manual
+    # SQLite table rebuild, and 0 is otherwise never a valid leverage).
+    # Only set this above 0 to override the platform default for this bot.
+    leverage: Mapped[float] = mapped_column(Float, default=0.0)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     hedge_mode: Mapped[bool] = mapped_column(Boolean, default=False)
     cycles_completed: Mapped[int] = mapped_column(Integer, default=0)

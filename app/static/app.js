@@ -1431,8 +1431,8 @@ async function refreshBots() {
               <input class="inline-input" type="number" step="1" min="1" value="${b.size}" data-bot-id="${b.id}" data-field="size" style="width:100%" />
             </div>
             <div>
-              <label class="bot-field-label">Leverage</label>
-              <input class="inline-input" type="number" step="1" min="1" value="${b.leverage}" data-bot-id="${b.id}" data-field="leverage" style="width:100%" />
+              <label class="bot-field-label">Leverage (blank = auto)</label>
+              <input class="inline-input" type="number" step="1" min="0" value="${b.leverage > 0 ? b.leverage : ""}" placeholder="Auto" data-bot-id="${b.id}" data-field="leverage" style="width:100%" />
             </div>
             <div>
               <label class="bot-field-label">TP % (per coin)</label>
@@ -1577,7 +1577,7 @@ function wireBotForm() {
     const name     = (document.querySelector("#botName")?.value || "").trim();
     const symbol   = "";
     const size     = parseFloat(document.querySelector("#botSize")?.value || "0");
-    const leverage = parseFloat(document.querySelector("#botLeverage")?.value || "1");
+    const leverage = parseFloat(document.querySelector("#botLeverage")?.value || "0");
     const errEl    = document.querySelector("#botError");
 
     if (!name || size <= 0) {
