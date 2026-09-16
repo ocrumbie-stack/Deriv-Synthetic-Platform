@@ -105,6 +105,41 @@ async def receive_webhook(payload: WebhookSignal, background_tasks: BackgroundTa
     return {"status": "received"}
 
 
+@app.post("/api/debug/recalc-bot-session")
+async def debug_recalc_bot_session(db: Session = Depends(get_db)) -> dict:
+    # Temporary: session_pnl/cycles_completed are incrementing counters
+    # updated as trades close, so they drifted out of sync with reality when
+    # earlier corrections fixed trade net_result values after the fact
+    # without touching the bot's running totals. Recompute both directly
+    # from real closed-trade history instead. Remove after use.
+    bots = list(db.scalars(select(SignalBot)))
+    fixed = []
+    for bot in bots:
+        closed = list(
+            db.scalars(
+                select(Trade).where(Trade.strategy_name == bot.name, Trade.status == PositionStatus.closed)
+            )
+        )
+        true_pnl = round(sum(t.net_result for t in closed), 8)
+        true_cycles = len(closed)
+        if bot.session_pnl == true_pnl and bot.cycles_completed == true_cycles:
+            continue
+        fixed.append(
+            {
+                "id": bot.id,
+                "name": bot.name,
+                "old_session_pnl": bot.session_pnl,
+                "new_session_pnl": true_pnl,
+                "old_cycles": bot.cycles_completed,
+                "new_cycles": true_cycles,
+            }
+        )
+        bot.session_pnl = true_pnl
+        bot.cycles_completed = true_cycles
+    db.commit()
+    return {"corrected": fixed}
+
+
 @app.get("/api/unrealized-pnl")
 async def unrealized_pnl(db: Session = Depends(get_db)) -> dict:
     return await get_live_unrealized_pnl(db)
