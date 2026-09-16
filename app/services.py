@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.deriv import DerivClient, DerivExecutionError
-from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, Trade
+from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
 from app.schemas import WebhookSignal
 
 
@@ -75,6 +75,11 @@ def account_exposure(db: Session) -> float:
 
 def get_signal_bot(db: Session, name: str) -> SignalBot | None:
     return db.scalar(select(SignalBot).where(SignalBot.name == name))
+
+
+def get_symbol_leverage(db: Session, symbol: str) -> int | None:
+    row = db.scalar(select(SymbolLeverage).where(SymbolLeverage.symbol == symbol))
+    return row.leverage if row else None
 
 
 def get_or_create_bot_pair(db: Session, bot: SignalBot, symbol: str) -> BotPair:
@@ -229,6 +234,13 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
         # Deriv contracts use a stake amount. TradingView's price is recorded for
         # analytics, but it does not determine the stake or contract quantity.
         payload = payload.model_copy(update={"size": bot.size, "leverage": bot.leverage})
+    else:
+        # No bot is registered for this strategy, so fall back to the
+        # per-symbol leverage configured on the dashboard, if any. A bot's
+        # own leverage always wins when one is registered.
+        symbol_leverage = get_symbol_leverage(db, payload.symbol.upper())
+        if symbol_leverage is not None:
+            payload = payload.model_copy(update={"leverage": symbol_leverage})
 
     if payload.action == SignalAction.entry:
         existing = find_open_trade(db, strategy.id, payload.symbol.upper())

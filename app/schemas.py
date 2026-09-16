@@ -58,6 +58,17 @@ class SignalBotUpdate(BaseModel):
     default_pair_max_cycles: int | None = Field(default=None, gt=0)
 
 
+class SymbolLeverageOut(BaseModel):
+    symbol: str
+    display_name: str
+    leverage: int
+    allowed_multipliers: list[int]
+
+
+class SymbolLeverageUpdate(BaseModel):
+    leverage: int = Field(..., ge=1)
+
+
 class BotPairUpdate(BaseModel):
     tp_pct: float | None = Field(default=None, gt=0)
     sl_pct: float | None = Field(default=None, gt=0)

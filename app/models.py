@@ -137,3 +137,12 @@ class BotPair(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     bot: Mapped["SignalBot"] = relationship(back_populates="pairs")
+
+
+class SymbolLeverage(Base):
+    __tablename__ = "symbol_leverage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    leverage: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

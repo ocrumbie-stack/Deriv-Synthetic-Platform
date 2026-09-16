@@ -119,6 +119,7 @@ const pageIds = new Set([
   "signals-journal",
   "strategies-ranking",
   "strategies-settings",
+  "strategies-leverage",
   "system-risk",
 ]);
 
@@ -195,7 +196,7 @@ function renderSummary() {
   const balVal     = equity !== null ? currency.format(equity) : "—";
   const balSub     = avail !== null
     ? `${currency.format(avail)} avail · UPL ${upl !== null ? (upl >= 0 ? "+" : "") + currency.format(upl) : "—"}${!isLive ? " (demo)" : ""}`
-    : (balance?.error || "failed to fetch");
+    : "failed to fetch";
   const gaugeRatio = (equity && avail != null && equity > 0) ? Math.min(avail / equity, 1) : 0;
   const gaugeClr   = gaugeRatio < 0.25 ? "var(--red)" : gaugeRatio < 0.5 ? "var(--yellow)" : "var(--green)";
 
@@ -484,16 +485,35 @@ function renderStrategyRisk(rows) {
   });
 }
 
+function renderSymbolLeverage(rows) {
+  const el = document.querySelector("#symbolLeverage");
+  if (!el) return;
+  if (!rows.length) { el.innerHTML = emptyRow(3, "No synthetic index leverage data available."); return; }
+  el.innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.display_name} <span style="color:var(--muted)">(${r.symbol})</span></td>
+      <td style="color:var(--muted);font-size:12px">${r.allowed_multipliers.join(", ")}</td>
+      <td><input class="inline-input" type="number" min="1" step="1" value="${r.leverage}" data-symbol="${r.symbol}" style="width:90px"/>x</td>
+    </tr>`).join("");
+  el.querySelectorAll(".inline-input").forEach(inp => {
+    inp.addEventListener("change", async () => {
+      await patchJson(`/api/symbol-leverage/${inp.dataset.symbol}`, { leverage: Number(inp.value || 1) });
+      await refresh();
+    });
+  });
+}
+
 // ─── Render: Positions / History ─────────────────────────────────────────────
 
 function renderPositions(rows) {
   const el = document.querySelector("#positions");
   if (!el) return;
-  if (!rows.length) { el.innerHTML = emptyRow(8, "No open positions."); return; }
+  if (!rows.length) { el.innerHTML = emptyRow(9, "No open positions."); return; }
   el.innerHTML = rows.map(t => `
     <tr>
       <td>${t.strategy_name}</td><td>${t.symbol}</td><td>${t.direction}</td>
       <td>${number.format(t.entry_price)}</td><td>${number.format(t.size)}</td>
+      <td>${number.format(t.leverage)}x</td>
       <td class="neutral" data-upl="${t.symbol}_${t.direction}">—</td>
       <td>${statusBadge(t.status)}</td>
       <td>${fmtDate(t.opened_at)}</td>
@@ -533,7 +553,7 @@ function renderHistory(rows) {
 // ─── Refresh / Render ────────────────────────────────────────────────────────
 
 async function refresh() {
-  const [summary, risk, balance, performance, positions, signals, history, analytics] = await Promise.all([
+  const [summary, risk, balance, performance, positions, signals, history, analytics, symbolLeverage] = await Promise.all([
     getJson("/api/summary"),
     getJson("/api/risk"),
     getJson("/api/account-balance"),
@@ -542,13 +562,14 @@ async function refresh() {
     getJson("/api/signals?limit=200"),
     getJson("/api/trade-history?limit=100"),
     getJson(`/api/analytics?period=${activePeriod}`),
+    getJson("/api/symbol-leverage").catch(() => []),
   ]);
-  latestState = { summary, risk, balance, performance, positions, signals, history, analytics };
+  latestState = { summary, risk, balance, performance, positions, signals, history, analytics, symbolLeverage };
   renderAll();
 }
 
 function renderAll() {
-  const { risk, performance, positions, signals, history, analytics } = latestState;
+  const { risk, performance, positions, signals, history, analytics, symbolLeverage } = latestState;
   const focused = activeStrategy === "all" ? performance : performance.filter(r => r.strategy_name === activeStrategy);
 
   // Header badges
@@ -570,6 +591,7 @@ function renderAll() {
   renderCharts(curve, focused, analytics, signals);
   renderPerformance(focused);
   renderStrategyRisk(performance);
+  renderSymbolLeverage(symbolLeverage);
   renderPositions(positions);
   renderSignals(signals);
   renderHistory(history);
@@ -1345,7 +1367,7 @@ async function refreshBots() {
         <div style="font-size:10px;color:var(--muted)">${pnlPct}%${upl !== 0 ? ` · <span style="font-style:italic">${upl >= 0 ? "+" : ""}${currency.format(upl)} unrlzd</span>` : ""}</div>
       </td>
       <td>
-        <div style="font-size:12px">${b.cycles_completed} total${b.default_pair_max_cycles ? ` <span style="color:var(--muted)">· ${b.default_pair_max_cycles}/symbol cap</span>` : ""}</div>
+        <div style="font-size:12px">${b.cycles_completed} total${b.default_pair_max_cycles ? ` <span style="color:var(--muted)">· ${b.default_pair_max_cycles}/coin cap</span>` : ""}</div>
       </td>
       <td>
         <button class="mini-switch ${b.hedge_mode ? "on" : ""}" data-bot-id="${b.id}" data-hedge="${b.hedge_mode}">
@@ -1392,19 +1414,23 @@ async function refreshBots() {
           </div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:18px 28px">
             <div>
-              <label class="bot-field-label">Stake (USD)</label>
-              <input class="inline-input" type="number" step="0.01" min="0.01" value="${b.size}" data-bot-id="${b.id}" data-field="size" style="width:100%" />
+              <label class="bot-field-label">Size (USDT)</label>
+              <input class="inline-input" type="number" step="1" min="1" value="${b.size}" data-bot-id="${b.id}" data-field="size" style="width:100%" />
             </div>
             <div>
-              <label class="bot-field-label">TP % (per symbol)</label>
+              <label class="bot-field-label">Leverage</label>
+              <input class="inline-input" type="number" step="1" min="1" value="${b.leverage}" data-bot-id="${b.id}" data-field="leverage" style="width:100%" />
+            </div>
+            <div>
+              <label class="bot-field-label">TP % (per coin)</label>
               <input class="inline-input" type="number" step="0.1" min="0" value="${b.default_pair_tp_pct ?? ""}" placeholder="—" data-bot-id="${b.id}" data-field="default_pair_tp_pct" style="width:100%" />
             </div>
             <div>
-              <label class="bot-field-label">SL % (per symbol)</label>
+              <label class="bot-field-label">SL % (per coin)</label>
               <input class="inline-input" type="number" step="0.1" min="0" value="${b.default_pair_sl_pct ?? ""}" placeholder="—" data-bot-id="${b.id}" data-field="default_pair_sl_pct" style="width:100%" />
             </div>
             <div>
-              <label class="bot-field-label">Max Cycles (per symbol)</label>
+              <label class="bot-field-label">Max Cycles (per coin)</label>
               <input class="inline-input" type="number" step="1" min="1" value="${b.default_pair_max_cycles ?? ""}" placeholder="∞" data-bot-id="${b.id}" data-field="default_pair_max_cycles" style="width:100%" />
               <div style="font-size:11px;color:var(--muted);margin-top:5px">${b.cycles_completed} total completed</div>
             </div>
@@ -1538,6 +1564,7 @@ function wireBotForm() {
     const name     = (document.querySelector("#botName")?.value || "").trim();
     const symbol   = "";
     const size     = parseFloat(document.querySelector("#botSize")?.value || "0");
+    const leverage = parseFloat(document.querySelector("#botLeverage")?.value || "1");
     const errEl    = document.querySelector("#botError");
 
     if (!name || size <= 0) {
@@ -1550,7 +1577,7 @@ function wireBotForm() {
     const tp_raw        = parseFloat(document.querySelector("#botTp")?.value || "");
     const sl_raw        = parseFloat(document.querySelector("#botSl")?.value || "");
     const cycles_raw    = parseInt(document.querySelector("#botCycles")?.value || "");
-    const body = { name, size, hedge_mode };
+    const body = { name, size, leverage, hedge_mode };
     if (symbol) body.symbol = symbol.toUpperCase();
     if (!isNaN(tp_raw) && tp_raw > 0)          body.default_pair_tp_pct     = tp_raw;
     if (!isNaN(sl_raw) && sl_raw > 0)          body.default_pair_sl_pct     = sl_raw;
@@ -1565,7 +1592,7 @@ function wireBotForm() {
       if (errEl) { errEl.textContent = data.detail || "Failed to create bot."; errEl.style.display = "block"; }
       return;
     }
-    ["#botName","#botSymbol","#botSize"].forEach(sel => {
+    ["#botName","#botSymbol","#botSize","#botLeverage"].forEach(sel => {
       const el = document.querySelector(sel); if (el) el.value = "";
     });
     await refreshBots();
@@ -1574,7 +1601,7 @@ function wireBotForm() {
     if (form) form.style.display = "none";
     const preview = document.querySelector("#botTemplatePreview");
     if (preview) preview.style.display = "none";
-    ["#botName","#botSymbol","#botSize","#botTp","#botSl","#botCycles"].forEach(sel => {
+    ["#botName","#botSymbol","#botSize","#botLeverage","#botTp","#botSl","#botCycles"].forEach(sel => {
       const el = document.querySelector(sel); if (el) el.value = "";
     });
     const hedge = document.querySelector("#botHedge"); if (hedge) hedge.checked = false;

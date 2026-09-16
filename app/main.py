@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import Base, SessionLocal, engine, get_db, sync_schema
 from app.deriv import DerivClient, DerivExecutionError
-from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalBot, Strategy, Trade
-from app.schemas import BotPairOut, BotPairUpdate, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, TradeOut, WebhookSignal
+from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalBot, Strategy, SymbolLeverage, Trade
+from app.schemas import BotPairOut, BotPairUpdate, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
 from app.services import account_exposure, arm_pair_tpsl, daily_account_net, get_risk_settings, get_signal_bot, process_webhook_signal, reconcile_open_trade
 
 
@@ -111,6 +111,76 @@ async def list_symbols() -> dict:
         key=lambda row: row["symbol"],
     )
     return {"symbols": symbols, "error": None if symbols else DerivClient._symbol_catalog_error}
+
+
+_SYNTHETIC_INDEX_PREFIXES = ("R_", "1HZ", "BOOM", "CRASH", "JD", "STPRNG", "RB", "RDBEAR", "RDBULL")
+
+
+def _is_synthetic_index(code: str) -> bool:
+    return code.upper().startswith(_SYNTHETIC_INDEX_PREFIXES)
+
+
+@app.get("/api/symbol-leverage", response_model=list[SymbolLeverageOut])
+async def list_symbol_leverage(db: Session = Depends(get_db)) -> list[SymbolLeverageOut]:
+    client = DerivClient()
+    catalog = await client.get_symbol_catalog()
+    out: list[SymbolLeverageOut] = []
+    dirty = False
+    for item in catalog:
+        code = str(item.get("underlying_symbol") or "")
+        if not code or not _is_synthetic_index(code):
+            continue
+        up = await client.get_multiplier_range(code, "MULTUP")
+        down = await client.get_multiplier_range(code, "MULTDOWN")
+        allowed = up or down
+        if not allowed:
+            continue  # Multipliers aren't offered on this symbol at all (e.g. RDBEAR/RDBULL).
+
+        row = db.scalar(select(SymbolLeverage).where(SymbolLeverage.symbol == code))
+        if not row:
+            row = SymbolLeverage(symbol=code, leverage=min(allowed))
+            db.add(row)
+            dirty = True
+        out.append(
+            SymbolLeverageOut(
+                symbol=code,
+                display_name=str(item.get("underlying_symbol_name") or code),
+                leverage=row.leverage,
+                allowed_multipliers=allowed,
+            )
+        )
+    if dirty:
+        db.commit()
+    return sorted(out, key=lambda row: min(row.allowed_multipliers))
+
+
+@app.patch("/api/symbol-leverage/{symbol}", response_model=SymbolLeverageOut)
+async def update_symbol_leverage(symbol: str, updates: SymbolLeverageUpdate, db: Session = Depends(get_db)) -> SymbolLeverageOut:
+    client = DerivClient()
+    try:
+        code = await client.resolve_symbol(symbol)
+    except DerivExecutionError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    catalog = await client.get_symbol_catalog()
+    match = next((item for item in catalog if item.get("underlying_symbol") == code), None)
+    up = await client.get_multiplier_range(code, "MULTUP")
+    down = await client.get_multiplier_range(code, "MULTDOWN")
+    allowed = up or down
+
+    row = db.scalar(select(SymbolLeverage).where(SymbolLeverage.symbol == code))
+    if not row:
+        row = SymbolLeverage(symbol=code, leverage=updates.leverage)
+        db.add(row)
+    else:
+        row.leverage = updates.leverage
+    db.commit()
+    db.refresh(row)
+    return SymbolLeverageOut(
+        symbol=code,
+        display_name=str((match or {}).get("underlying_symbol_name") or code),
+        leverage=row.leverage,
+        allowed_multipliers=allowed,
+    )
 
 
 @app.get("/api/signal-bots/{bot_id}/pairs", response_model=list[BotPairOut])
