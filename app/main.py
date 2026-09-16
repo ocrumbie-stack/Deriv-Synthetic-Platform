@@ -105,56 +105,6 @@ async def receive_webhook(payload: WebhookSignal, background_tasks: BackgroundTa
     return {"status": "received"}
 
 
-@app.get("/api/debug/contract-status/{contract_id}")
-async def debug_contract_status(contract_id: str) -> dict:
-    # Temporary: raw proposal_open_contract lookup for one contract, to
-    # diagnose why some trades aren't reconciling. Remove after use.
-    poc = await DerivClient().get_contract_status(contract_id)
-    return {"contract_id": contract_id, "poc": poc}
-
-
-@app.post("/api/debug/fix-impossible-pnl")
-async def debug_fix_impossible_pnl(db: Session = Depends(get_db)) -> dict:
-    # Temporary: reconcile every trade with a stored contract_id against
-    # Deriv's real, authoritative status (a previous version of this
-    # endpoint wrongly recorded a live/still-moving unrealized snapshot as
-    # if it were a final realized P&L for contracts that were actually
-    # still open - this corrects that too, reverting those back to open).
-    # Remove after use.
-    client = DerivClient()
-    trades = list(db.scalars(select(Trade).where(Trade.exchange_order_id.isnot(None), Trade.exchange_order_id != "")))
-    fixed = []
-    for trade in trades:
-        poc = await client.get_contract_status(trade.exchange_order_id)
-        if not poc:
-            continue
-        is_sold = bool(poc.get("is_sold"))
-        if is_sold:
-            if trade.status == PositionStatus.closed and abs(trade.net_result) <= trade.size:
-                continue  # already correctly closed with a plausible value
-            profit = float(poc.get("profit") or 0)
-            sell_time = poc.get("sell_time")
-            trade.exit_price = float(poc.get("sell_spot") or poc.get("current_spot") or trade.entry_price)
-            trade.profit_loss = profit
-            trade.net_result = profit - trade.fees
-            trade.status = PositionStatus.closed
-            trade.execution_status = ExecutionStatus.closed
-            trade.closed_at = datetime.utcfromtimestamp(float(sell_time)) if sell_time else datetime.utcnow()
-            fixed.append({"id": trade.id, "action": "closed_with_real_profit", "net_result": trade.net_result})
-        else:
-            if trade.status == PositionStatus.open:
-                continue  # already correctly open
-            trade.status = PositionStatus.open
-            trade.execution_status = ExecutionStatus.executed
-            trade.exit_price = None
-            trade.closed_at = None
-            trade.profit_loss = 0.0
-            trade.net_result = 0.0
-            fixed.append({"id": trade.id, "action": "reverted_to_open"})
-    db.commit()
-    return {"corrected": fixed}
-
-
 @app.get("/api/unrealized-pnl")
 async def unrealized_pnl(db: Session = Depends(get_db)) -> dict:
     return await get_live_unrealized_pnl(db)
