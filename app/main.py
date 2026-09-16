@@ -105,6 +105,14 @@ async def receive_webhook(payload: WebhookSignal, background_tasks: BackgroundTa
     return {"status": "received"}
 
 
+@app.get("/api/debug/contract-status/{contract_id}")
+async def debug_contract_status(contract_id: str) -> dict:
+    # Temporary: raw proposal_open_contract lookup for one contract, to
+    # diagnose why some trades aren't reconciling. Remove after use.
+    poc = await DerivClient().get_contract_status(contract_id)
+    return {"contract_id": contract_id, "poc": poc}
+
+
 @app.post("/api/debug/fix-impossible-pnl")
 async def debug_fix_impossible_pnl(db: Session = Depends(get_db)) -> dict:
     # Temporary: correct historical trades whose recorded P&L came from the
