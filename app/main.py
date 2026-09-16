@@ -115,25 +115,42 @@ async def debug_contract_status(contract_id: str) -> dict:
 
 @app.post("/api/debug/fix-impossible-pnl")
 async def debug_fix_impossible_pnl(db: Session = Depends(get_db)) -> dict:
-    # Temporary: correct historical trades whose recorded P&L came from the
-    # since-fixed naive-formula fallback and exceeds what's possible on a
-    # real Multiplier contract (loss capped at stake). Pulls the real
-    # reported profit from Deriv for each and updates the row. Remove after use.
+    # Temporary: reconcile every trade with a stored contract_id against
+    # Deriv's real, authoritative status (a previous version of this
+    # endpoint wrongly recorded a live/still-moving unrealized snapshot as
+    # if it were a final realized P&L for contracts that were actually
+    # still open - this corrects that too, reverting those back to open).
+    # Remove after use.
     client = DerivClient()
-    trades = list(db.scalars(select(Trade).where(Trade.status == PositionStatus.closed)))
+    trades = list(db.scalars(select(Trade).where(Trade.exchange_order_id.isnot(None), Trade.exchange_order_id != "")))
     fixed = []
     for trade in trades:
-        if abs(trade.net_result) <= trade.size or not trade.exchange_order_id:
-            continue
         poc = await client.get_contract_status(trade.exchange_order_id)
         if not poc:
-            fixed.append({"id": trade.id, "status": "no_data_from_deriv"})
             continue
-        profit = float(poc.get("profit") or 0)
-        old = trade.net_result
-        trade.profit_loss = profit
-        trade.net_result = profit - trade.fees
-        fixed.append({"id": trade.id, "old_net_result": old, "new_net_result": trade.net_result, "is_sold": poc.get("is_sold")})
+        is_sold = bool(poc.get("is_sold"))
+        if is_sold:
+            if trade.status == PositionStatus.closed and abs(trade.net_result) <= trade.size:
+                continue  # already correctly closed with a plausible value
+            profit = float(poc.get("profit") or 0)
+            sell_time = poc.get("sell_time")
+            trade.exit_price = float(poc.get("sell_spot") or poc.get("current_spot") or trade.entry_price)
+            trade.profit_loss = profit
+            trade.net_result = profit - trade.fees
+            trade.status = PositionStatus.closed
+            trade.execution_status = ExecutionStatus.closed
+            trade.closed_at = datetime.utcfromtimestamp(float(sell_time)) if sell_time else datetime.utcnow()
+            fixed.append({"id": trade.id, "action": "closed_with_real_profit", "net_result": trade.net_result})
+        else:
+            if trade.status == PositionStatus.open:
+                continue  # already correctly open
+            trade.status = PositionStatus.open
+            trade.execution_status = ExecutionStatus.executed
+            trade.exit_price = None
+            trade.closed_at = None
+            trade.profit_loss = 0.0
+            trade.net_result = 0.0
+            fixed.append({"id": trade.id, "action": "reverted_to_open"})
     db.commit()
     return {"corrected": fixed}
 
