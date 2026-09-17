@@ -4,6 +4,7 @@ const number   = new Intl.NumberFormat("en-US", { maximumFractionDigits: 6 });
 let activePeriod      = "today";
 let rejectionsFilter  = false;
 let activeStrategy = "all";
+let historySymbolFilter = "all";
 let latestState    = {
   summary: {}, risk: {}, balance: {}, performance: [], positions: [],
   signals: [], history: [], analytics: { equity_curve: [], status_counts: {}, symbol_exposure: [] },
@@ -544,11 +545,77 @@ function renderPositions(rows) {
   }).catch(() => {});
 }
 
+function historyStats(rows) {
+  const closed = rows.filter(t => t.closed_at);
+  const wins = closed.filter(t => t.net_result > 0);
+  const losses = closed.filter(t => t.net_result < 0);
+  const netTotal = closed.reduce((s, t) => s + t.net_result, 0);
+  return {
+    count: closed.length,
+    winRate: closed.length ? (wins.length / closed.length * 100) : 0,
+    netTotal,
+    avgWin: wins.length ? wins.reduce((s, t) => s + t.net_result, 0) / wins.length : 0,
+    avgLoss: losses.length ? losses.reduce((s, t) => s + t.net_result, 0) / losses.length : 0,
+  };
+}
+
 function renderHistory(rows) {
   const el = document.querySelector("#history");
+  const filterEl = document.querySelector("#historySymbolFilter");
+  const statsEl = document.querySelector("#historyStats");
   if (!el) return;
-  if (!rows.length) { el.innerHTML = emptyRow(11, "No trades recorded."); return; }
-  el.innerHTML = rows.map(t => `
+
+  if (filterEl) {
+    // Only rebuild the option list when the underlying symbol set actually
+    // changes, so picking a symbol survives the 10s refresh cycle instead
+    // of silently resetting to "All symbols" every time.
+    const symbols = [...new Set(rows.map(t => t.symbol))].sort();
+    const existing = [...filterEl.options].slice(1).map(o => o.value);
+    if (existing.join(",") !== symbols.join(",")) {
+      const current = filterEl.value || historySymbolFilter;
+      filterEl.innerHTML = `<option value="all">All symbols</option>` +
+        symbols.map(s => `<option value="${s}">${s}</option>`).join("");
+      filterEl.value = symbols.includes(current) ? current : "all";
+      historySymbolFilter = filterEl.value;
+    }
+    if (!filterEl.dataset.wired) {
+      filterEl.addEventListener("change", () => {
+        historySymbolFilter = filterEl.value;
+        renderHistory(latestState.history || []);
+      });
+      filterEl.dataset.wired = "1";
+    }
+  }
+
+  const filtered = historySymbolFilter === "all" ? rows : rows.filter(t => t.symbol === historySymbolFilter);
+
+  if (statsEl) {
+    const s = historyStats(filtered);
+    statsEl.innerHTML = `
+      <div class="metric">
+        <span class="metric-label">Trades</span>
+        <span class="metric-value neutral">${s.count}</span>
+        <span class="metric-sub">${historySymbolFilter === "all" ? "all symbols, closed" : historySymbolFilter + ", closed"}</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Win rate</span>
+        <span class="metric-value ${s.winRate >= 50 ? "positive" : "negative"}">${s.count ? s.winRate.toFixed(1) : "0.0"}%</span>
+        <span class="metric-sub">of closed trades</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Net P&amp;L</span>
+        <span class="metric-value ${pnlClass(s.netTotal)}">${currency.format(s.netTotal)}</span>
+        <span class="metric-sub">closed trades total</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Avg win / loss</span>
+        <span class="metric-value neutral">${currency.format(s.avgWin)} / ${currency.format(s.avgLoss)}</span>
+        <span class="metric-sub">per closed trade</span>
+      </div>`;
+  }
+
+  if (!filtered.length) { el.innerHTML = emptyRow(11, "No trades recorded."); return; }
+  el.innerHTML = filtered.map(t => `
     <tr>
       <td>${t.strategy_name}</td><td>${t.symbol}</td><td>${t.direction}</td>
       <td>${number.format(t.entry_price)}</td>
@@ -573,7 +640,7 @@ async function refresh() {
     getJson(`/api/performance?period=${activePeriod}`),
     getJson("/api/open-positions"),
     getJson("/api/signals?limit=200"),
-    getJson("/api/trade-history?limit=100"),
+    getJson("/api/trade-history?limit=1000"),
     getJson(`/api/analytics?period=${activePeriod}`),
     getJson("/api/symbol-leverage").catch(() => []),
   ]);
