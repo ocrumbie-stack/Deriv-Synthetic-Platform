@@ -606,7 +606,13 @@ function drawSymbolPerfChart(canvas, rows, hoverY) {
 
   if (!rows.length) { drawEmpty(ctx, width, height, "No closed trades yet"); return; }
 
-  const pad = { top: 10, right: 64, bottom: 6, left: 172 };
+  // Padding scales with the canvas's actual rendered width (it's 100% of
+  // its container, so this varies a lot) instead of fixed pixels - on a
+  // narrow viewport, fixed 172+64px of padding would leave almost no room
+  // for bars at all.
+  const narrow = width < 420;
+  const pad = { top: 10, right: narrow ? 34 : 64, bottom: 6, left: narrow ? 92 : 172 };
+  const maxLabelChars = narrow ? 11 : 22;
   const barAreaX0 = pad.left, barAreaX1 = width - pad.right;
   const barAreaWidth = Math.max(1, barAreaX1 - barAreaX0);
   const rowH = Math.max(16, (height - pad.top - pad.bottom) / rows.length);
@@ -636,7 +642,7 @@ function drawSymbolPerfChart(canvas, rows, hoverY) {
 
     // Symbol label - text token color, never the series color (spec).
     ctx.fillStyle = "#94a3b8"; ctx.textAlign = "right"; ctx.font = "600 11px Inter, sans-serif";
-    const label = r.symbol.length > 22 ? r.symbol.slice(0, 21) + "…" : r.symbol;
+    const label = r.symbol.length > maxLabelChars ? r.symbol.slice(0, maxLabelChars - 1) + "…" : r.symbol;
     ctx.fillText(label, pad.left - 10, rowY + rowH / 2);
 
     ctx.fillStyle = color;

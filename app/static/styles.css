@@ -252,7 +252,8 @@ body {
   align-items: center;
   border-bottom: 1px solid var(--border);
   display: flex;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 12px 16px;
   justify-content: space-between;
   padding: 18px 28px;
   position: sticky;
@@ -605,15 +606,6 @@ input {
 }
 
 input:focus { border-color: var(--blue); outline: none; }
-
-input[type="checkbox"] {
-  accent-color: var(--blue);
-  cursor: pointer;
-  height: 16px;
-  min-height: 16px;
-  padding: 0;
-  width: 16px;
-}
 
 .risk-meter { display: grid; gap: 6px; }
 
