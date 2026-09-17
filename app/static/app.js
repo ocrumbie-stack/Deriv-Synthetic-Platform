@@ -655,7 +655,11 @@ function drawSymbolPerfChart(canvas, rows, hoverY) {
     ctx.font = "700 11px monospace";
     const textW = ctx.measureText(valueText).width;
     const outsideX = isPos ? barX + barLen + 6 : barX - 6;
-    const fitsOutside = isPos ? outsideX + textW <= width - 4 : outsideX - textW >= 4;
+    // Left boundary is where the symbol-label column ends (pad.left), not
+    // the canvas edge - a long negative bar's tip sits right next to that
+    // column, and checking against the canvas edge let the value label land
+    // on top of the symbol name instead of falling back inside the bar.
+    const fitsOutside = isPos ? outsideX + textW <= width - 4 : outsideX - textW >= pad.left + 4;
     if (fitsOutside) {
       ctx.fillStyle = "#e2e8f0";
       ctx.textAlign = isPos ? "left" : "right";
