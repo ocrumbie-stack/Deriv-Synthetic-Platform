@@ -16,6 +16,7 @@ const equityState2 = { points: [], pad: null, width: 0, height: 0 };
 let pnlRange = "1D";
 const pnlChartState          = { data: null };
 const signalActivityState    = { data: null };
+const symbolPerfState        = { rows: null };
 
 function equityCurveToPnlSeries(curve, period) {
   return (curve || []).map(p => ({
@@ -545,6 +546,151 @@ function renderPositions(rows) {
   }).catch(() => {});
 }
 
+function symbolPerfRows(rows) {
+  const bySymbol = new Map();
+  rows.filter(t => t.closed_at).forEach(t => {
+    if (!bySymbol.has(t.symbol)) bySymbol.set(t.symbol, []);
+    bySymbol.get(t.symbol).push(t);
+  });
+  const out = [];
+  bySymbol.forEach((trades, symbol) => {
+    if (!trades.length) return; // 0 executed trades for this symbol - nothing to plot
+    const wins = trades.filter(t => t.net_result > 0);
+    const losses = trades.filter(t => t.net_result < 0);
+    out.push({
+      symbol,
+      trades: trades.length,
+      net: trades.reduce((s, t) => s + t.net_result, 0),
+      winRate: trades.length ? wins.length / trades.length * 100 : 0,
+      avgWin: wins.length ? wins.reduce((s, t) => s + t.net_result, 0) / wins.length : 0,
+      avgLoss: losses.length ? losses.reduce((s, t) => s + t.net_result, 0) / losses.length : 0,
+    });
+  });
+  out.sort((a, b) => b.net - a.net);
+  return out;
+}
+
+// A bar rounded only on its data-end (4px), square at the zero baseline -
+// never symmetric, so the baseline reads flush against the axis.
+function drawDivergingBar(ctx, x, y, w, h, r, roundRight) {
+  const rad = Math.max(0, Math.min(r, w, h / 2));
+  ctx.beginPath();
+  if (roundRight) {
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + w - rad, y);
+    ctx.arcTo(x + w, y, x + w, y + rad, rad);
+    ctx.lineTo(x + w, y + h - rad);
+    ctx.arcTo(x + w, y + h, x + w - rad, y + h, rad);
+    ctx.lineTo(x, y + h);
+  } else {
+    ctx.moveTo(x + rad, y);
+    ctx.lineTo(x + w, y);
+    ctx.lineTo(x + w, y + h);
+    ctx.lineTo(x + rad, y + h);
+    ctx.arcTo(x, y + h, x, y + h - rad, rad);
+    ctx.lineTo(x, y + rad);
+    ctx.arcTo(x, y, x + rad, y, rad);
+  }
+  ctx.closePath();
+}
+
+function drawSymbolPerfChart(canvas, rows, hoverY) {
+  symbolPerfState.rows = rows;
+  const setup = setupCanvas(canvas);
+  if (!setup) return;
+  const { ctx, width, height } = setup;
+  clearCanvas(ctx, width, height);
+
+  const captionEl = document.querySelector("#symbolPerfCaption");
+  if (captionEl) captionEl.textContent = `${rows.length} symbol${rows.length === 1 ? "" : "s"} with closed trades`;
+
+  if (!rows.length) { drawEmpty(ctx, width, height, "No closed trades yet"); return; }
+
+  const pad = { top: 10, right: 64, bottom: 6, left: 172 };
+  const barAreaX0 = pad.left, barAreaX1 = width - pad.right;
+  const barAreaWidth = Math.max(1, barAreaX1 - barAreaX0);
+  const rowH = Math.max(16, (height - pad.top - pad.bottom) / rows.length);
+  const barH = Math.min(24, rowH - 4);
+
+  const maxPos = Math.max(0, ...rows.map(r => r.net));
+  const maxNeg = Math.max(0, ...rows.map(r => -r.net));
+  const span = maxPos + maxNeg || 1;
+  const zeroX = barAreaX0 + barAreaWidth * (maxNeg / span);
+
+  // Zero baseline - recessive, hairline, solid (never dashed per spec).
+  ctx.strokeStyle = "rgba(255,255,255,0.12)"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(zeroX, pad.top); ctx.lineTo(zeroX, height - pad.bottom); ctx.stroke();
+
+  ctx.font = "600 11px Inter, sans-serif"; ctx.textBaseline = "middle";
+  let hoverRow = null;
+
+  rows.forEach((r, i) => {
+    const rowY = pad.top + i * rowH;
+    const barY = rowY + (rowH - barH) / 2;
+    const isPos = r.net >= 0;
+    const barLen = Math.abs(r.net) / span * barAreaWidth;
+    const barX = isPos ? zeroX : zeroX - barLen;
+    const color = isPos ? "#22c55e" : "#ef4444";
+
+    if (hoverY !== null && hoverY >= rowY && hoverY < rowY + rowH) hoverRow = r;
+
+    // Symbol label - text token color, never the series color (spec).
+    ctx.fillStyle = "#94a3b8"; ctx.textAlign = "right"; ctx.font = "600 11px Inter, sans-serif";
+    const label = r.symbol.length > 22 ? r.symbol.slice(0, 21) + "…" : r.symbol;
+    ctx.fillText(label, pad.left - 10, rowY + rowH / 2);
+
+    ctx.fillStyle = color;
+    drawDivergingBar(ctx, barX, barY, Math.max(barLen, 1), barH, 4, isPos);
+    ctx.fill();
+
+    // Direct value label at the tip - measured first, placed outside the
+    // bar if it fits, otherwise pulled inside against the fill.
+    const valueText = (r.net >= 0 ? "+" : "") + currency.format(r.net);
+    ctx.font = "700 11px monospace";
+    const textW = ctx.measureText(valueText).width;
+    const outsideX = isPos ? barX + barLen + 6 : barX - 6;
+    const fitsOutside = isPos ? outsideX + textW <= width - 4 : outsideX - textW >= 4;
+    if (fitsOutside) {
+      ctx.fillStyle = "#e2e8f0";
+      ctx.textAlign = isPos ? "left" : "right";
+      ctx.fillText(valueText, outsideX, rowY + rowH / 2);
+    } else if (barLen > textW + 12) {
+      ctx.fillStyle = "#0b0b0f";
+      ctx.textAlign = isPos ? "right" : "left";
+      ctx.fillText(valueText, isPos ? barX + barLen - 6 : barX + 6, rowY + rowH / 2);
+    }
+  });
+
+  if (hoverRow) {
+    const idx = rows.indexOf(hoverRow);
+    const rowY = pad.top + idx * rowH;
+    ctx.fillStyle = "rgba(255,255,255,0.04)";
+    ctx.fillRect(barAreaX0 - 2, rowY, barAreaX1 - barAreaX0 + 2, rowH);
+
+    const lines = [
+      hoverRow.symbol,
+      `${hoverRow.trades} trades · ${hoverRow.winRate.toFixed(1)}% win rate`,
+      `avg win ${currency.format(hoverRow.avgWin)} · avg loss ${currency.format(hoverRow.avgLoss)}`,
+    ];
+    ctx.font = "600 11px Inter, sans-serif";
+    const tW = Math.max(...lines.map(l => ctx.measureText(l).width)) + 24;
+    const tH = lines.length * 16 + 12;
+    let tx = zeroX + 10;
+    if (tx + tW > width - 4) tx = width - 4 - tW;
+    let ty = rowY + rowH / 2 - tH / 2;
+    ty = Math.max(pad.top, Math.min(ty, height - pad.bottom - tH));
+
+    ctx.fillStyle = "#111318"; ctx.strokeStyle = "rgba(255,255,255,0.08)"; ctx.lineWidth = 1;
+    roundRect(ctx, tx, ty, tW, tH, 6); ctx.fill(); ctx.stroke();
+    ctx.textAlign = "left";
+    lines.forEach((line, i) => {
+      ctx.fillStyle = i === 0 ? "#e2e8f0" : "#94a3b8";
+      ctx.font = i === 0 ? "700 11px Inter, sans-serif" : "11px Inter, sans-serif";
+      ctx.fillText(line, tx + 12, ty + 14 + i * 16);
+    });
+  }
+}
+
 function historyStats(rows) {
   const closed = rows.filter(t => t.closed_at);
   const wins = closed.filter(t => t.net_result > 0);
@@ -564,6 +710,10 @@ function renderHistory(rows) {
   const filterEl = document.querySelector("#historySymbolFilter");
   const statsEl = document.querySelector("#historyStats");
   if (!el) return;
+
+  // Always the full unfiltered set, independent of historySymbolFilter -
+  // comparing across symbols is the whole point of this chart.
+  drawSymbolPerfChart(document.querySelector("#symbolPerfChart"), symbolPerfRows(rows), null);
 
   if (filterEl) {
     // Only rebuild the option list when the underlying symbol set actually
@@ -1168,6 +1318,17 @@ function drawStatusChart(canvas, counts) {
     });
     sigCanvas.addEventListener("mouseleave", () => {
       if (signalActivityState.data) drawSignalActivityChart(sigCanvas, signalActivityState.data, null);
+    });
+  }
+
+  const perfCanvas = document.querySelector("#symbolPerfChart");
+  if (perfCanvas) {
+    perfCanvas.addEventListener("mousemove", e => {
+      if (!symbolPerfState.rows) return;
+      drawSymbolPerfChart(perfCanvas, symbolPerfState.rows, e.clientY - perfCanvas.getBoundingClientRect().top);
+    });
+    perfCanvas.addEventListener("mouseleave", () => {
+      if (symbolPerfState.rows) drawSymbolPerfChart(perfCanvas, symbolPerfState.rows, null);
     });
   }
 })();
