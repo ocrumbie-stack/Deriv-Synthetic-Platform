@@ -320,6 +320,14 @@ function renderRisk(risk) {
   if (esToggle)  setSwitch(esToggle, risk.runtime_emergency_stop);
   if (dupToggle) setSwitch(dupToggle, risk.duplicate_blocking);
 
+  const isLiveMode = risk.execution_mode === "live";
+  const modeToggle = document.querySelector("#executionModeToggle");
+  const modeHint   = document.querySelector("#executionModeHint");
+  if (modeToggle) setSwitch(modeToggle, isLiveMode);
+  if (modeHint) modeHint.textContent = isLiveMode
+    ? "Live mode — orders are sent to your real Deriv account."
+    : "Paper mode — signals are simulated, no real orders reach Deriv.";
+
   const lossEl = document.querySelector("#accountLossLimit");
   const expEl  = document.querySelector("#accountExposureLimit");
   if (lossEl) lossEl.value = risk.account_daily_loss_limit || "";
@@ -1394,6 +1402,25 @@ document.querySelector("#sidebarEmergencyStop")?.addEventListener("click", async
 // Emergency Stop — Risk Controls page toggle
 document.querySelector("#emergencyStopToggle")?.addEventListener("click", async () => {
   await patchJson("/api/risk", { emergency_stop: !latestState.risk.runtime_emergency_stop });
+  await refresh();
+});
+
+// Execution mode — paper/live toggle
+document.querySelector("#executionModeToggle")?.addEventListener("click", async () => {
+  const goingLive = latestState.risk.execution_mode !== "live";
+  if (goingLive && !confirm("Switch to LIVE trading? Real orders will be sent to your Deriv account with real money.")) {
+    return;
+  }
+  const r = await fetch("/api/risk", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ execution_mode: goingLive ? "live" : "paper" }),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    alert(body.detail || "Failed to switch execution mode.");
+    return;
+  }
   await refresh();
 });
 

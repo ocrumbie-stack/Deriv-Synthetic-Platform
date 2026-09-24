@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from app.config import settings
+from app.config import ENV_EXECUTION_MODE, settings
 from app.database import Base, SessionLocal, engine, get_db, sync_schema
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalBot, Strategy, SymbolLeverage, Trade
@@ -29,6 +29,9 @@ with SessionLocal() as startup_db:
         .where(Trade.execution_status == ExecutionStatus.failed, Trade.status != PositionStatus.closed)
         .values(status=PositionStatus.closed, closed_at=datetime.utcnow())
     )
+    # Apply any dashboard-toggled execution mode saved from a previous run,
+    # since settings.execution_mode otherwise only reflects .env on boot.
+    get_risk_settings(startup_db)
     startup_db.commit()
 
 app = FastAPI(title=settings.app_name)
@@ -324,6 +327,8 @@ def risk_settings(db: Session = Depends(get_db)) -> dict:
         "account_daily_loss_limit": risk.account_daily_loss_limit,
         "current_account_exposure": round(account_exposure(db), 8),
         "today_account_net": round(daily_account_net(db), 8),
+        "execution_mode": settings.execution_mode,
+        "env_execution_mode": ENV_EXECUTION_MODE,
         "updated_at": risk.updated_at.isoformat() if risk.updated_at else None,
     }
 
@@ -334,6 +339,26 @@ def update_risk_settings(updates: dict, db: Session = Depends(get_db)) -> dict:
     for field in ("emergency_stop", "duplicate_blocking", "max_account_exposure", "account_daily_loss_limit"):
         if field in updates:
             setattr(risk, field, updates[field])
+    if "execution_mode" in updates:
+        mode = str(updates["execution_mode"] or "").strip().lower()
+        if mode not in ("paper", "live"):
+            raise HTTPException(status_code=400, detail="execution_mode must be 'paper' or 'live'.")
+        if mode == "live":
+            missing = [
+                name
+                for name, value in {
+                    "DERIV_APP_ID": settings.deriv_app_id,
+                    "DERIV_API_TOKEN": settings.deriv_api_token,
+                    "DERIV_ACCOUNT_ID": settings.deriv_account_id,
+                }.items()
+                if not value.strip()
+            ]
+            if missing:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cannot switch to live: missing " + ", ".join(missing) + " in .env.",
+                )
+        risk.execution_mode_override = mode
     db.commit()
     return risk_settings(db)
 
@@ -491,6 +516,8 @@ async def account_balance(db: Session = Depends(get_db)) -> dict:
 
 @app.get("/api/summary")
 def summary(db: Session = Depends(get_db)) -> dict:
+    get_risk_settings(db)
+    db.commit()
     open_count = db.scalar(select(func.count(Trade.id)).where(Trade.status == PositionStatus.open)) or 0
     signal_count = db.scalar(select(func.count(Signal.id))) or 0
     rejected_count = db.scalar(select(func.count(Signal.id)).where(Signal.status == ExecutionStatus.rejected)) or 0

@@ -38,6 +38,7 @@ class RiskSettings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     emergency_stop: Mapped[bool] = mapped_column(Boolean, default=False)
     duplicate_blocking: Mapped[bool] = mapped_column(Boolean, default=True)
+    execution_mode_override: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     max_account_exposure: Mapped[float] = mapped_column(Float, default=0.0)
     account_daily_loss_limit: Mapped[float] = mapped_column(Float, default=0.0)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

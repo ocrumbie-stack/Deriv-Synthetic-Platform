@@ -464,6 +464,17 @@
                   <button class="switch" id="duplicateBlockingToggle" aria-pressed="true"><span></span></button>
                 </div>
               </div>
+              <div class="risk-panel critical">
+                <div>
+                  <p class="panel-label">Account</p>
+                  <p class="panel-title">Execution Mode</p>
+                </div>
+                <div class="switch-row">
+                  <span>Live trading (real money)</span>
+                  <button class="switch emergency-stop-btn" id="executionModeToggle" aria-pressed="false"><span></span></button>
+                </div>
+                <p class="subtle" id="executionModeHint" style="margin:0;font-size:12px">Paper mode — signals are simulated, no real orders reach Deriv.</p>
+              </div>
               <div class="risk-panel">
                 <div>
                   <p class="panel-label">Account</p>

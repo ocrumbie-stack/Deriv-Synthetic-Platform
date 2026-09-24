@@ -5,7 +5,7 @@ from datetime import datetime, time
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
-from app.config import settings
+from app.config import ENV_EXECUTION_MODE, settings
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
 from app.schemas import WebhookSignal
@@ -30,16 +30,18 @@ def get_or_create_strategy(db: Session, name: str) -> Strategy:
 
 def get_risk_settings(db: Session) -> RiskSettings:
     risk = db.get(RiskSettings, 1)
-    if risk:
-        return risk
-
-    risk = RiskSettings(
-        id=1,
-        emergency_stop=settings.emergency_stop,
-        duplicate_blocking=True,
-    )
-    db.add(risk)
-    db.flush()
+    if not risk:
+        risk = RiskSettings(
+            id=1,
+            emergency_stop=settings.emergency_stop,
+            duplicate_blocking=True,
+        )
+        db.add(risk)
+        db.flush()
+    # The dashboard's execution-mode toggle is stored here rather than in
+    # .env, so every place that reads settings.execution_mode needs it
+    # applied here rather than threading a db session through DerivClient.
+    settings.execution_mode = risk.execution_mode_override or ENV_EXECUTION_MODE
     return risk
 
 

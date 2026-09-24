@@ -37,3 +37,7 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+# The dashboard toggle overrides settings.execution_mode in-process (see
+# get_risk_settings) so trading code doesn't need a db session to check it.
+# Keep the original .env value around so the toggle can fall back to it.
+ENV_EXECUTION_MODE = settings.execution_mode
