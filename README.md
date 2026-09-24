@@ -9,7 +9,7 @@ Railway-ready MVP for receiving TradingView strategy webhooks, validating signal
 - Duplicate signal blocking with `signal_id`
 - Open-position checks per strategy and symbol
 - Strategy-level maximum position size and daily loss guardrails
-- Paper execution by default, with a gated Deriv live execution client
+- Demo execution by default (real Deriv API calls against a virtual/demo account), with a dashboard toggle to switch to live (real money)
 - Signal journal, open positions, trade history, and strategy performance dashboard
 - Period views for today, this week, this month, and all time
 - Railway deployment files: `Procfile` and `railway.json`
@@ -67,12 +67,17 @@ Example exit:
 Copy `.env.example` to `.env` locally or set these variables in Railway.
 
 - `WEBHOOK_SECRET`: shared secret TradingView must send with every signal.
-- `EXECUTION_MODE`: `paper` or `live`. Keep this as `paper` until the dashboard and rules are verified.
+- `EXECUTION_MODE`: `demo` or `live`. Both make real Deriv API calls (real order execution, real balance reads) — `demo` targets your Deriv virtual account, `live` targets your real-money account. Anything other than exactly `live` (including no value at all) is treated as `demo`, so a missing/misconfigured value can never accidentally route to real money. This can also be switched from the dashboard's Risk Controls page instead of editing `.env` — see "Execution mode toggle" below.
 - `EMERGENCY_STOP`: set to `true` to reject all incoming signals.
 - `DATABASE_URL`: defaults to SQLite. On Railway, point this at a managed Postgres database when ready.
-- `DERIV_APP_ID`, `DERIV_API_TOKEN`: required only for `EXECUTION_MODE=live`.
-- `DERIV_ACCOUNT_ID`: required in live mode. Set this to the TradingView account login ID, such as `ROT90786324`, so balance reads and all trades target that account.
+- `DERIV_APP_ID`: shared app ID, used for both demo and live.
+- `DERIV_API_TOKEN`, `DERIV_ACCOUNT_ID`: your real account's API token and login ID. Required for `EXECUTION_MODE=live`.
+- `DERIV_DEMO_API_TOKEN`, `DERIV_DEMO_ACCOUNT_ID`: your demo/virtual account's API token and login ID, from `app.deriv.com/account/api-token` while logged into the demo account. Required for `EXECUTION_MODE=demo`.
 - `DERIV_WS_URL`: optional override for the Deriv WebSocket endpoint.
+
+## Execution mode toggle
+
+The Risk Controls page has a Demo/Live switch so you don't have to edit `.env` and redeploy every time you want to move between accounts. It's backed by the database (persists across restarts) and overrides `EXECUTION_MODE` at runtime. Switching to a mode that's missing its Deriv credentials is rejected with a clear error naming what's missing. Switching to live also asks for confirmation in the UI, since it sends real orders with real money.
 
 ## Persisting data on Railway
 
@@ -101,4 +106,4 @@ declaring volumes in `railway.json`.
 
 ## Live trading note
 
-Live exchange execution is deliberately behind `EXECUTION_MODE=live` and requires valid Deriv credentials. Before enabling it, test webhook formatting, strategy limits, duplicate handling, entry/exit lifecycle, and Railway database persistence in paper mode.
+Real-money execution is deliberately behind `EXECUTION_MODE=live` and requires valid real-account Deriv credentials. Before enabling it, test webhook formatting, strategy limits, duplicate handling, entry/exit lifecycle, and Railway database persistence in demo mode against your Deriv virtual account.

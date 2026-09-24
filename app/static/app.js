@@ -181,7 +181,7 @@ function renderSummary() {
   const { summary, risk, balance, signals } = latestState;
 
   const modeEl   = document.querySelector("#liveMode");
-  modeEl.textContent = (summary.execution_mode || "paper").toUpperCase();
+  modeEl.textContent = (summary.execution_mode || "demo").toUpperCase();
   modeEl.className   = `live-badge ${summary.execution_mode === "live" ? "live" : "paper"}`;
 
   const stopEl   = document.querySelector("#stopLabel");
@@ -200,13 +200,13 @@ function renderSummary() {
   const lastSigAge = lastSig ? Math.floor((Date.now() - new Date(utc(lastSig))) / 1000) : Infinity;
   const sigCls     = lastSigAge < 300 ? "positive" : lastSigAge < 1800 ? "negative" : "neutral";
 
-  const isLive = balance?.mode === "live";
-  const equity = isLive ? (balance?.equity ?? null) : 12450.00;
-  const avail  = isLive ? (balance?.available ?? null) : 8320.00;
-  const upl    = isLive ? (balance?.unrealized_pnl ?? null) : 230.50;
+  const isDemo = balance?.mode === "demo";
+  const equity = balance?.equity ?? null;
+  const avail  = balance?.available ?? null;
+  const upl    = balance?.unrealized_pnl ?? null;
   const balVal     = equity !== null ? currency.format(equity) : "—";
   const balSub     = avail !== null
-    ? `${currency.format(avail)} avail · UPL ${upl !== null ? (upl >= 0 ? "+" : "") + currency.format(upl) : "—"}${!isLive ? " (demo)" : ""}`
+    ? `${currency.format(avail)} avail · UPL ${upl !== null ? (upl >= 0 ? "+" : "") + currency.format(upl) : "—"}${isDemo ? " (demo)" : ""}`
     : "failed to fetch";
   const gaugeRatio = (equity && avail != null && equity > 0) ? Math.min(avail / equity, 1) : 0;
   const gaugeClr   = gaugeRatio < 0.25 ? "var(--red)" : gaugeRatio < 0.5 ? "var(--yellow)" : "var(--green)";
@@ -225,7 +225,7 @@ function renderSummary() {
         <div style="display:flex;flex-direction:column;gap:4px;min-width:0">
           <span class="metric-label">Available</span>
           <span style="font-size:19px;font-weight:700;font-family:monospace;color:${gaugeClr}">${avail !== null ? currency.format(avail) : "—"}</span>
-          <span style="font-size:11px;color:var(--muted)">of ${balVal}${!isLive ? " · demo" : ""}</span>
+          <span style="font-size:11px;color:var(--muted)">of ${balVal}${isDemo ? " · demo" : ""}</span>
         </div>
       </div>
       <div class="metric highlight">
@@ -325,8 +325,8 @@ function renderRisk(risk) {
   const modeHint   = document.querySelector("#executionModeHint");
   if (modeToggle) setSwitch(modeToggle, isLiveMode);
   if (modeHint) modeHint.textContent = isLiveMode
-    ? "Live mode — orders are sent to your real Deriv account."
-    : "Paper mode — signals are simulated, no real orders reach Deriv.";
+    ? "Live mode — orders are sent to your real Deriv account (real money)."
+    : "Demo mode — orders are sent to your Deriv demo account (virtual money).";
 
   const lossEl = document.querySelector("#accountLossLimit");
   const expEl  = document.querySelector("#accountExposureLimit");
@@ -1405,16 +1405,16 @@ document.querySelector("#emergencyStopToggle")?.addEventListener("click", async 
   await refresh();
 });
 
-// Execution mode — paper/live toggle
+// Execution mode — demo/live toggle
 document.querySelector("#executionModeToggle")?.addEventListener("click", async () => {
   const goingLive = latestState.risk.execution_mode !== "live";
-  if (goingLive && !confirm("Switch to LIVE trading? Real orders will be sent to your Deriv account with real money.")) {
+  if (goingLive && !confirm("Switch to LIVE trading? Real orders will be sent to your real Deriv account with real money.")) {
     return;
   }
   const r = await fetch("/api/risk", {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ execution_mode: goingLive ? "live" : "paper" }),
+    body: JSON.stringify({ execution_mode: goingLive ? "live" : "demo" }),
   });
   if (!r.ok) {
     const body = await r.json().catch(() => ({}));

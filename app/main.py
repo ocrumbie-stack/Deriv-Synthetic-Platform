@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from app.config import ENV_EXECUTION_MODE, settings
+from app.config import ENV_EXECUTION_MODE, deriv_credential_names, settings
 from app.database import Base, SessionLocal, engine, get_db, sync_schema
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalBot, Strategy, SymbolLeverage, Trade
@@ -341,23 +341,14 @@ def update_risk_settings(updates: dict, db: Session = Depends(get_db)) -> dict:
             setattr(risk, field, updates[field])
     if "execution_mode" in updates:
         mode = str(updates["execution_mode"] or "").strip().lower()
-        if mode not in ("paper", "live"):
-            raise HTTPException(status_code=400, detail="execution_mode must be 'paper' or 'live'.")
-        if mode == "live":
-            missing = [
-                name
-                for name, value in {
-                    "DERIV_APP_ID": settings.deriv_app_id,
-                    "DERIV_API_TOKEN": settings.deriv_api_token,
-                    "DERIV_ACCOUNT_ID": settings.deriv_account_id,
-                }.items()
-                if not value.strip()
-            ]
-            if missing:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Cannot switch to live: missing " + ", ".join(missing) + " in .env.",
-                )
+        if mode not in ("demo", "live"):
+            raise HTTPException(status_code=400, detail="execution_mode must be 'demo' or 'live'.")
+        missing = [name for name, value in deriv_credential_names(mode).items() if not value.strip()]
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot switch to {mode}: missing " + ", ".join(missing) + " in .env.",
+            )
         risk.execution_mode_override = mode
     db.commit()
     return risk_settings(db)
@@ -486,32 +477,31 @@ def analytics(period: str = "all", db: Session = Depends(get_db)) -> dict:
 
 @app.get("/api/account-balance")
 async def account_balance(db: Session = Depends(get_db)) -> dict:
-    if settings.execution_mode.lower() != "live":
-        return {"mode": "paper", "equity": None, "available": None, "unrealized_pnl": None}
+    mode = settings.execution_mode.lower()
     try:
         data = await DerivClient().get_account_balance()
         if not data:
-            return {"mode": "live", "equity": None, "available": None, "unrealized_pnl": None, "error": "fetch_failed"}
+            return {"mode": mode, "equity": None, "available": None, "unrealized_pnl": None, "error": "fetch_failed"}
         # data["unrealized_pnl"] comes from the same unreliable portfolio
         # enumeration as get_positions() (can silently omit real open
         # contracts) - recompute it from our own tracked open trades instead.
         per_position = await get_live_unrealized_pnl(db)
         return {
-            "mode": "live",
+            "mode": mode,
             "equity": float(data.get("equity") or 0),
             "available": float(data.get("available") or 0),
             "unrealized_pnl": round(sum(per_position.values()), 8),
         }
     except DerivExecutionError as exc:
         return {
-            "mode": "live",
+            "mode": mode,
             "equity": None,
             "available": None,
             "unrealized_pnl": None,
             "error": str(exc),
         }
     except Exception:
-        return {"mode": "live", "equity": None, "available": None, "unrealized_pnl": None, "error": "fetch_failed"}
+        return {"mode": mode, "equity": None, "available": None, "unrealized_pnl": None, "error": "fetch_failed"}
 
 
 @app.get("/api/summary")

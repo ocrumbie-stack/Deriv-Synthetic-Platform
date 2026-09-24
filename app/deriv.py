@@ -8,7 +8,7 @@ from typing import Any
 import websockets
 import httpx
 
-from app.config import settings
+from app.config import deriv_credential_names, settings
 from app.schemas import WebhookSignal
 
 
@@ -18,6 +18,19 @@ class DerivExecutionError(RuntimeError):
 
 def _normalize_symbol_key(value: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "_", value.upper()).strip("_")
+
+
+def _active_credentials() -> tuple[str, str, str]:
+    """(app_id, api_token, account_id) for whichever Deriv account the
+    current execution mode targets - the real one, or the demo/virtual one.
+
+    Anything other than exactly "live" resolves to demo, so a stale or
+    unrecognized mode value can never accidentally route to real money.
+    """
+    app_id = settings.deriv_app_id.strip()
+    if settings.execution_mode.lower() == "live":
+        return app_id, settings.deriv_api_token.strip(), settings.deriv_account_id.strip()
+    return app_id, settings.deriv_demo_api_token.strip(), settings.deriv_demo_account_id.strip()
 
 
 class DerivClient:
@@ -32,27 +45,20 @@ class DerivClient:
     # contracts) into a single real call.
     _contract_status_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
     _CONTRACT_STATUS_CACHE_TTL = 5.0
-    _account_balance_cache: tuple[float, dict[str, Any]] | None = None
+    # Keyed by execution mode so a demo<->live switch never serves the other
+    # account's cached balance for the remainder of the TTL.
+    _account_balance_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
     def _timestamp(self) -> str:
         return str(int(datetime.now(timezone.utc).timestamp() * 1000))
 
     async def _authenticated_uri(self) -> str:
-        app_id = settings.deriv_app_id.strip()
-        api_token = settings.deriv_api_token.strip()
-        account_id = settings.deriv_account_id.strip()
-        missing = [
-            name
-            for name, value in {
-                "DERIV_APP_ID": app_id,
-                "DERIV_API_TOKEN": api_token,
-                "DERIV_ACCOUNT_ID": account_id,
-            }.items()
-            if not value
-        ]
+        app_id, api_token, account_id = _active_credentials()
+        label = "Live" if settings.execution_mode.lower() == "live" else "Demo"
+        missing = [name for name, value in deriv_credential_names(settings.execution_mode).items() if not value.strip()]
         if missing:
             raise DerivExecutionError(
-                "Live execution is missing Deriv credentials: " + ", ".join(missing)
+                f"{label} execution is missing Deriv credentials: " + ", ".join(missing)
             )
 
         async with httpx.AsyncClient(timeout=15) as client:
@@ -80,8 +86,6 @@ class DerivClient:
         return request
 
     async def _rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        if settings.execution_mode.lower() != "live":
-            return {}
         try:
             uri = await self._authenticated_uri()
             async with websockets.connect(uri, open_timeout=15, close_timeout=5) as socket:
@@ -112,8 +116,6 @@ class DerivClient:
         each going through separate _rpc() calls (which would each open a
         fresh connection and make the second request fail).
         """
-        if settings.execution_mode.lower() != "live":
-            return {}, {}
         second_method = first_method
         try:
             uri = await self._authenticated_uri()
@@ -139,15 +141,12 @@ class DerivClient:
         return first_data, second_data
 
     async def get_account_balance(self) -> dict[str, Any] | None:
-        if settings.execution_mode.lower() != "live":
-            return None
+        mode = settings.execution_mode.lower()
         now = time.monotonic()
-        cached = DerivClient._account_balance_cache
+        cached = DerivClient._account_balance_cache.get(mode)
         if cached and now - cached[0] < DerivClient._CONTRACT_STATUS_CACHE_TTL:
             return cached[1]
-        app_id = settings.deriv_app_id.strip()
-        api_token = settings.deriv_api_token.strip()
-        account_id = settings.deriv_account_id.strip()
+        app_id, api_token, account_id = _active_credentials()
         try:
             async with httpx.AsyncClient(timeout=15) as client:
                 response = await client.get(
@@ -185,12 +184,10 @@ class DerivClient:
             "available": equity,
             "currency": str(balance.get("currency", "")),
         }
-        DerivClient._account_balance_cache = (now, result)
+        DerivClient._account_balance_cache[mode] = (now, result)
         return result
 
     async def get_positions(self) -> list[dict[str, Any]]:
-        if settings.execution_mode.lower() != "live":
-            return []
         try:
             uri = await self._authenticated_uri()
             async with websockets.connect(uri, open_timeout=15, close_timeout=5) as socket:
@@ -264,7 +261,7 @@ class DerivClient:
         confirming a sale that was just made) - everywhere else this collapses
         repeated lookups of the same contract into one real Deriv call.
         """
-        if settings.execution_mode.lower() != "live" or not contract_id:
+        if not contract_id:
             return None
         now = time.monotonic()
         if use_cache:
@@ -281,8 +278,6 @@ class DerivClient:
         return poc
 
     async def get_symbol_catalog(self) -> list[dict[str, Any]]:
-        if settings.execution_mode.lower() != "live":
-            return []
         if DerivClient._symbol_catalog is not None:
             return DerivClient._symbol_catalog
         try:
@@ -363,13 +358,6 @@ class DerivClient:
         return found
 
     async def place_order(self, signal: WebhookSignal, hedge_mode: bool = False) -> dict[str, Any]:
-        if settings.execution_mode.lower() != "live":
-            return {
-                "mode": "paper",
-                "order_id": f"paper-{self._timestamp()}",
-                "message": "Paper execution recorded. No Deriv order was sent.",
-            }
-
         if signal.direction is None:
             raise DerivExecutionError("Entry orders require a direction.")
 
@@ -414,13 +402,12 @@ class DerivClient:
         )
         buy_data = result.get("buy", result)
         order_id = buy_data.get("contract_id") if isinstance(buy_data, dict) else None
-        return {"order_id": str(order_id or self._timestamp()), "mode": "live", "result": result}
+        return {"order_id": str(order_id or self._timestamp()), "mode": settings.execution_mode.lower(), "result": result}
 
     async def close_order(self, contract_id: str) -> dict[str, Any]:
-        if settings.execution_mode.lower() != "live":
-            return {"mode": "paper", "order_id": f"paper-close-{self._timestamp()}"}
+        mode = settings.execution_mode.lower()
         if not contract_id:
-            return {"mode": "live", "message": "no_position"}
+            return {"mode": mode, "message": "no_position"}
 
         # portfolio (used by get_positions) has been observed to silently omit
         # genuinely open contracts, which would make a symbol/direction search
@@ -431,7 +418,7 @@ class DerivClient:
         if poc and poc.get("is_sold"):
             # Deriv already closed this itself (e.g. a stop-out) - nothing to sell.
             return {
-                "mode": "live",
+                "mode": mode,
                 "message": "already_sold",
                 "order_id": contract_id,
                 "profit": float(poc.get("profit") or 0),
@@ -449,7 +436,7 @@ class DerivClient:
         profit = float(final["profit"]) if final and final.get("profit") is not None else None
 
         return {
-            "mode": "live",
+            "mode": mode,
             "order_id": str(order_id or contract_id),
             "result": result,
             "profit": profit,

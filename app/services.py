@@ -232,7 +232,7 @@ async def reconcile_open_trade(db: Session, trade: Trade) -> bool:
     entry signal for that strategy/symbol. Returns True if the trade was
     closed as a result of this check.
     """
-    if settings.execution_mode.lower() != "live" or not trade.exchange_order_id:
+    if not trade.exchange_order_id:
         return False
     poc = await DerivClient().get_contract_status(trade.exchange_order_id)
     if not poc or not poc.get("is_sold"):
@@ -357,11 +357,11 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
                 return ProcessedSignal(signal=signal, trade=trade)
 
             exit_price = payload.price or trade.entry_price
-            # In live mode, use Deriv's own reported P&L for the contract
-            # rather than recomputing it from raw underlying prices, which
-            # don't share a unit with the dollar stake.
+            # Use Deriv's own reported P&L for the contract rather than
+            # recomputing it from raw underlying prices, which don't share a
+            # unit with the dollar stake.
             live_profit = result.get("profit")
-            if settings.execution_mode.lower() == "live" and isinstance(live_profit, (int, float)):
+            if isinstance(live_profit, (int, float)):
                 gross = float(live_profit)
                 net = gross - trade.fees
             else:
