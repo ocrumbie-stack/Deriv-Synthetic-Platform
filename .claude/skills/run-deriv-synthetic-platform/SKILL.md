@@ -39,7 +39,7 @@ its own:
 | command | what it does |
 |---|---|
 | `driver.sh start` | Launches uvicorn on `127.0.0.1:8125` against a fresh `./run-check.db`, `EXECUTION_MODE=demo`, and fake-but-well-formed Deriv credentials (real API calls are attempted and fail at Deriv's end with a 401 - fine for wiring/UI checks; pass real tokens via env if you need actual execution). Blocks until `/health` responds. Logs at `/tmp/run-deriv-uvicorn.log`. |
-| `driver.sh seed` | Fires a demo entry+exit, flips to live mode, fires a live entry, flips back to demo - via the real `/webhook` and `/api/risk` endpoints, so Trade History/Signal Journal have both demo- and live-tagged rows to inspect. |
+| `driver.sh seed` | Registers a "Run Check" Signal Bot (entries are rejected without one - size/leverage are always platform-controlled, never taken from the webhook), then fires a demo entry+exit, flips to live mode, fires a live entry, flips back to demo - via the real `/api/signal-bots`, `/webhook`, and `/api/risk` endpoints, so Trade History/Signal Journal have both demo- and live-tagged rows to inspect. |
 | `driver.sh shots` | Screenshots Overview, Trade History, Signal Journal, Open Positions, and Risk Controls (navigated via URL hash, e.g. `#trading-history` - see `pageIds` in `app.js`) into `/tmp/run-deriv-shots/*.png`. |
 | `driver.sh stop` | Kills the server and deletes `./run-check.db`. Always run this when done. |
 

@@ -81,6 +81,14 @@ cmd_start() {
 }
 
 cmd_seed() {
+  # Every strategy needs a registered Signal Bot before an entry will be
+  # accepted (size/leverage are always platform-controlled, never taken
+  # from the webhook payload) - register one for "Run Check" first, on
+  # both symbols this seed sequence trades.
+  echo "-- register signal bot --"
+  curl -s -X POST "$BASE/api/signal-bots" -H "Content-Type: application/json" -d \
+    '{"name":"Run Check","symbol":"R_100,R_50","size":1,"leverage":10}'
+  echo
   echo "-- demo entry --"
   curl -s -X POST "$BASE/webhook" -H "Content-Type: application/json" -d \
     '{"secret":"'"$WEBHOOK_SECRET"'","strategy":"Run Check","symbol":"R_100","action":"entry","direction":"long","price":1000,"size":1,"signal_id":"run-check-demo-entry"}'

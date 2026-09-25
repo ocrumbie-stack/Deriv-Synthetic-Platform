@@ -162,6 +162,12 @@ def validate_signal(db: Session, payload: WebhookSignal, strategy: Strategy, bot
         return "Invalid webhook secret."
     if settings.emergency_stop or risk.emergency_stop:
         return "Emergency stop is active."
+    # Size and leverage are always platform-controlled (from the bot's own
+    # settings, or the Leverage page) - a webhook signal only ever triggers
+    # execution, never dictates sizing. That requires a bot to exist for
+    # every strategy that's allowed to open a position.
+    if payload.action == SignalAction.entry and bot is None:
+        return "No signal bot is configured for this strategy - create one on the Signal Bots page before it can execute entries."
     if bot and not bot.enabled:
         return "Signal bot is disabled."
     if bot and bot.symbol:
