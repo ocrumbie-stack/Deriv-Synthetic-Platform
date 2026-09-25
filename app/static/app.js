@@ -5,8 +5,6 @@ let activePeriod      = "today";
 let rejectionsFilter  = false;
 let activeStrategy = "all";
 let historySymbolFilter = "all";
-let historyModeFilter = "all";
-let signalModeFilter = "all";
 let latestState    = {
   summary: {}, risk: {}, balance: {}, performance: [], positions: [],
   signals: [], history: [], analytics: { equity_curve: [], status_counts: {}, symbol_exposure: [] },
@@ -449,27 +447,16 @@ function renderSignals(rows) {
   const el = document.querySelector("#signals");
   if (!el) return;
 
-  const modeFilterEl = document.querySelector("#signalModeFilter");
-  if (modeFilterEl && !modeFilterEl.dataset.wired) {
-    modeFilterEl.value = signalModeFilter;
-    modeFilterEl.addEventListener("change", () => {
-      signalModeFilter = modeFilterEl.value;
-      renderSignals(latestState.signals || []);
-    });
-    modeFilterEl.dataset.wired = "1";
-  }
-
-  const modeRows = rows.filter(s => signalModeFilter === "all" || s.execution_mode === signalModeFilter);
   const filtered = rejectionsFilter
-    ? modeRows.filter(s => s.status === "rejected" || s.status === "failed")
-    : modeRows;
+    ? rows.filter(s => s.status === "rejected" || s.status === "failed")
+    : rows;
   el.innerHTML = filtered.length
     ? filtered.map(s => signalRow(s, 6)).join("")
     : emptyRow(7, rejectionsFilter ? "No rejections." : "No signals received.");
   const countEl = document.querySelector("#signalCount");
   if (countEl) {
-    const rejCount = modeRows.filter(s => s.status === "rejected" || s.status === "failed").length;
-    countEl.textContent = rejectionsFilter ? `${rejCount} rejected` : `${modeRows.length} signals`;
+    const rejCount = rows.filter(s => s.status === "rejected" || s.status === "failed").length;
+    countEl.textContent = rejectionsFilter ? `${rejCount} rejected` : `${rows.length} signals`;
   }
 }
 
@@ -752,18 +739,8 @@ function historyStats(rows) {
 function renderHistory(rows) {
   const el = document.querySelector("#history");
   const filterEl = document.querySelector("#historySymbolFilter");
-  const modeFilterEl = document.querySelector("#historyModeFilter");
   const statsEl = document.querySelector("#historyStats");
   if (!el) return;
-
-  if (modeFilterEl && !modeFilterEl.dataset.wired) {
-    modeFilterEl.value = historyModeFilter;
-    modeFilterEl.addEventListener("change", () => {
-      historyModeFilter = modeFilterEl.value;
-      renderHistory(latestState.history || []);
-    });
-    modeFilterEl.dataset.wired = "1";
-  }
 
   // Always the full unfiltered set, independent of historySymbolFilter -
   // comparing across symbols is the whole point of this chart.
@@ -792,8 +769,7 @@ function renderHistory(rows) {
   }
 
   const filtered = rows
-    .filter(t => historySymbolFilter === "all" || t.symbol === historySymbolFilter)
-    .filter(t => historyModeFilter === "all" || t.execution_mode === historyModeFilter);
+    .filter(t => historySymbolFilter === "all" || t.symbol === historySymbolFilter);
 
   if (statsEl) {
     const s = historyStats(filtered);

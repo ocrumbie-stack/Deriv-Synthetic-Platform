@@ -244,6 +244,7 @@ async def update_bot_pair(bot_id: int, symbol: str, updates: BotPairUpdate, db: 
             Trade.strategy_name == bot.name,
             Trade.symbol == sym,
             Trade.status == PositionStatus.open,
+            Trade.execution_mode == settings.execution_mode.lower(),
         )
     )
     if open_trade and (pair.tp_pct or pair.sl_pct):
@@ -356,15 +357,24 @@ def update_risk_settings(updates: dict, db: Session = Depends(get_db)) -> dict:
 
 @app.get("/api/signals", response_model=list[SignalOut])
 def list_signals(limit: int = 100, db: Session = Depends(get_db)) -> list[Signal]:
-    return list(db.scalars(select(Signal).order_by(Signal.created_at.desc()).limit(limit)))
+    mode = settings.execution_mode.lower()
+    return list(
+        db.scalars(
+            select(Signal)
+            .where(Signal.execution_mode == mode)
+            .order_by(Signal.created_at.desc())
+            .limit(limit)
+        )
+    )
 
 
 @app.get("/api/open-positions", response_model=list[TradeOut])
 async def open_positions(db: Session = Depends(get_db)) -> list[Trade]:
+    mode = settings.execution_mode.lower()
     trades = list(
         db.scalars(
             select(Trade)
-            .where(Trade.status == PositionStatus.open)
+            .where(Trade.status == PositionStatus.open, Trade.execution_mode == mode)
             .order_by(Trade.opened_at.desc())
         )
     )
@@ -382,7 +392,15 @@ async def open_positions(db: Session = Depends(get_db)) -> list[Trade]:
 
 @app.get("/api/trade-history", response_model=list[TradeOut])
 def trade_history(limit: int = 200, db: Session = Depends(get_db)) -> list[Trade]:
-    return list(db.scalars(select(Trade).order_by(Trade.opened_at.desc()).limit(limit)))
+    mode = settings.execution_mode.lower()
+    return list(
+        db.scalars(
+            select(Trade)
+            .where(Trade.execution_mode == mode)
+            .order_by(Trade.opened_at.desc())
+            .limit(limit)
+        )
+    )
 
 
 @app.get("/api/performance")
