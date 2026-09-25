@@ -532,6 +532,33 @@
       </div><!-- /main-content -->
     </div><!-- /app -->
 
-    <script src="/static/app.js?v=3"></script>
+    <div id="exitWebhookModal" class="modal-overlay" style="display:none">
+      <div class="modal-box">
+        <div class="modal-header">
+          <span class="modal-title" id="exitWebhookModalTitle">Manual exit webhook</span>
+          <button id="exitWebhookModalX" class="modal-close-x" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-field">
+          <span class="webhook-label">URL</span>
+          <div class="url-row">
+            <code id="exitWebhookModalUrl" class="url-display"></code>
+            <button id="exitWebhookModalCopyUrl" class="copy-btn">Copy</button>
+          </div>
+        </div>
+        <div class="modal-field">
+          <span class="webhook-label">PAYLOAD</span>
+          <div class="url-row">
+            <code id="exitWebhookModalPayload" class="url-display dim"></code>
+            <button id="exitWebhookModalCopyPayload" class="copy-btn">Copy</button>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="exitWebhookModalDismiss" class="mini-switch">Close</button>
+          <button id="exitWebhookModalCopyClose" class="copy-btn">Copy &amp; close</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/static/app.js?v=4"></script>
   </body>
 </html>

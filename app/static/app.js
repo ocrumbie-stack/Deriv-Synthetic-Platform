@@ -422,6 +422,18 @@ function setMeter(el, ratio) {
 
 // ─── Render: Signal tables ───────────────────────────────────────────────────
 
+const EXIT_SOURCE_LABELS = {
+  strategy_exit: "Strategy exit",
+  reversal:      "Reversal",
+  webhook_exit:  "Webhook exit",
+  manual_close:  "Manual close",
+  price_exit:    "Price exit",
+};
+
+function signalReason(s) {
+  return s.rejection_reason || EXIT_SOURCE_LABELS[s.source] || "—";
+}
+
 function signalRow(s, cols) {
   if (cols === 6) return `
     <tr>
@@ -431,7 +443,7 @@ function signalRow(s, cols) {
       <td>${s.action}${s.direction ? " " + s.direction : ""}</td>
       <td>${statusBadge(s.status)}</td>
       <td>${modeBadge(s.execution_mode)}</td>
-      <td class="neutral" style="max-width:240px;overflow:hidden;text-overflow:ellipsis">${s.rejection_reason || "—"}</td>
+      <td class="neutral" style="max-width:240px;overflow:hidden;text-overflow:ellipsis">${signalReason(s)}</td>
     </tr>`;
   return `
     <tr>
@@ -439,7 +451,7 @@ function signalRow(s, cols) {
       <td>${s.strategy_name}</td>
       <td>${s.symbol}</td>
       <td>${s.action}${s.direction ? " " + s.direction : ""}</td>
-      <td class="neutral" style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${s.rejection_reason || "—"}</td>
+      <td class="neutral" style="max-width:260px;overflow:hidden;text-overflow:ellipsis">${signalReason(s)}</td>
     </tr>`;
 }
 
@@ -594,12 +606,49 @@ function renderPositions(rows) {
       } else if (action === "webhook") {
         const url = window.location.origin + "/webhook/exit";
         const payload = JSON.stringify({ secret: _webhookSecret, strategy: sel.dataset.strategy, symbol: sel.dataset.symbol, price: "{{close}}" }, null, 2);
-        const text = `${url}\n\n${payload}`;
-        navigator.clipboard?.writeText(text).catch(() => {});
-        alert(`Manual exit webhook for ${label} (copied to clipboard):\n\n${text}`);
+        showExitWebhookModal(label, url, payload);
       }
     });
   });
+}
+
+let _exitWebhookModalWired = false;
+function showExitWebhookModal(label, url, payload) {
+  const modal = document.querySelector("#exitWebhookModal");
+  if (!modal) return;
+  document.querySelector("#exitWebhookModalTitle").textContent = `Manual exit webhook — ${label}`;
+  document.querySelector("#exitWebhookModalUrl").textContent = url;
+  document.querySelector("#exitWebhookModalPayload").textContent = payload;
+  modal.style.display = "flex";
+
+  const copy = (text, btn) => {
+    navigator.clipboard?.writeText(text).then(() => {
+      const original = btn.textContent;
+      btn.textContent = "Copied!";
+      setTimeout(() => { btn.textContent = original; }, 1500);
+    }).catch(() => {});
+  };
+  const hide = () => { modal.style.display = "none"; };
+
+  if (_exitWebhookModalWired) return; // listeners only need wiring once - content is re-read live on each click
+  _exitWebhookModalWired = true;
+
+  document.querySelector("#exitWebhookModalCopyUrl").addEventListener("click", function () {
+    copy(document.querySelector("#exitWebhookModalUrl").textContent, this);
+  });
+  document.querySelector("#exitWebhookModalCopyPayload").addEventListener("click", function () {
+    copy(document.querySelector("#exitWebhookModalPayload").textContent, this);
+  });
+  document.querySelector("#exitWebhookModalCopyClose").addEventListener("click", () => {
+    const u = document.querySelector("#exitWebhookModalUrl").textContent;
+    const p = document.querySelector("#exitWebhookModalPayload").textContent;
+    navigator.clipboard?.writeText(`${u}\n\n${p}`).catch(() => {});
+    hide();
+  });
+  document.querySelector("#exitWebhookModalDismiss").addEventListener("click", hide);
+  document.querySelector("#exitWebhookModalX").addEventListener("click", hide);
+  modal.addEventListener("click", e => { if (e.target === modal) hide(); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && modal.style.display !== "none") hide(); });
 }
 
 async function closePositionNow(tradeId, price) {

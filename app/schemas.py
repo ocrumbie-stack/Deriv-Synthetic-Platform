@@ -146,6 +146,7 @@ class SignalOut(BaseModel):
     signal_id: str | None
     status: ExecutionStatus
     rejection_reason: str | None
+    source: str | None
     execution_mode: str
     created_at: datetime
 

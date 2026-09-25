@@ -370,6 +370,22 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
                 db.commit()
                 db.refresh(signal)
                 return ProcessedSignal(signal=signal, trade=opposite)
+            # The reversal closed a position, but the Signal row being built in
+            # this call is for the new entry - log the close itself too, so the
+            # Signal Journal shows why the old position ended.
+            db.add(
+                Signal(
+                    strategy_id=strategy.id,
+                    strategy_name=strategy.name,
+                    symbol=payload.symbol.upper(),
+                    action=SignalAction.exit,
+                    price=payload.price,
+                    status=ExecutionStatus.closed,
+                    source="reversal",
+                    raw_payload=json.dumps(payload.model_dump(mode="json")),
+                    execution_mode=settings.execution_mode.lower(),
+                )
+            )
 
         trade = Trade(
             strategy_id=strategy.id,
@@ -413,6 +429,7 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
     elif payload.action == SignalAction.exit:
         trade = find_open_trade(db, strategy.id, payload.symbol.upper())
         if trade:
+            signal.source = "strategy_exit"
             try:
                 await close_trade(db, trade, payload.price, bot)
                 signal.status = ExecutionStatus.closed
@@ -469,6 +486,7 @@ async def process_manual_exit(db: Session, payload: ManualExitSignal) -> Process
         price=payload.price,
         status=ExecutionStatus.rejected if rejection else ExecutionStatus.accepted,
         rejection_reason=rejection,
+        source="webhook_exit",
         raw_payload=json.dumps(payload.model_dump(mode="json")),
         execution_mode=mode,
     )
