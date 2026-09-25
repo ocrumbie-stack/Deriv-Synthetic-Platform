@@ -810,7 +810,7 @@ async function refresh() {
   const [summary, risk, balance, performance, positions, signals, history, analytics, symbolLeverage] = await Promise.all([
     getJson("/api/summary"),
     getJson("/api/risk"),
-    getJson("/api/account-balance"),
+    getJson("/api/account-balance").catch(() => ({})),
     getJson(`/api/performance?period=${activePeriod}`),
     getJson("/api/open-positions"),
     getJson("/api/signals?limit=200"),
