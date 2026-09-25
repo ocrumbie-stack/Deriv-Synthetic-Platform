@@ -543,7 +543,7 @@ function renderSymbolLeverage(rows) {
 function renderPositions(rows) {
   const el = document.querySelector("#positions");
   if (!el) return;
-  if (!rows.length) { el.innerHTML = emptyRow(10, "No open positions."); return; }
+  if (!rows.length) { el.innerHTML = emptyRow(11, "No open positions."); return; }
   el.innerHTML = rows.map(t => `
     <tr>
       <td>${t.strategy_name}</td><td>${t.symbol}</td><td>${t.direction}</td>
@@ -553,6 +553,7 @@ function renderPositions(rows) {
       <td>${statusBadge(t.status)}</td>
       <td>${modeBadge(t.execution_mode)}</td>
       <td>${fmtDate(t.opened_at)}</td>
+      <td><button class="mini-switch" data-close-position="${t.id}" style="background:var(--red-dim);color:var(--red)">Close</button></td>
     </tr>`).join("");
   // Fetch live unrealized P&L from Deriv
   getJson("/api/unrealized-pnl").then(upl => {
@@ -565,6 +566,24 @@ function renderPositions(rows) {
       }
     });
   }).catch(() => {});
+  el.querySelectorAll("[data-close-position]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const row = btn.closest("tr");
+      const label = row ? `${row.children[1].textContent} ${row.children[2].textContent}` : "this position";
+      if (!confirm(`Close ${label} now at market?`)) return;
+      btn.disabled = true;
+      btn.textContent = "Closing…";
+      try {
+        await fetch(`/api/open-positions/${btn.dataset.closePosition}/close`, { method: "POST" })
+          .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "Close failed"); });
+        await refresh();
+      } catch (err) {
+        alert(err.message || "Failed to close position.");
+        btn.disabled = false;
+        btn.textContent = "Close";
+      }
+    });
+  });
 }
 
 function symbolPerfRows(rows) {

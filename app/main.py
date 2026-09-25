@@ -14,7 +14,7 @@ from app.database import Base, SessionLocal, engine, get_db, sync_schema
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalBot, Strategy, SymbolLeverage, Trade
 from app.schemas import BotPairOut, BotPairUpdate, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
-from app.services import account_exposure, arm_pair_tpsl, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, process_webhook_signal, reconcile_open_trade
+from app.services import account_exposure, arm_pair_tpsl, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, process_webhook_signal, reconcile_open_trade
 
 
 logger = logging.getLogger("uvicorn.error")
@@ -388,6 +388,31 @@ async def open_positions(db: Session = Depends(get_db)) -> list[Trade]:
     if reconciled:
         db.commit()
     return [trade for trade in trades if trade.status == PositionStatus.open]
+
+
+@app.post("/api/open-positions/{trade_id}/close", response_model=TradeOut)
+async def close_position(trade_id: int, db: Session = Depends(get_db)) -> Trade:
+    trade = db.get(Trade, trade_id)
+    if not trade or trade.execution_mode != settings.execution_mode.lower():
+        raise HTTPException(status_code=404, detail="Open position not found.")
+    if trade.status != PositionStatus.open:
+        raise HTTPException(status_code=409, detail="Position is already closed.")
+
+    # Deriv may have already stopped-out/sold this contract without a
+    # matching exit webhook - reconcile instead of attempting a redundant close.
+    if await reconcile_open_trade(db, trade):
+        db.commit()
+        db.refresh(trade)
+        return trade
+
+    bot = get_signal_bot(db, trade.strategy_name)
+    try:
+        await close_trade(db, trade, None, bot)
+    except DerivExecutionError as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to close position on Deriv: {exc}") from exc
+    db.commit()
+    db.refresh(trade)
+    return trade
 
 
 @app.get("/api/trade-history", response_model=list[TradeOut])
