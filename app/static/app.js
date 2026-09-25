@@ -1496,6 +1496,26 @@ document.querySelector("#accountExposureLimit")?.addEventListener("change", asyn
       setTimeout(() => { payloadBtn.textContent = "Copy"; }, 2000);
     });
   });
+
+  const exitUrl = window.location.origin + "/webhook/exit";
+  const exitUrlEl = document.querySelector("#exitWebhookUrl");
+  const exitBtnEl = document.querySelector("#copyExitWebhook");
+  if (exitUrlEl) exitUrlEl.textContent = exitUrl;
+  if (exitBtnEl) exitBtnEl.addEventListener("click", () => {
+    navigator.clipboard.writeText(exitUrl).then(() => {
+      exitBtnEl.textContent = "Copied!";
+      setTimeout(() => { exitBtnEl.textContent = "Copy"; }, 2000);
+    });
+  });
+
+  const exitPayloadEl  = document.querySelector("#exitPayloadDisplay");
+  const exitPayloadBtn = document.querySelector("#copyExitPayload");
+  if (exitPayloadBtn && exitPayloadEl) exitPayloadBtn.addEventListener("click", () => {
+    navigator.clipboard.writeText(exitPayloadEl.textContent).then(() => {
+      exitPayloadBtn.textContent = "Copied!";
+      setTimeout(() => { exitPayloadBtn.textContent = "Copy"; }, 2000);
+    });
+  });
 })();
 
 document.querySelector("#rejectionsFilterBtn")?.addEventListener("click", function() {

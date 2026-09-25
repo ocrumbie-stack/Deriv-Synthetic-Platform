@@ -195,11 +195,25 @@
                   <button id="copyWebhook" class="copy-btn">Copy</button>
                 </div>
               </div>
-              <div class="webhook-section">
+              <div class="webhook-section" style="border-right:0;border-bottom:1px solid var(--border)">
                 <span class="webhook-label">MINIMUM REQUIRED PAYLOAD</span>
                 <div class="url-row">
                   <code id="payloadDisplay" class="url-display dim">{"secret":"YOUR_SECRET","strategy":"{{strategy.title}}","symbol":"{{ticker}}","action":"entry","direction":"long|short","size":0.1,"leverage":10,"price":{{close}}}</code>
                   <button id="copyPayload" class="copy-btn">Copy</button>
+                </div>
+              </div>
+              <div class="webhook-section" style="border-right:0;border-bottom:1px solid var(--border)">
+                <span class="webhook-label">MANUAL EXIT WEBHOOK URL <span class="dim">(trendline / price alerts, independent of the strategy's own exit)</span></span>
+                <div class="url-row">
+                  <code id="exitWebhookUrl" class="url-display"></code>
+                  <button id="copyExitWebhook" class="copy-btn">Copy</button>
+                </div>
+              </div>
+              <div class="webhook-section">
+                <span class="webhook-label">MANUAL EXIT PAYLOAD</span>
+                <div class="url-row">
+                  <code id="exitPayloadDisplay" class="url-display dim">{"secret":"YOUR_SECRET","strategy":"{{strategy.title}}","symbol":"{{ticker}}","price":{{close}}}</code>
+                  <button id="copyExitPayload" class="copy-btn">Copy</button>
                 </div>
               </div>
             </div>

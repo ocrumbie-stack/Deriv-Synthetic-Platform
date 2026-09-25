@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.config import ENV_EXECUTION_MODE, settings
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
-from app.schemas import WebhookSignal
+from app.schemas import ManualExitSignal, WebhookSignal
 
 
 @dataclass
@@ -427,4 +427,68 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
     db.refresh(signal)
     if trade:
         db.refresh(trade)
+    return ProcessedSignal(signal=signal, trade=trade)
+
+
+async def process_manual_exit(db: Session, payload: ManualExitSignal) -> ProcessedSignal:
+    """Close whatever position is open for this strategy/symbol, triggered
+    independently of the strategy's own exit signal (e.g. a TradingView alert
+    on a hand-drawn trendline or a chosen price level).
+
+    Deliberately skips validate_signal's strategy/bot-enabled and emergency
+    stop checks - this is a discretionary "flatten if needed" escape hatch,
+    not a strategy action, so it must still work while the strategy or bot is
+    paused or the emergency stop is on.
+    """
+    get_risk_settings(db)
+    mode = settings.execution_mode.lower()
+    symbol = payload.symbol.upper()
+
+    rejection = None
+    if payload.secret != settings.webhook_secret:
+        rejection = "Invalid webhook secret."
+
+    trade = None
+    if not rejection:
+        trade = db.scalar(
+            select(Trade).where(
+                Trade.strategy_name == payload.strategy,
+                Trade.symbol == symbol,
+                Trade.status == PositionStatus.open,
+                Trade.execution_mode == mode,
+            )
+        )
+        if not trade:
+            rejection = "No open position exists for this strategy and symbol."
+
+    signal = Signal(
+        strategy_id=trade.strategy_id if trade else None,
+        strategy_name=payload.strategy,
+        symbol=symbol,
+        action=SignalAction.exit,
+        price=payload.price,
+        status=ExecutionStatus.rejected if rejection else ExecutionStatus.accepted,
+        rejection_reason=rejection,
+        raw_payload=json.dumps(payload.model_dump(mode="json")),
+        execution_mode=mode,
+    )
+    db.add(signal)
+    db.flush()
+
+    if rejection:
+        db.commit()
+        db.refresh(signal)
+        return ProcessedSignal(signal=signal, trade=None)
+
+    bot = get_signal_bot(db, payload.strategy)
+    try:
+        await close_trade(db, trade, payload.price, bot)
+        signal.status = ExecutionStatus.closed
+    except DerivExecutionError as exc:
+        signal.status = ExecutionStatus.failed
+        signal.rejection_reason = str(exc)
+
+    db.commit()
+    db.refresh(signal)
+    db.refresh(trade)
     return ProcessedSignal(signal=signal, trade=trade)

@@ -35,6 +35,18 @@ class WebhookSignal(BaseModel):
         return values
 
 
+class ManualExitSignal(BaseModel):
+    """A standalone exit trigger, independent of the strategy's own entry/exit
+    logic - e.g. a TradingView alert on a hand-drawn trendline or a chosen
+    price level. Closes whatever position is currently open for the given
+    strategy/symbol, the same way the strategy's own exit signal would."""
+
+    secret: str | None = None
+    strategy: str = Field(..., min_length=1, max_length=120)
+    symbol: str = Field(..., min_length=1, max_length=40)
+    price: float | None = None
+
+
 class SignalBotCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     symbol: str | None = Field(default=None, max_length=200)
