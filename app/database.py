@@ -1,11 +1,28 @@
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.config import settings
 
 
-connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
+is_sqlite = settings.database_url.startswith("sqlite")
+# A webhook's DB transaction stays open across the awaited Deriv API call
+# inside place_order()/close_order() (can take several seconds), so a
+# second signal arriving in that window - e.g. the explicit close-then-enter
+# pair a reversal alert fires back to back - needs SQLite to wait for the
+# lock instead of raising "database is locked" immediately. The 5s
+# default has been observed to be too short for that; give it real headroom.
+connect_args = {"check_same_thread": False, "timeout": 30} if is_sqlite else {}
 engine = create_engine(settings.database_url, connect_args=connect_args)
+
+if is_sqlite:
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragma(dbapi_connection, _):
+        # WAL lets readers (the dashboard's frequent GETs) proceed without
+        # waiting on an in-progress writer, on top of the busy timeout above.
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.close()
+
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 

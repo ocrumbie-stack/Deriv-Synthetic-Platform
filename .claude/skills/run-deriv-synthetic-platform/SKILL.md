@@ -86,6 +86,26 @@ Ctrl-C to stop. Copy `.env.example` to `.env` first if you don't have one.
   (`.venv/Scripts/python.exe -m uvicorn ...`), not bare `uvicorn` on
   `PATH` - a fresh shell may not have the venv activated even if your
   current one does.
+- **`seed` run as its own command needs its own defaults.** `WEBHOOK_SECRET`
+  (and friends) are only `export`ed inside `cmd_start`'s process - a
+  separate `driver.sh seed` invocation in a new shell won't see them. The
+  script sets top-level `${VAR:-default}` fallbacks so each subcommand
+  works standalone; if you add new env-dependent behavior, default it at
+  the top of the script, not just inside `cmd_start`.
+- **SQLite WAL leaves `-shm`/`-wal` sidecar files** next to the db (enabled
+  in `app/database.py` to reduce lock contention - see below). `driver.sh
+  stop` removes them along with the main db file; if you ever bypass the
+  driver and delete the db by hand, clean up the sidecars too.
+- **A webhook's DB transaction spans the awaited Deriv API call** inside
+  `place_order()`/`close_order()`, holding SQLite's write lock for however
+  long that network call takes. Two signals arriving close together - e.g.
+  a reversal firing an explicit close then an entry back to back - can
+  trip `sqlite3.OperationalError: database is locked` if the first one is
+  still mid-flight. `app/database.py` sets a 30s busy timeout and
+  `PRAGMA journal_mode=WAL` to absorb this; if you ever see "database is
+  locked" again, that's the mechanism to look at first (either the timeout
+  needs to be higher, or a specific transaction needs to be shortened so
+  it doesn't span the network call).
 - **No `chromium-cli`/Playwright in this environment.** The driver shells
   out to a local Chrome/Edge binary directly with
   `--headless=new --disable-gpu --no-sandbox --virtual-time-budget=8000`.

@@ -15,6 +15,9 @@ set -euo pipefail
 
 PORT="${PORT:-8125}"
 BASE="http://127.0.0.1:$PORT"
+# Shared default so `seed` run as its own command (a separate shell/tool
+# call from `start`) doesn't depend on start's exports still being set.
+WEBHOOK_SECRET="${WEBHOOK_SECRET:-test-secret}"
 # Relative, not absolute: on Windows, sqlite3 chokes on git-bash's
 # POSIX-style absolute paths (/c/...) in a sqlite:/// URL ("unable to open
 # database file"). A relative path resolves correctly on every platform.
@@ -117,10 +120,20 @@ cmd_shots() {
 
 cmd_stop() {
   if [ -f "$PIDFILE" ]; then
-    kill "$(cat "$PIDFILE")" 2>/dev/null || true
+    local pid; pid="$(cat "$PIDFILE")"
+    kill "$pid" 2>/dev/null || true
+    # On Windows the sqlite file handle isn't released the instant the
+    # process is killed - a bare `rm` right after can hit "Device or
+    # resource busy". Poll briefly instead of a fixed sleep.
+    for _ in $(seq 1 20); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.2
+    done
     rm -f "$PIDFILE"
   fi
-  rm -f "$DB_FILE"
+  # WAL mode (enabled in app/database.py) leaves -shm/-wal sidecars next
+  # to the main db file - clean those up too, not just the db itself.
+  rm -f "$DB_FILE" "$DB_FILE-shm" "$DB_FILE-wal"
   echo "stopped, temp db removed"
 }
 
