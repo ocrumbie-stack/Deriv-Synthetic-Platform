@@ -5,7 +5,8 @@ __pycache__/
 *.pyo
 *.db
 .tmp/
-.claude/
+.claude/*
+!.claude/skills/
 Images/
 *.egg-info/
 dist/
