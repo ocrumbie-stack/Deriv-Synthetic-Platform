@@ -553,7 +553,14 @@ function renderPositions(rows) {
       <td>${statusBadge(t.status)}</td>
       <td>${modeBadge(t.execution_mode)}</td>
       <td>${fmtDate(t.opened_at)}</td>
-      <td><button class="mini-switch" data-close-position="${t.id}" style="background:var(--red-dim);color:var(--red)">Close</button></td>
+      <td>
+        <select class="inline-input exit-select" data-trade-id="${t.id}" data-strategy="${escapeAttr(t.strategy_name)}" data-symbol="${t.symbol}" style="background:var(--red-dim);color:var(--red)">
+          <option value="" selected disabled>Exit ▾</option>
+          <option value="instant">Close instantly</option>
+          <option value="price">Close at price…</option>
+          <option value="webhook">Get webhook payload</option>
+        </select>
+      </td>
     </tr>`).join("");
   // Fetch live unrealized P&L from Deriv
   getJson("/api/unrealized-pnl").then(upl => {
@@ -566,24 +573,44 @@ function renderPositions(rows) {
       }
     });
   }).catch(() => {});
-  el.querySelectorAll("[data-close-position]").forEach(btn => {
-    btn.addEventListener("click", async () => {
-      const row = btn.closest("tr");
-      const label = row ? `${row.children[1].textContent} ${row.children[2].textContent}` : "this position";
-      if (!confirm(`Close ${label} now at market?`)) return;
-      btn.disabled = true;
-      btn.textContent = "Closing…";
-      try {
-        await fetch(`/api/open-positions/${btn.dataset.closePosition}/close`, { method: "POST" })
-          .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "Close failed"); });
-        await refresh();
-      } catch (err) {
-        alert(err.message || "Failed to close position.");
-        btn.disabled = false;
-        btn.textContent = "Close";
+  el.querySelectorAll(".exit-select").forEach(sel => {
+    sel.addEventListener("change", async () => {
+      const action   = sel.value;
+      const tradeId  = sel.dataset.tradeId;
+      const row      = sel.closest("tr");
+      const label    = row ? `${row.children[1].textContent} ${row.children[2].textContent}` : "this position";
+      sel.value = ""; // reset to placeholder - each choice is a one-shot action, not a persisted setting
+
+      if (action === "instant") {
+        if (!confirm(`Close ${label} now at market?`)) return;
+        await closePositionNow(tradeId, null);
+      } else if (action === "price") {
+        const raw = prompt(`Exit price for ${label} (optional - leave blank to use market):`);
+        if (raw === null) return; // cancelled
+        const price = raw.trim() === "" ? null : Number(raw);
+        if (raw.trim() !== "" && Number.isNaN(price)) { alert("Enter a valid number."); return; }
+        if (!confirm(`Close ${label} now${price != null ? ` at ${price}` : ""}?`)) return;
+        await closePositionNow(tradeId, price);
+      } else if (action === "webhook") {
+        const url = window.location.origin + "/webhook/exit";
+        const payload = JSON.stringify({ secret: _webhookSecret, strategy: sel.dataset.strategy, symbol: sel.dataset.symbol, price: "{{close}}" }, null, 2);
+        const text = `${url}\n\n${payload}`;
+        navigator.clipboard?.writeText(text).catch(() => {});
+        alert(`Manual exit webhook for ${label} (copied to clipboard):\n\n${text}`);
       }
     });
   });
+}
+
+async function closePositionNow(tradeId, price) {
+  const qs = price != null && !Number.isNaN(price) ? `?price=${encodeURIComponent(price)}` : "";
+  try {
+    const r = await fetch(`/api/open-positions/${tradeId}/close${qs}`, { method: "POST" });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "Close failed");
+    await refresh();
+  } catch (err) {
+    alert(err.message || "Failed to close position.");
+  }
 }
 
 function symbolPerfRows(rows) {
@@ -1967,6 +1994,13 @@ function wireBotForm() {
     });
   });
 })();
+
+// Load the real webhook secret up front, regardless of which page loads
+// first - the Open Positions "Get webhook payload" action needs it too, not
+// just the Signal Bots page (which otherwise only fetches this lazily).
+getJson("/api/config").then(cfg => {
+  if (cfg.webhook_secret) _webhookSecret = cfg.webhook_secret;
+}).catch(() => {});
 
 refresh();
 setInterval(refresh, 10000);

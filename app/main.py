@@ -418,7 +418,7 @@ async def open_positions(db: Session = Depends(get_db)) -> list[Trade]:
 
 
 @app.post("/api/open-positions/{trade_id}/close", response_model=TradeOut)
-async def close_position(trade_id: int, db: Session = Depends(get_db)) -> Trade:
+async def close_position(trade_id: int, price: float | None = None, db: Session = Depends(get_db)) -> Trade:
     trade = db.get(Trade, trade_id)
     if not trade or trade.execution_mode != settings.execution_mode.lower():
         raise HTTPException(status_code=404, detail="Open position not found.")
@@ -434,7 +434,7 @@ async def close_position(trade_id: int, db: Session = Depends(get_db)) -> Trade:
 
     bot = get_signal_bot(db, trade.strategy_name)
     try:
-        await close_trade(db, trade, None, bot)
+        await close_trade(db, trade, price, bot)
     except DerivExecutionError as exc:
         raise HTTPException(status_code=502, detail=f"Failed to close position on Deriv: {exc}") from exc
     db.commit()
