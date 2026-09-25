@@ -193,7 +193,14 @@ def validate_signal(db: Session, payload: WebhookSignal, strategy: Strategy, bot
         projected_exposure = account_exposure(db) + payload.size
         if risk.max_account_exposure and projected_exposure > risk.max_account_exposure:
             return "Signal would exceed max account exposure."
-        if find_open_trade(db, strategy.id, payload.symbol):
+        existing = find_open_trade(db, strategy.id, payload.symbol)
+        # An entry in the same direction as an already-open position is a
+        # duplicate/pyramiding attempt and stays rejected. An entry in the
+        # opposite direction is a reversal - process_webhook_signal handles
+        # it by closing the existing position first, so the strategy only
+        # ever needs to send plain entry/exit signals, never an explicit
+        # close before flipping.
+        if existing and existing.direction == payload.direction:
             return "An open position already exists for this strategy and symbol."
     if payload.action == SignalAction.exit and not find_open_trade(db, strategy.id, payload.symbol):
         return "No open position exists for this strategy and symbol."
@@ -257,6 +264,43 @@ async def reconcile_open_trade(db: Session, trade: Trade) -> bool:
     return True
 
 
+async def close_trade(db: Session, trade: Trade, exit_price_hint: float | None, bot: SignalBot | None) -> dict:
+    """Close an open trade on Deriv and update its record - shared by an
+    explicit exit signal and an entry that reverses an opposite position.
+
+    Raises DerivExecutionError on failure; callers decide how to record that.
+    """
+    # Target the exact contract we already recorded rather than searching
+    # Deriv's portfolio by symbol/direction - that search has been observed
+    # to silently miss genuinely open contracts, which would wrongly
+    # conclude "no position" and leave the real contract running, untracked.
+    result = await DerivClient().close_order(trade.exchange_order_id)
+    if result.get("message") not in ("no_position", "already_sold"):
+        trade.exchange_order_id = str(result.get("order_id") or result.get("data", {}).get("orderId") or "")
+
+    exit_price = exit_price_hint or trade.entry_price
+    # Use Deriv's own reported P&L for the contract rather than recomputing
+    # it from raw underlying prices, which don't share a unit with the
+    # dollar stake.
+    live_profit = result.get("profit")
+    if isinstance(live_profit, (int, float)):
+        gross = float(live_profit)
+        net = gross - trade.fees
+    else:
+        gross, net = calculate_trade_result(trade, exit_price)
+    trade.exit_price = exit_price
+    trade.profit_loss = gross
+    trade.net_result = net
+    trade.status = PositionStatus.closed
+    trade.execution_status = ExecutionStatus.closed
+    trade.closed_at = datetime.utcnow()
+    if bot:
+        pair = get_or_create_bot_pair(db, bot, trade.symbol)
+        update_pair_session(db, pair, bot, net)
+        update_bot_session(db, bot, net)
+    return result
+
+
 async def process_webhook_signal(db: Session, payload: WebhookSignal) -> ProcessedSignal:
     strategy = get_or_create_strategy(db, payload.strategy)
     bot = get_signal_bot(db, payload.strategy)
@@ -306,6 +350,21 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
 
     trade = None
     if payload.action == SignalAction.entry:
+        # validate_signal only lets an entry through here while a position
+        # is already open when that position is in the opposite direction
+        # (a reversal) - close it first so the strategy never has to send
+        # an explicit exit of its own before flipping.
+        opposite = find_open_trade(db, strategy.id, payload.symbol.upper())
+        if opposite:
+            try:
+                await close_trade(db, opposite, payload.price, bot)
+            except DerivExecutionError as exc:
+                signal.status = ExecutionStatus.failed
+                signal.rejection_reason = f"Failed to close opposite position before reversing: {exc}"
+                db.commit()
+                db.refresh(signal)
+                return ProcessedSignal(signal=signal, trade=opposite)
+
         trade = Trade(
             strategy_id=strategy.id,
             strategy_name=strategy.name,
@@ -348,44 +407,15 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
     elif payload.action == SignalAction.exit:
         trade = find_open_trade(db, strategy.id, payload.symbol.upper())
         if trade:
-            result: dict = {}
             try:
-                # Target the exact contract we already recorded rather than
-                # searching Deriv's portfolio by symbol/direction - that
-                # search has been observed to silently miss genuinely open
-                # contracts, which would wrongly conclude "no position" and
-                # leave the real contract running, untracked, on Deriv.
-                result = await DerivClient().close_order(trade.exchange_order_id)
-                if result.get("message") not in ("no_position", "already_sold"):
-                    trade.exchange_order_id = str(result.get("order_id") or result.get("data", {}).get("orderId") or "")
+                await close_trade(db, trade, payload.price, bot)
+                signal.status = ExecutionStatus.closed
             except DerivExecutionError as exc:
                 signal.status = ExecutionStatus.failed
                 signal.rejection_reason = str(exc)
                 db.commit()
                 db.refresh(signal)
                 return ProcessedSignal(signal=signal, trade=trade)
-
-            exit_price = payload.price or trade.entry_price
-            # Use Deriv's own reported P&L for the contract rather than
-            # recomputing it from raw underlying prices, which don't share a
-            # unit with the dollar stake.
-            live_profit = result.get("profit")
-            if isinstance(live_profit, (int, float)):
-                gross = float(live_profit)
-                net = gross - trade.fees
-            else:
-                gross, net = calculate_trade_result(trade, exit_price)
-            trade.exit_price = exit_price
-            trade.profit_loss = gross
-            trade.net_result = net
-            trade.status = PositionStatus.closed
-            trade.execution_status = ExecutionStatus.closed
-            trade.closed_at = datetime.utcnow()
-            signal.status = ExecutionStatus.closed
-            if bot:
-                pair = get_or_create_bot_pair(db, bot, trade.symbol)
-                update_pair_session(db, pair, bot, net)
-                update_bot_session(db, bot, net)
 
     db.commit()
     db.refresh(signal)
