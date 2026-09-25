@@ -1096,7 +1096,8 @@ tr.clickable:hover td, tr.selected td { background: var(--panel-2, #16161e); }
 @media (max-width: 900px) {
   .sidebar { width: 56px; }
   .sidebar .brand, .sidebar .version, .nav-item span,
-  .nav-section-label, .stop-label, .es-state, .es-label, .footer-meta { display: none; }
+  .nav-section-label, .stop-label, .es-state, .es-label, .footer-meta,
+  #liveModeBrand { display: none; }
   .sidebar-brand { justify-content: center; padding: 16px 0; }
   .nav-item { justify-content: center; padding: 0; }
   .es-widget { padding: 10px; }

@@ -184,6 +184,12 @@ function renderSummary() {
   modeEl.textContent = (summary.execution_mode || "demo").toUpperCase();
   modeEl.className   = `live-badge ${summary.execution_mode === "live" ? "live" : "paper"}`;
 
+  const modeBrandEl = document.querySelector("#liveModeBrand");
+  if (modeBrandEl) {
+    modeBrandEl.textContent = modeEl.textContent;
+    modeBrandEl.className   = `live-badge ${summary.execution_mode === "live" ? "live" : "paper"}`;
+  }
+
   const stopEl   = document.querySelector("#stopLabel");
   stopEl.textContent = summary.emergency_stop ? "EMERGENCY STOP" : "controls active";
   stopEl.className   = `stop-label ${summary.emergency_stop ? "danger" : ""}`;
