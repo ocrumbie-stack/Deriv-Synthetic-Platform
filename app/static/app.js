@@ -5,6 +5,8 @@ let activePeriod      = "today";
 let rejectionsFilter  = false;
 let activeStrategy = "all";
 let historySymbolFilter = "all";
+let historyModeFilter = "all";
+let signalModeFilter = "all";
 let latestState    = {
   summary: {}, risk: {}, balance: {}, performance: [], positions: [],
   signals: [], history: [], analytics: { equity_curve: [], status_counts: {}, symbol_exposure: [] },
@@ -67,6 +69,10 @@ function statusBadge(status) {
   const ok  = ["enabled", "open", "executed", "closed", "accepted"];
   const bad = ["rejected", "failed"];
   return `<span class="badge ${ok.includes(status) ? "ok" : bad.includes(status) ? "bad" : "warn"}">${status}</span>`;
+}
+
+function modeBadge(mode) {
+  return `<span class="live-badge ${mode === "live" ? "live" : "paper"}">${(mode || "demo").toUpperCase()}</span>`;
 }
 
 function emptyRow(cols, label) {
@@ -426,6 +432,7 @@ function signalRow(s, cols) {
       <td>${s.symbol}</td>
       <td>${s.action}${s.direction ? " " + s.direction : ""}</td>
       <td>${statusBadge(s.status)}</td>
+      <td>${modeBadge(s.execution_mode)}</td>
       <td class="neutral" style="max-width:240px;overflow:hidden;text-overflow:ellipsis">${s.rejection_reason || "—"}</td>
     </tr>`;
   return `
@@ -441,16 +448,28 @@ function signalRow(s, cols) {
 function renderSignals(rows) {
   const el = document.querySelector("#signals");
   if (!el) return;
+
+  const modeFilterEl = document.querySelector("#signalModeFilter");
+  if (modeFilterEl && !modeFilterEl.dataset.wired) {
+    modeFilterEl.value = signalModeFilter;
+    modeFilterEl.addEventListener("change", () => {
+      signalModeFilter = modeFilterEl.value;
+      renderSignals(latestState.signals || []);
+    });
+    modeFilterEl.dataset.wired = "1";
+  }
+
+  const modeRows = rows.filter(s => signalModeFilter === "all" || s.execution_mode === signalModeFilter);
   const filtered = rejectionsFilter
-    ? rows.filter(s => s.status === "rejected" || s.status === "failed")
-    : rows;
+    ? modeRows.filter(s => s.status === "rejected" || s.status === "failed")
+    : modeRows;
   el.innerHTML = filtered.length
     ? filtered.map(s => signalRow(s, 6)).join("")
-    : emptyRow(6, rejectionsFilter ? "No rejections." : "No signals received.");
+    : emptyRow(7, rejectionsFilter ? "No rejections." : "No signals received.");
   const countEl = document.querySelector("#signalCount");
   if (countEl) {
-    const rejCount = rows.filter(s => s.status === "rejected" || s.status === "failed").length;
-    countEl.textContent = rejectionsFilter ? `${rejCount} rejected` : `${rows.length} signals`;
+    const rejCount = modeRows.filter(s => s.status === "rejected" || s.status === "failed").length;
+    countEl.textContent = rejectionsFilter ? `${rejCount} rejected` : `${modeRows.length} signals`;
   }
 }
 
@@ -537,7 +556,7 @@ function renderSymbolLeverage(rows) {
 function renderPositions(rows) {
   const el = document.querySelector("#positions");
   if (!el) return;
-  if (!rows.length) { el.innerHTML = emptyRow(9, "No open positions."); return; }
+  if (!rows.length) { el.innerHTML = emptyRow(10, "No open positions."); return; }
   el.innerHTML = rows.map(t => `
     <tr>
       <td>${t.strategy_name}</td><td>${t.symbol}</td><td>${t.direction}</td>
@@ -545,6 +564,7 @@ function renderPositions(rows) {
       <td>${number.format(t.leverage)}x</td>
       <td class="neutral" data-upl="${t.symbol}_${t.direction}">—</td>
       <td>${statusBadge(t.status)}</td>
+      <td>${modeBadge(t.execution_mode)}</td>
       <td>${fmtDate(t.opened_at)}</td>
     </tr>`).join("");
   // Fetch live unrealized P&L from Deriv
@@ -732,8 +752,18 @@ function historyStats(rows) {
 function renderHistory(rows) {
   const el = document.querySelector("#history");
   const filterEl = document.querySelector("#historySymbolFilter");
+  const modeFilterEl = document.querySelector("#historyModeFilter");
   const statsEl = document.querySelector("#historyStats");
   if (!el) return;
+
+  if (modeFilterEl && !modeFilterEl.dataset.wired) {
+    modeFilterEl.value = historyModeFilter;
+    modeFilterEl.addEventListener("change", () => {
+      historyModeFilter = modeFilterEl.value;
+      renderHistory(latestState.history || []);
+    });
+    modeFilterEl.dataset.wired = "1";
+  }
 
   // Always the full unfiltered set, independent of historySymbolFilter -
   // comparing across symbols is the whole point of this chart.
@@ -761,7 +791,9 @@ function renderHistory(rows) {
     }
   }
 
-  const filtered = historySymbolFilter === "all" ? rows : rows.filter(t => t.symbol === historySymbolFilter);
+  const filtered = rows
+    .filter(t => historySymbolFilter === "all" || t.symbol === historySymbolFilter)
+    .filter(t => historyModeFilter === "all" || t.execution_mode === historyModeFilter);
 
   if (statsEl) {
     const s = historyStats(filtered);
@@ -788,7 +820,7 @@ function renderHistory(rows) {
       </div>`;
   }
 
-  if (!filtered.length) { el.innerHTML = emptyRow(11, "No trades recorded."); return; }
+  if (!filtered.length) { el.innerHTML = emptyRow(12, "No trades recorded."); return; }
   el.innerHTML = filtered.map(t => `
     <tr>
       <td>${t.strategy_name}</td><td>${t.symbol}</td><td>${t.direction}</td>
@@ -797,6 +829,7 @@ function renderHistory(rows) {
       <td>${number.format(t.size)}</td>
       <td class="${pnlClass(t.profit_loss)}">${currency.format(t.profit_loss)}</td>
       <td class="${pnlClass(t.net_result)}">${currency.format(t.net_result)}</td>
+      <td>${modeBadge(t.execution_mode)}</td>
       <td>${fmtDate(t.opened_at)}</td>
       <td>${fmtDate(t.closed_at)}</td>
       <td>${t.closed_at ? duration(t.opened_at, t.closed_at) : "—"}</td>

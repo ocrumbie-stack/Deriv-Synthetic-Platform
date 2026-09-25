@@ -213,6 +213,11 @@
           <div class="page-header">
             <h1 class="page-title">Signals</h1>
             <div style="display:flex;align-items:center;gap:8px">
+              <select id="signalModeFilter" class="inline-input" style="width:auto;min-width:120px">
+                <option value="all">Demo + Live</option>
+                <option value="demo">Demo only</option>
+                <option value="live">Live only</option>
+              </select>
               <span class="header-badge" id="signalCount">0 signals</span>
               <div class="tabs"><button id="rejectionsFilterBtn">Rejections only</button></div>
             </div>
@@ -232,7 +237,7 @@
               <table>
                 <thead><tr>
                   <th>Time</th><th>Strategy</th><th>Symbol</th>
-                  <th>Signal</th><th>Status</th><th>Reason</th>
+                  <th>Signal</th><th>Status</th><th>Mode</th><th>Reason</th>
                 </tr></thead>
                 <tbody id="signals"></tbody>
               </table>
@@ -326,7 +331,7 @@
                 <thead><tr>
                   <th>Strategy</th><th>Symbol</th><th>Direction</th>
                   <th>Entry price</th><th>Size</th><th>Leverage</th>
-                  <th>Unrealized P/L</th><th>Status</th><th>Opened</th>
+                  <th>Unrealized P/L</th><th>Status</th><th>Mode</th><th>Opened</th>
                 </tr></thead>
                 <tbody id="positions"></tbody>
               </table>
@@ -340,6 +345,11 @@
             <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
               <select id="historySymbolFilter" class="inline-input" style="width:auto;min-width:160px">
                 <option value="all">All symbols</option>
+              </select>
+              <select id="historyModeFilter" class="inline-input" style="width:auto;min-width:120px">
+                <option value="all">Demo + Live</option>
+                <option value="demo">Demo only</option>
+                <option value="live">Live only</option>
               </select>
               <span class="header-badge" id="historyCount">0 trades</span>
             </div>
@@ -358,7 +368,7 @@
                 <thead><tr>
                   <th>Strategy</th><th>Symbol</th><th>Side</th>
                   <th>Entry</th><th>Exit</th><th>Size</th>
-                  <th>Gross P/L</th><th>Net P/L</th>
+                  <th>Gross P/L</th><th>Net P/L</th><th>Mode</th>
                   <th>Opened</th><th>Closed</th><th>Duration</th>
                 </tr></thead>
                 <tbody id="history"></tbody>

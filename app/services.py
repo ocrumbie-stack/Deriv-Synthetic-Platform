@@ -51,25 +51,32 @@ def daily_strategy_net(db: Session, strategy_id: int) -> float:
         select(func.coalesce(func.sum(Trade.net_result), 0.0)).where(
             Trade.strategy_id == strategy_id,
             Trade.closed_at >= start,
+            Trade.execution_mode == settings.execution_mode.lower(),
         )
     )
     return float(total or 0.0)
 
 
 def daily_account_net(db: Session) -> float:
+    """Scoped to the currently active execution mode - a bad demo test run
+    must never trip the live daily loss limit, or vice versa."""
     start = datetime.combine(datetime.utcnow().date(), time.min)
     total = db.scalar(
         select(func.coalesce(func.sum(Trade.net_result), 0.0)).where(
             Trade.closed_at >= start,
+            Trade.execution_mode == settings.execution_mode.lower(),
         )
     )
     return float(total or 0.0)
 
 
 def account_exposure(db: Session) -> float:
+    """Scoped to the currently active execution mode, for the same reason
+    as daily_account_net."""
     total = db.scalar(
         select(func.coalesce(func.sum(Trade.size), 0.0)).where(
             Trade.status == PositionStatus.open,
+            Trade.execution_mode == settings.execution_mode.lower(),
         )
     )
     return float(total or 0.0)
@@ -287,6 +294,7 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
         status=ExecutionStatus.rejected if rejection else ExecutionStatus.accepted,
         rejection_reason=rejection,
         raw_payload=json.dumps(payload.model_dump(mode="json")),
+        execution_mode=settings.execution_mode.lower(),
     )
     db.add(signal)
     db.flush()
@@ -307,6 +315,7 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
             size=payload.size,
             leverage=payload.leverage,
             execution_status=ExecutionStatus.accepted,
+            execution_mode=settings.execution_mode.lower(),
         )
         db.add(trade)
         db.flush()

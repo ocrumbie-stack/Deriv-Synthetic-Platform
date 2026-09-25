@@ -74,6 +74,9 @@ class Signal(Base):
     status: Mapped[ExecutionStatus] = mapped_column(SqlEnum(ExecutionStatus), default=ExecutionStatus.received)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_payload: Mapped[str] = mapped_column(Text)
+    # "demo" or "live" - whichever execution mode was active when this signal
+    # arrived, so demo testing never mixes into live performance numbers.
+    execution_mode: Mapped[str] = mapped_column(String(10), default="demo", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
     strategy: Mapped[Strategy | None] = relationship(back_populates="signals")
@@ -97,6 +100,9 @@ class Trade(Base):
     status: Mapped[PositionStatus] = mapped_column(SqlEnum(PositionStatus), default=PositionStatus.open, index=True)
     execution_status: Mapped[ExecutionStatus] = mapped_column(SqlEnum(ExecutionStatus), default=ExecutionStatus.accepted)
     exchange_order_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    # "demo" or "live" - whichever execution mode was active when this trade
+    # was placed, so demo testing never mixes into live P&L/exposure/limits.
+    execution_mode: Mapped[str] = mapped_column(String(10), default="demo", index=True)
     opened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

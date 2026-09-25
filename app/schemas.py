@@ -134,6 +134,7 @@ class SignalOut(BaseModel):
     signal_id: str | None
     status: ExecutionStatus
     rejection_reason: str | None
+    execution_mode: str
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -154,6 +155,7 @@ class TradeOut(BaseModel):
     status: PositionStatus
     execution_status: ExecutionStatus
     exchange_order_id: str | None
+    execution_mode: str
     opened_at: datetime
     closed_at: datetime | None
 

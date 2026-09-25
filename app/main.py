@@ -391,8 +391,9 @@ def strategy_performance(period: str = "today", db: Session = Depends(get_db)) -
     strategies = list(db.scalars(select(Strategy).order_by(Strategy.name)))
     rows = []
 
+    mode = settings.execution_mode.lower()
     for strategy in strategies:
-        trade_query = select(Trade).where(Trade.strategy_id == strategy.id)
+        trade_query = select(Trade).where(Trade.strategy_id == strategy.id, Trade.execution_mode == mode)
         if start:
             trade_query = trade_query.where(Trade.opened_at >= start)
         trades = list(db.scalars(trade_query))
@@ -405,6 +406,7 @@ def strategy_performance(period: str = "today", db: Session = Depends(get_db)) -
             select(func.count(Trade.id)).where(
                 Trade.strategy_id == strategy.id,
                 Trade.status == PositionStatus.open,
+                Trade.execution_mode == mode,
             )
         )
 
@@ -434,8 +436,9 @@ def strategy_performance(period: str = "today", db: Session = Depends(get_db)) -
 @app.get("/api/analytics")
 def analytics(period: str = "all", db: Session = Depends(get_db)) -> dict:
     start = period_start(period)
-    trade_query = select(Trade).order_by(Trade.closed_at, Trade.opened_at)
-    signal_query = select(Signal)
+    mode = settings.execution_mode.lower()
+    trade_query = select(Trade).where(Trade.execution_mode == mode).order_by(Trade.closed_at, Trade.opened_at)
+    signal_query = select(Signal).where(Signal.execution_mode == mode)
     if start:
         trade_query = trade_query.where(Trade.opened_at >= start)
         signal_query = signal_query.where(Signal.created_at >= start)
@@ -508,10 +511,11 @@ async def account_balance(db: Session = Depends(get_db)) -> dict:
 def summary(db: Session = Depends(get_db)) -> dict:
     get_risk_settings(db)
     db.commit()
-    open_count = db.scalar(select(func.count(Trade.id)).where(Trade.status == PositionStatus.open)) or 0
-    signal_count = db.scalar(select(func.count(Signal.id))) or 0
-    rejected_count = db.scalar(select(func.count(Signal.id)).where(Signal.status == ExecutionStatus.rejected)) or 0
-    net = db.scalar(select(func.coalesce(func.sum(Trade.net_result), 0.0))) or 0.0
+    mode = settings.execution_mode.lower()
+    open_count = db.scalar(select(func.count(Trade.id)).where(Trade.status == PositionStatus.open, Trade.execution_mode == mode)) or 0
+    signal_count = db.scalar(select(func.count(Signal.id)).where(Signal.execution_mode == mode)) or 0
+    rejected_count = db.scalar(select(func.count(Signal.id)).where(Signal.status == ExecutionStatus.rejected, Signal.execution_mode == mode)) or 0
+    net = db.scalar(select(func.coalesce(func.sum(Trade.net_result), 0.0)).where(Trade.execution_mode == mode)) or 0.0
     return {
         "open_positions": int(open_count),
         "signals_logged": int(signal_count),
