@@ -1,5 +1,6 @@
 from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from app.config import settings
 
@@ -12,7 +13,17 @@ is_sqlite = settings.database_url.startswith("sqlite")
 # lock instead of raising "database is locked" immediately. The 5s
 # default has been observed to be too short for that; give it real headroom.
 connect_args = {"check_same_thread": False, "timeout": 30} if is_sqlite else {}
-engine = create_engine(settings.database_url, connect_args=connect_args)
+# Several endpoints (e.g. /api/open-positions) hold their DB session open
+# across awaited, per-position Deriv network calls that can take seconds
+# each. Under FastAPI + sync SQLAlchemy, a QueuePool's checkout wait for an
+# already-exhausted pool blocks synchronously right on the asyncio event
+# loop thread, freezing the *entire* app (every route, not just DB ones)
+# until it times out - this is what surfaces as Railway's "Application
+# failed to respond". NullPool sidesteps that: each checkout just opens its
+# own sqlite3 connection (cheap) instead of queueing for a shared, limited
+# pool, so a slow request can never block anyone else's checkout.
+pool_kwargs = {"poolclass": NullPool} if is_sqlite else {}
+engine = create_engine(settings.database_url, connect_args=connect_args, **pool_kwargs)
 
 if is_sqlite:
     @event.listens_for(engine, "connect")
