@@ -20,6 +20,15 @@ def _normalize_symbol_key(value: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "_", value.upper()).strip("_")
 
 
+# Names alerts send that no longer match any Deriv code or display name,
+# keyed by _normalize_symbol_key. Deriv renamed the original "Step Index" to
+# "Step Index 100" when it added the 200-500 variants.
+SYMBOL_ALIASES = {
+    "STEP_INDEX": "stpRNG",
+    "STEPINDEX": "stpRNG",
+}
+
+
 def _active_credentials() -> tuple[str, str, str]:
     """(app_id, api_token, account_id) for whichever Deriv account the
     current execution mode targets - the real one, or the demo/virtual one.
@@ -313,6 +322,14 @@ class DerivClient:
                 return code
 
         candidate_key = _normalize_symbol_key(candidate)
+        alias = SYMBOL_ALIASES.get(candidate_key)
+        if alias:
+            candidate_key = _normalize_symbol_key(alias)
+            for item in catalog:
+                code = str(item.get("underlying_symbol") or "")
+                if _normalize_symbol_key(code) == candidate_key:
+                    return code
+
         for item in catalog:
             code = str(item.get("underlying_symbol") or "")
             display_name = str(item.get("underlying_symbol_name") or "")
