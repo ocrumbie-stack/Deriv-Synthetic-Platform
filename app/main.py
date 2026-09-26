@@ -612,3 +612,28 @@ def summary(db: Session = Depends(get_db)) -> dict:
         "execution_mode": settings.execution_mode,
         "emergency_stop": settings.emergency_stop,
     }
+
+
+# TEMPORARY - one-off diagnostic for a specific contract, remove after use.
+@app.get("/api/debug/contract")
+async def debug_contract(contract_id: str, date_from: int, date_to: int, secret: str = "", db: Session = Depends(get_db)) -> dict:
+    if secret != settings.webhook_secret:
+        raise HTTPException(status_code=403, detail="forbidden")
+    get_risk_settings(db)
+    client = DerivClient()
+    out: dict = {}
+    try:
+        out["proposal_open_contract"] = await client.get_contract_status(contract_id, use_cache=False)
+    except Exception as exc:
+        out["proposal_open_contract_error"] = str(exc)
+    try:
+        table = await client._rpc(
+            "profit_table",
+            {"profit_table": 1, "date_from": date_from, "date_to": date_to, "description": 1, "limit": 50},
+        )
+        entries = (table.get("profit_table") or {}).get("transactions") or []
+        out["profit_table_match"] = next((e for e in entries if str(e.get("contract_id")) == str(contract_id)), None)
+        out["profit_table_count"] = len(entries)
+    except Exception as exc:
+        out["profit_table_error"] = str(exc)
+    return out
