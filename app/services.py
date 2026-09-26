@@ -1,4 +1,5 @@
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, time
 
@@ -9,6 +10,17 @@ from app.config import ENV_EXECUTION_MODE, settings
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
 from app.schemas import ManualExitSignal, WebhookSignal
+
+logger = logging.getLogger("uvicorn.error")
+
+# A standard Deriv Multiplier contract's loss is capped at the stake by
+# Deriv's own automatic stop-out (barring a rare gap-through-stop-out on a
+# violent price jump). A close_order response has been observed to report a
+# wildly implausible "profit" for one contract (a $149 loss on a $7 stake -
+# 213x - when the real ledger showed -$0.41), which silently corrupted that
+# trade's and its bot's session P&L. Anything beyond this multiple of the
+# stake is treated as an untrustworthy API response rather than real.
+IMPLAUSIBLE_PROFIT_STAKE_MULTIPLE = 10
 
 
 @dataclass
@@ -287,10 +299,27 @@ async def close_trade(db: Session, trade: Trade, exit_price_hint: float | None, 
     exit_price = exit_price_hint or trade.entry_price
     # Use Deriv's own reported P&L for the contract rather than recomputing
     # it from raw underlying prices, which don't share a unit with the
-    # dollar stake.
+    # dollar stake - unless it's implausibly large relative to the stake,
+    # which means the API response itself was bad rather than the trade
+    # actually moving that much (see IMPLAUSIBLE_PROFIT_STAKE_MULTIPLE).
     live_profit = result.get("profit")
+    stake_bound = max(trade.size, 1.0) * IMPLAUSIBLE_PROFIT_STAKE_MULTIPLE
     if isinstance(live_profit, (int, float)):
-        gross = float(live_profit)
+        if abs(live_profit) <= stake_bound:
+            gross = float(live_profit)
+        else:
+            # Trust the sign, distrust the magnitude, and clamp rather than
+            # falling back to calculate_trade_result - that formula ignores
+            # the contract's multiplier entirely, so for a Multiplier
+            # contract it would likely reproduce an equally wrong number
+            # instead of a trustworthy one. This still needs a human to
+            # reconcile the real figure against Deriv's own statement.
+            logger.warning(
+                "Deriv reported an implausible profit (%.2f) for trade %s (contract %s, stake %.2f) "
+                "- exceeds %sx stake, clamping to +/-%.2f instead. Needs manual review against Deriv's statement.",
+                live_profit, trade.id, trade.exchange_order_id, trade.size, IMPLAUSIBLE_PROFIT_STAKE_MULTIPLE, stake_bound,
+            )
+            gross = stake_bound if live_profit > 0 else -stake_bound
         net = gross - trade.fees
     else:
         gross, net = calculate_trade_result(trade, exit_price)
