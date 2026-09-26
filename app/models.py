@@ -112,6 +112,9 @@ class Trade(Base):
     execution_mode: Mapped[str] = mapped_column(String(10), default="demo", index=True)
     opened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Highest live profit seen while open - kept so a trailing stop survives
+    # a restart instead of re-measuring its peak from scratch.
+    peak_profit: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     strategy: Mapped[Strategy] = relationship(back_populates="trades")
 
@@ -135,6 +138,11 @@ class SignalBot(Base):
     default_pair_tp_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     default_pair_sl_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     default_pair_max_cycles: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Trailing stop, both % of each trade's stake: once profit reaches
+    # trail_start_pct (defaults to trail_distance_pct when unset), the trade
+    # is closed if profit falls trail_distance_pct below its peak.
+    trail_start_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    trail_distance_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     pairs: Mapped[list["BotPair"]] = relationship(back_populates="bot", cascade="all, delete-orphan")

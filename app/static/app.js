@@ -1841,6 +1841,14 @@ async function refreshBots() {
               <input class="inline-input" type="number" step="0.1" min="0" value="${b.default_pair_sl_pct ?? ""}" placeholder="—" data-bot-id="${b.id}" data-field="default_pair_sl_pct" style="width:100%" />
             </div>
             <div>
+              <label class="bot-field-label">Trail start % of stake</label>
+              <input class="inline-input" type="number" step="0.1" min="0" value="${b.trail_start_pct ?? ""}" placeholder="= distance" data-bot-id="${b.id}" data-field="trail_start_pct" style="width:100%" />
+            </div>
+            <div>
+              <label class="bot-field-label">Trail distance % of stake</label>
+              <input class="inline-input" type="number" step="0.1" min="0" value="${b.trail_distance_pct ?? ""}" placeholder="off" data-bot-id="${b.id}" data-field="trail_distance_pct" style="width:100%" />
+            </div>
+            <div>
               <label class="bot-field-label">Max Cycles (per coin)</label>
               <input class="inline-input" type="number" step="1" min="1" value="${b.default_pair_max_cycles ?? ""}" placeholder="∞" data-bot-id="${b.id}" data-field="default_pair_max_cycles" style="width:100%" />
               <div style="font-size:11px;color:var(--muted);margin-top:5px">${b.cycles_completed} total completed</div>
@@ -1907,7 +1915,7 @@ async function refreshBots() {
 
   el.querySelectorAll(".inline-input").forEach(inp => {
     inp.addEventListener("change", async () => {
-      const nullableFields = ["default_pair_tp_pct", "default_pair_sl_pct", "default_pair_max_cycles"];
+      const nullableFields = ["default_pair_tp_pct", "default_pair_sl_pct", "default_pair_max_cycles", "trail_start_pct", "trail_distance_pct"];
       const val = inp.value === "" && nullableFields.includes(inp.dataset.field)
         ? null : Number(inp.value);
       await patchJson(`/api/signal-bots/${inp.dataset.botId}`, { [inp.dataset.field]: val });
@@ -1985,11 +1993,15 @@ function wireBotForm() {
     const tp_raw        = parseFloat(document.querySelector("#botTp")?.value || "");
     const sl_raw        = parseFloat(document.querySelector("#botSl")?.value || "");
     const cycles_raw    = parseInt(document.querySelector("#botCycles")?.value || "");
+    const trail_start_raw    = parseFloat(document.querySelector("#botTrailStart")?.value || "");
+    const trail_distance_raw = parseFloat(document.querySelector("#botTrailDistance")?.value || "");
     const body = { name, size, leverage, hedge_mode };
     if (symbol) body.symbol = symbol.toUpperCase();
     if (!isNaN(tp_raw) && tp_raw > 0)          body.default_pair_tp_pct     = tp_raw;
     if (!isNaN(sl_raw) && sl_raw > 0)          body.default_pair_sl_pct     = sl_raw;
     if (!isNaN(cycles_raw) && cycles_raw > 0)  body.default_pair_max_cycles = cycles_raw;
+    if (!isNaN(trail_start_raw) && trail_start_raw > 0)       body.trail_start_pct    = trail_start_raw;
+    if (!isNaN(trail_distance_raw) && trail_distance_raw > 0) body.trail_distance_pct = trail_distance_raw;
     const res = await fetch("/api/signal-bots", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2009,7 +2021,7 @@ function wireBotForm() {
     if (form) form.style.display = "none";
     const preview = document.querySelector("#botTemplatePreview");
     if (preview) preview.style.display = "none";
-    ["#botName","#botSymbol","#botSize","#botLeverage","#botTp","#botSl","#botCycles"].forEach(sel => {
+    ["#botName","#botSymbol","#botSize","#botLeverage","#botTp","#botSl","#botCycles","#botTrailStart","#botTrailDistance"].forEach(sel => {
       const el = document.querySelector(sel); if (el) el.value = "";
     });
     const hedge = document.querySelector("#botHedge"); if (hedge) hedge.checked = false;

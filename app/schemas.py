@@ -58,6 +58,8 @@ class SignalBotCreate(BaseModel):
     default_pair_tp_pct: float | None = Field(default=None, gt=0)
     default_pair_sl_pct: float | None = Field(default=None, gt=0)
     default_pair_max_cycles: int | None = Field(default=None, gt=0)
+    trail_start_pct: float | None = Field(default=None, gt=0)
+    trail_distance_pct: float | None = Field(default=None, gt=0)
 
 
 class SignalBotUpdate(BaseModel):
@@ -70,6 +72,8 @@ class SignalBotUpdate(BaseModel):
     default_pair_tp_pct: float | None = Field(default=None, gt=0)
     default_pair_sl_pct: float | None = Field(default=None, gt=0)
     default_pair_max_cycles: int | None = Field(default=None, gt=0)
+    trail_start_pct: float | None = Field(default=None, gt=0)
+    trail_distance_pct: float | None = Field(default=None, gt=0)
 
 
 class SymbolLeverageOut(BaseModel):
@@ -118,6 +122,8 @@ class SignalBotOut(BaseModel):
     default_pair_tp_pct: float | None
     default_pair_sl_pct: float | None
     default_pair_max_cycles: int | None
+    trail_start_pct: float | None
+    trail_distance_pct: float | None
     created_at: datetime
 
     model_config = {"from_attributes": True}

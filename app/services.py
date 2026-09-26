@@ -335,6 +335,37 @@ async def close_trade(db: Session, trade: Trade, exit_price_hint: float | None, 
     return result
 
 
+async def close_position_with_signal(
+    db: Session, trade: Trade, price: float | None, source: str, raw_payload: dict
+) -> Signal:
+    """Close an open trade outside of a strategy exit signal (dashboard close,
+    price exit, trailing stop) and log it to the Signal Journal. Commits;
+    re-raises DerivExecutionError after recording the failed attempt."""
+    bot = get_signal_bot(db, trade.strategy_name)
+    signal = Signal(
+        strategy_id=trade.strategy_id,
+        strategy_name=trade.strategy_name,
+        symbol=trade.symbol,
+        action=SignalAction.exit,
+        price=price,
+        status=ExecutionStatus.accepted,
+        source=source,
+        raw_payload=json.dumps(raw_payload),
+        execution_mode=trade.execution_mode,
+    )
+    db.add(signal)
+    try:
+        await close_trade(db, trade, price, bot)
+        signal.status = ExecutionStatus.closed
+    except DerivExecutionError as exc:
+        signal.status = ExecutionStatus.failed
+        signal.rejection_reason = str(exc)
+        db.commit()
+        raise
+    db.commit()
+    return signal
+
+
 async def process_webhook_signal(db: Session, payload: WebhookSignal) -> ProcessedSignal:
     strategy = get_or_create_strategy(db, payload.strategy)
     bot = get_signal_bot(db, payload.strategy)
