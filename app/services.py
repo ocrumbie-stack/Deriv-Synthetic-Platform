@@ -119,16 +119,12 @@ def get_or_create_bot_pair(db: Session, bot: SignalBot, symbol: str) -> BotPair:
 
 
 def update_pair_session(db: Session, pair: BotPair, bot: SignalBot, trade_net: float) -> str | None:
+    # TP/SL are per trade (a limit order on each Deriv contract - see
+    # trade_tpsl_amounts), so the only per-coin stop left is the cycle cap.
     pair.session_pnl = round((pair.session_pnl or 0.0) + trade_net, 8)
     pair.cycles_completed = (pair.cycles_completed or 0) + 1
-    target_base = bot.size if bot.size > 0 else 1.0
-    net_pct = (pair.session_pnl / target_base) * 100
     reason = None
-    if pair.tp_pct and net_pct >= pair.tp_pct:
-        reason = f"Pair TP reached ({net_pct:.1f}%)"
-    elif pair.sl_pct and net_pct <= -abs(pair.sl_pct):
-        reason = f"Pair SL reached ({net_pct:.1f}%)"
-    elif pair.max_cycles and pair.cycles_completed >= pair.max_cycles:
+    if pair.max_cycles and pair.cycles_completed >= pair.max_cycles:
         reason = f"Pair cycle limit reached ({pair.cycles_completed}/{pair.max_cycles})"
     if reason:
         pair.enabled = False
@@ -136,20 +132,13 @@ def update_pair_session(db: Session, pair: BotPair, bot: SignalBot, trade_net: f
     return reason
 
 
-async def arm_pair_tpsl(
-    symbol: str,
-    direction: str,
-    entry_price: float,
-    tp_pct: float | None,
-    sl_pct: float | None,
-    hedge_mode: bool = False,
-) -> None:
-    if not entry_price or (not tp_pct and not sl_pct):
-        return
-    is_long = direction == "long"
-    tp_price = entry_price * (1 + tp_pct / 100) if tp_pct and is_long else (entry_price * (1 - tp_pct / 100) if tp_pct else None)
-    sl_price = entry_price * (1 - sl_pct / 100) if sl_pct and is_long else (entry_price * (1 + sl_pct / 100) if sl_pct else None)
-    await DerivClient().place_tpsl(symbol, direction, tp_price, sl_price, hedge_mode)
+def trade_tpsl_amounts(stake: float, tp_pct: float | None, sl_pct: float | None) -> tuple[float | None, float | None]:
+    """Convert TP/SL % of a trade's stake into the dollar profit/loss amounts
+    Deriv's multiplier limit_order expects. A stop at 100%+ of the stake is
+    left off - a multiplier contract can't lose more than its stake anyway."""
+    take_profit = stake * tp_pct / 100 if tp_pct and stake > 0 else None
+    stop_loss = stake * sl_pct / 100 if sl_pct and stake > 0 and sl_pct < 100 else None
+    return take_profit, stop_loss
 
 
 def update_bot_session(db: Session, bot: SignalBot, trade_net: float) -> None:
@@ -281,6 +270,13 @@ async def reconcile_open_trade(db: Session, trade: Trade) -> bool:
     trade.status = PositionStatus.closed
     trade.execution_status = ExecutionStatus.closed
     trade.closed_at = datetime.utcfromtimestamp(float(sell_time)) if sell_time else datetime.utcnow()
+    # A per-trade TP/SL hit closes the contract on Deriv's side, so this is a
+    # normal way for a bot trade to finish - count it like any other close.
+    bot = get_signal_bot(db, trade.strategy_name)
+    if bot:
+        pair = get_or_create_bot_pair(db, bot, trade.symbol)
+        update_pair_session(db, pair, bot, trade.net_result)
+        update_bot_session(db, bot, trade.net_result)
     db.flush()
     return True
 
@@ -436,21 +432,14 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
         try:
             client = DerivClient()
             hedge = bot.hedge_mode if bot else False
-            result = await client.place_order(payload, hedge_mode=hedge)
+            take_profit = stop_loss = None
+            if bot:
+                pair = get_or_create_bot_pair(db, bot, payload.symbol)
+                take_profit, stop_loss = trade_tpsl_amounts(payload.size, pair.tp_pct, pair.sl_pct)
+            result = await client.place_order(payload, hedge_mode=hedge, take_profit=take_profit, stop_loss=stop_loss)
             trade.exchange_order_id = str(result.get("order_id") or result.get("data", {}).get("orderId") or "")
             trade.execution_status = ExecutionStatus.executed
             signal.status = ExecutionStatus.executed
-            # Arm pair-level TP/SL on Deriv if configured
-            if bot and payload.direction and payload.price:
-                pair = get_or_create_bot_pair(db, bot, payload.symbol)
-                if pair.tp_pct or pair.sl_pct:
-                    try:
-                        await arm_pair_tpsl(
-                            payload.symbol, payload.direction.value, payload.price,
-                            pair.tp_pct, pair.sl_pct, hedge,
-                        )
-                    except DerivExecutionError as exc:
-                        signal.rejection_reason = (signal.rejection_reason or "") + f" | TP/SL arm failed: {exc}"
         except DerivExecutionError as exc:
             trade.execution_status = ExecutionStatus.failed
             trade.status = PositionStatus.closed

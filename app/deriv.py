@@ -357,7 +357,13 @@ class DerivClient:
                 found = parsed
         return found
 
-    async def place_order(self, signal: WebhookSignal, hedge_mode: bool = False) -> dict[str, Any]:
+    async def place_order(
+        self,
+        signal: WebhookSignal,
+        hedge_mode: bool = False,
+        take_profit: float | None = None,
+        stop_loss: float | None = None,
+    ) -> dict[str, Any]:
         if signal.direction is None:
             raise DerivExecutionError("Entry orders require a direction.")
 
@@ -387,19 +393,26 @@ class DerivClient:
                 raise DerivExecutionError("Deriv returned an incomplete contract proposal.")
             return "buy", {"buy": proposal_id, "price": float(ask_price)}
 
-        _, result = await self._rpc_chain(
-            "proposal",
-            {
-                "proposal": 1,
-                "underlying_symbol": symbol,
-                "contract_type": contract_type,
-                "currency": "USD",
-                "amount": float(signal.size),
-                "basis": "stake",
-                "multiplier": multiplier,
-            },
-            _build_buy,
-        )
+        proposal = {
+            "proposal": 1,
+            "underlying_symbol": symbol,
+            "contract_type": contract_type,
+            "currency": "USD",
+            "amount": float(signal.size),
+            "basis": "stake",
+            "multiplier": multiplier,
+        }
+        # Per-trade TP/SL lives on the contract itself, so Deriv closes it
+        # even if the platform or the strategy's exit signal never arrives.
+        limit_order = {
+            key: round(value, 2)
+            for key, value in (("take_profit", take_profit), ("stop_loss", stop_loss))
+            if value
+        }
+        if limit_order:
+            proposal["limit_order"] = limit_order
+
+        _, result = await self._rpc_chain("proposal", proposal, _build_buy)
         buy_data = result.get("buy", result)
         order_id = buy_data.get("contract_id") if isinstance(buy_data, dict) else None
         return {"order_id": str(order_id or self._timestamp()), "mode": settings.execution_mode.lower(), "result": result}
@@ -442,12 +455,21 @@ class DerivClient:
             "profit": profit,
         }
 
-    async def place_tpsl(
+    async def update_contract_tpsl(
         self,
-        symbol: str,
-        direction: str,
-        tp_price: float | None,
-        sl_price: float | None,
-        hedge_mode: bool = False,
-    ) -> None:
-        return None
+        contract_id: str,
+        take_profit: float | None,
+        stop_loss: float | None,
+    ) -> dict[str, Any]:
+        """Set (or, with None, cancel) TP/SL on an already-open contract."""
+        return await self._rpc(
+            "contract_update",
+            {
+                "contract_update": 1,
+                "contract_id": int(contract_id),
+                "limit_order": {
+                    "take_profit": round(take_profit, 2) if take_profit else None,
+                    "stop_loss": round(stop_loss, 2) if stop_loss else None,
+                },
+            },
+        )

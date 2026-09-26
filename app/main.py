@@ -15,7 +15,7 @@ from app.database import Base, SessionLocal, engine, get_db, sync_schema
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
 from app.schemas import BotPairOut, BotPairUpdate, ManualExitSignal, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
-from app.services import account_exposure, arm_pair_tpsl, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, process_manual_exit, process_webhook_signal, reconcile_open_trade
+from app.services import account_exposure, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts
 
 
 logger = logging.getLogger("uvicorn.error")
@@ -266,7 +266,7 @@ async def update_bot_pair(bot_id: int, symbol: str, updates: BotPairUpdate, db: 
         setattr(pair, field, value)
     db.commit()
     db.refresh(pair)
-    # Arm TP/SL on Deriv if an open trade exists for this pair
+    # Apply a changed per-trade TP/SL to this coin's already-open contract too
     open_trade = db.scalar(
         select(Trade).where(
             Trade.strategy_name == bot.name,
@@ -275,11 +275,15 @@ async def update_bot_pair(bot_id: int, symbol: str, updates: BotPairUpdate, db: 
             Trade.execution_mode == settings.execution_mode.lower(),
         )
     )
-    if open_trade and (pair.tp_pct or pair.sl_pct):
-        await arm_pair_tpsl(
-            sym, open_trade.direction.value, open_trade.entry_price,
-            pair.tp_pct, pair.sl_pct, bot.hedge_mode,
-        )
+    if open_trade and open_trade.exchange_order_id and {"tp_pct", "sl_pct"} & updates.model_fields_set:
+        take_profit, stop_loss = trade_tpsl_amounts(open_trade.size, pair.tp_pct, pair.sl_pct)
+        try:
+            await DerivClient().update_contract_tpsl(open_trade.exchange_order_id, take_profit, stop_loss)
+        except DerivExecutionError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Saved, but Deriv rejected the TP/SL update for the open trade: {exc}",
+            ) from exc
     return pair
 
 

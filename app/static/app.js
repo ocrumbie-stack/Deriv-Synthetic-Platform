@@ -1833,11 +1833,11 @@ async function refreshBots() {
               <input class="inline-input" type="number" step="1" min="0" value="${b.leverage > 0 ? b.leverage : ""}" placeholder="Auto" data-bot-id="${b.id}" data-field="leverage" style="width:100%" />
             </div>
             <div>
-              <label class="bot-field-label">TP % (per coin)</label>
+              <label class="bot-field-label">TP % of stake (per trade)</label>
               <input class="inline-input" type="number" step="0.1" min="0" value="${b.default_pair_tp_pct ?? ""}" placeholder="—" data-bot-id="${b.id}" data-field="default_pair_tp_pct" style="width:100%" />
             </div>
             <div>
-              <label class="bot-field-label">SL % (per coin)</label>
+              <label class="bot-field-label">SL % of stake (per trade)</label>
               <input class="inline-input" type="number" step="0.1" min="0" value="${b.default_pair_sl_pct ?? ""}" placeholder="—" data-bot-id="${b.id}" data-field="default_pair_sl_pct" style="width:100%" />
             </div>
             <div>
