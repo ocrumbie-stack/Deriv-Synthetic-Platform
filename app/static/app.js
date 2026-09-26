@@ -639,12 +639,6 @@ function showExitWebhookModal(label, url, payload) {
   document.querySelector("#exitWebhookModalCopyPayload").addEventListener("click", function () {
     copy(document.querySelector("#exitWebhookModalPayload").textContent, this);
   });
-  document.querySelector("#exitWebhookModalCopyClose").addEventListener("click", () => {
-    const u = document.querySelector("#exitWebhookModalUrl").textContent;
-    const p = document.querySelector("#exitWebhookModalPayload").textContent;
-    navigator.clipboard?.writeText(`${u}\n\n${p}`).catch(() => {});
-    hide();
-  });
   document.querySelector("#exitWebhookModalDismiss").addEventListener("click", hide);
   document.querySelector("#exitWebhookModalX").addEventListener("click", hide);
   modal.addEventListener("click", e => { if (e.target === modal) hide(); });
