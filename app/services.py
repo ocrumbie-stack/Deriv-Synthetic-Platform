@@ -180,7 +180,10 @@ def validate_signal(db: Session, payload: WebhookSignal, strategy: Strategy, bot
     # every strategy that's allowed to open a position.
     if payload.action == SignalAction.entry and bot is None:
         return "No signal bot is configured for this strategy - create one on the Signal Bots page before it can execute entries."
-    if bot and not bot.enabled:
+    # Pausing a bot/strategy must only stop it opening new positions - it
+    # must never trap an already-open position by also blocking the
+    # strategy's own exit signal for it.
+    if bot and not bot.enabled and payload.action == SignalAction.entry:
         return "Signal bot is disabled."
     if bot and bot.symbol:
         allowed = [s.strip().upper() for s in bot.symbol.split(",")]
@@ -191,7 +194,7 @@ def validate_signal(db: Session, payload: WebhookSignal, strategy: Strategy, bot
         if pair and not pair.enabled:
             return f"{payload.symbol} is paused for this bot."
 
-    if not strategy.enabled:
+    if not strategy.enabled and payload.action == SignalAction.entry:
         return "Strategy is disabled."
     if risk.duplicate_blocking and payload.signal_id:
         duplicate = db.scalar(select(Signal.id).where(Signal.signal_id == payload.signal_id))

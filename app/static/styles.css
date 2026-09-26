@@ -687,7 +687,7 @@ tr.clickable:hover td, tr.selected td { background: var(--panel-2, #16161e); }
 
 .mini-switch {
   background: var(--red-dim);
-  border: 0;
+  border: 1px solid rgba(255, 61, 90, 0.35);
   border-radius: 4px;
   color: var(--red);
   cursor: pointer;
@@ -698,9 +698,12 @@ tr.clickable:hover td, tr.selected td { background: var(--panel-2, #16161e); }
   min-height: 0;
   padding: 4px 10px;
   text-transform: uppercase;
+  transition: filter 0.1s ease;
 }
 
-.mini-switch.on { background: var(--green-dim); color: var(--green); }
+.mini-switch:hover { filter: brightness(1.35); }
+
+.mini-switch.on { background: var(--green-dim); border-color: rgba(0, 230, 118, 0.35); color: var(--green); }
 
 .inline-input { min-height: 30px; width: 110px; }
 

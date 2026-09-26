@@ -5,6 +5,14 @@ let activePeriod      = "today";
 let rejectionsFilter  = false;
 let activeStrategy = "all";
 let historySymbolFilter = "all";
+// Declared here (not near their first use further down) because a cold
+// load landing directly on a non-overview page (e.g. a refresh on
+// #trading-bots) calls navigate() - and transitively wireBotForm() - before
+// the script has executed past wherever these would otherwise be declared,
+// which throws a "Cannot access before initialization" TDZ error for a
+// `let` declared later in the file.
+let _webhookSecret = "YOUR_SECRET";
+let _botFormWired = false;
 let latestState    = {
   summary: {}, risk: {}, balance: {}, performance: [], positions: [],
   signals: [], history: [], analytics: { equity_curve: [], status_counts: {}, symbol_exposure: [] },
@@ -1688,7 +1696,7 @@ async function loadBotPairs(botId, botName) {
         ${pos
           ? `<span class="badge ok" style="font-size:10px">In position</span>`
           : `<button class="mini-switch ${pair?.enabled ? "on" : ""}" data-pair-bot="${botId}" data-pair-sym="${sym}" data-pair-enabled="${pair?.enabled}">
-               ${pair?.enabled ? "Active" : "Paused"}
+               ${pair?.enabled ? "Pause" : "Resume"}
              </button>`}
       </td>
     </tr>`;
@@ -1778,7 +1786,7 @@ async function refreshBots() {
       </td>
       <td>
         <button class="mini-switch ${b.enabled ? "on" : ""}" data-bot-id="${b.id}" data-enabled="${b.enabled}">
-          ${b.enabled ? "Active" : "Paused"}
+          ${b.enabled ? "Pause" : "Resume"}
         </button>
       </td>
       <td>
@@ -1802,8 +1810,9 @@ async function refreshBots() {
               </div>
               <div style="display:flex;align-items:center;gap:8px">
                 <span class="bot-field-label" style="margin-bottom:0">Status</span>
+                <span class="badge ${b.enabled ? "ok" : "bad"}" style="font-size:10px">${b.enabled ? "Active" : "Paused"}</span>
                 <button class="mini-switch ${b.enabled ? "on" : ""}" data-bot-id="${b.id}" data-enabled="${b.enabled}">
-                  ${b.enabled ? "Active" : "Paused"}
+                  ${b.enabled ? "Pause" : "Resume"}
                 </button>
               </div>
             </div>
@@ -1931,9 +1940,6 @@ async function refreshBots() {
   });
 }
 
-let _webhookSecret = "YOUR_SECRET";
-
-let _botFormWired = false;
 function wireBotForm() {
   if (_botFormWired) return;
   _botFormWired = true;
