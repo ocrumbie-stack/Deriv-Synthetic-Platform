@@ -15,7 +15,7 @@ from app.database import Base, SessionLocal, engine, get_db, sync_schema
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
 from app.schemas import BotPairOut, BotPairUpdate, ManualExitSignal, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
-from app.services import account_exposure, arm_pair_tpsl, close_trade, daily_account_net, get_live_unrealized_pnl, get_or_create_bot_pair, get_risk_settings, get_signal_bot, process_manual_exit, process_webhook_signal, reconcile_open_trade
+from app.services import account_exposure, arm_pair_tpsl, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, process_manual_exit, process_webhook_signal, reconcile_open_trade
 
 
 logger = logging.getLogger("uvicorn.error")
@@ -611,41 +611,4 @@ def summary(db: Session = Depends(get_db)) -> dict:
         "net_profit_after_fees": round(float(net), 8),
         "execution_mode": settings.execution_mode,
         "emergency_stop": settings.emergency_stop,
-    }
-
-
-# TEMPORARY - one-off correction for a trade whose stored P&L doesn't match
-# Deriv's real ledger (bad "profit" value trusted from a close_order response).
-# Applies the delta to the trade and its bot/pair session totals. Remove after use.
-@app.post("/api/admin/fix-trade")
-async def admin_fix_trade(trade_id: int, correct_net: float, secret: str = "", db: Session = Depends(get_db)) -> dict:
-    if secret != settings.webhook_secret:
-        raise HTTPException(status_code=403, detail="forbidden")
-    trade = db.get(Trade, trade_id)
-    if not trade:
-        raise HTTPException(status_code=404, detail="Trade not found.")
-
-    old_net = trade.net_result
-    delta = round(correct_net - old_net, 8)
-    trade.profit_loss = correct_net
-    trade.net_result = correct_net
-
-    bot = get_signal_bot(db, trade.strategy_name)
-    new_bot_pnl = None
-    new_pair_pnl = None
-    if bot:
-        bot.session_pnl = round((bot.session_pnl or 0.0) + delta, 8)
-        new_bot_pnl = bot.session_pnl
-        pair = get_or_create_bot_pair(db, bot, trade.symbol)
-        pair.session_pnl = round((pair.session_pnl or 0.0) + delta, 8)
-        new_pair_pnl = pair.session_pnl
-
-    db.commit()
-    return {
-        "trade_id": trade_id,
-        "old_net": old_net,
-        "new_net": correct_net,
-        "delta": delta,
-        "bot_session_pnl": new_bot_pnl,
-        "pair_session_pnl": new_pair_pnl,
     }
