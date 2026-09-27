@@ -29,6 +29,10 @@ SYMBOL_ALIASES = {
     "STEPINDEX": "stpRNG",
 }
 
+# Deriv prefixes FX/metal and crypto codes with their market (frxEURUSD,
+# cryBTCUSD), while TradingView's {{ticker}} sends the bare pair (EURUSD).
+MARKET_CODE_PREFIXES = ("frx", "cry")
+
 
 def _active_credentials() -> tuple[str, str, str]:
     """(app_id, api_token, account_id) for whichever Deriv account the
@@ -310,7 +314,8 @@ class DerivClient:
         return sorted(str(item.get("underlying_symbol", "")) for item in catalog if item.get("underlying_symbol"))
 
     async def resolve_symbol(self, raw_symbol: str) -> str:
-        candidate = raw_symbol.strip().upper()
+        # Drop a TradingView exchange prefix (OANDA:EURUSD -> EURUSD).
+        candidate = raw_symbol.strip().upper().rsplit(":", 1)[-1]
         catalog = await self.get_symbol_catalog()
         if not catalog:
             raise DerivExecutionError(
@@ -320,6 +325,11 @@ class DerivClient:
         for item in catalog:
             code = str(item.get("underlying_symbol") or "")
             if code.upper() == candidate:
+                return code
+
+        for item in catalog:
+            code = str(item.get("underlying_symbol") or "")
+            if code.startswith(MARKET_CODE_PREFIXES) and code[3:].upper() == candidate:
                 return code
 
         candidate_key = _normalize_symbol_key(candidate)

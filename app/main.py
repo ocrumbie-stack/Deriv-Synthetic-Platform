@@ -259,6 +259,16 @@ def _is_synthetic_index(code: str) -> bool:
     return code.upper().startswith(_SYNTHETIC_INDEX_PREFIXES)
 
 
+# Non-synthetic Deriv markets that offer Multiplier contracts (FX majors and
+# minors, metals, crypto). Stock indices don't, so they're left out.
+_MULTIPLIER_MARKETS = {"forex", "commodities", "cryptocurrency"}
+
+
+def _offers_multipliers(item: dict) -> bool:
+    code = str(item.get("underlying_symbol") or "")
+    return _is_synthetic_index(code) or item.get("market") in _MULTIPLIER_MARKETS
+
+
 @app.get("/api/symbol-leverage", response_model=list[SymbolLeverageOut])
 async def list_symbol_leverage(db: Session = Depends(get_db)) -> list[SymbolLeverageOut]:
     client = DerivClient()
@@ -269,7 +279,7 @@ async def list_symbol_leverage(db: Session = Depends(get_db)) -> list[SymbolLeve
 
     for item in catalog:
         code = str(item.get("underlying_symbol") or "")
-        if not code or not _is_synthetic_index(code):
+        if not code or not _offers_multipliers(item):
             continue
 
         row = rows_by_symbol.get(code)
@@ -281,7 +291,7 @@ async def list_symbol_leverage(db: Session = Depends(get_db)) -> list[SymbolLeve
         else:
             allowed = await client.get_multiplier_range(code, "MULTUP")
             if not allowed:
-                continue  # Multipliers aren't offered on this symbol at all (e.g. RDBEAR/RDBULL).
+                continue  # Multipliers aren't offered on this symbol at all (e.g. RDBEAR/RDBULL, frxUSDMXN).
             if not row:
                 row = SymbolLeverage(symbol=code, leverage=min(allowed))
                 db.add(row)
