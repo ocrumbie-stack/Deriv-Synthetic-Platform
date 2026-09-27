@@ -484,6 +484,28 @@ class DerivClient:
             "profit": profit,
         }
 
+    async def get_profit_table(self, date_from: float) -> list[dict[str, Any]]:
+        """Every contract closed since date_from (epoch seconds), with Deriv's
+        own buy and sell prices - the account's ledger of realized P&L."""
+        transactions: list[dict[str, Any]] = []
+        page = 500
+        while True:
+            result = await self._rpc(
+                "profit_table",
+                {
+                    "profit_table": 1,
+                    "description": 1,
+                    "date_from": str(int(date_from)),
+                    "limit": page,
+                    "offset": len(transactions),
+                    "sort": "ASC",
+                },
+            )
+            batch = (result.get("profit_table") or {}).get("transactions") or []
+            transactions.extend(t for t in batch if isinstance(t, dict))
+            if len(batch) < page:
+                return transactions
+
     async def update_contract_tpsl(
         self,
         contract_id: str,

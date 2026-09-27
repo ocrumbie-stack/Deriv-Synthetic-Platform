@@ -17,6 +17,8 @@ from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
 from app.schemas import BotPairOut, BotPairUpdate, ManualExitSignal, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
 from app.services import account_exposure, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal
+from app import trade_audit
+from app.trade_audit import trade_audit_scheduler
 from app.trailing import trailing_monitor
 
 
@@ -40,7 +42,9 @@ with SessionLocal() as startup_db:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     trailing_monitor.start()
+    trade_audit_scheduler.start()
     yield
+    await trade_audit_scheduler.stop()
     await trailing_monitor.stop()
 
 
@@ -271,6 +275,7 @@ async def update_bot_pair(bot_id: int, symbol: str, updates: BotPairUpdate, db: 
     if updates.enabled is True and not pair.enabled:
         pair.session_pnl = 0.0
         pair.cycles_completed = 0
+        pair.session_started_at = datetime.utcnow()
     for field, value in updates.model_dump(exclude_unset=True).items():
         setattr(pair, field, value)
     db.commit()
@@ -321,6 +326,7 @@ def update_signal_bot(bot_id: int, updates: SignalBotUpdate, db: Session = Depen
     if data.get("enabled") is True and not bot.enabled:
         bot.session_pnl = 0.0
         bot.cycles_completed = 0
+        bot.session_started_at = datetime.utcnow()
     for field, value in data.items():
         setattr(bot, field, value)
     db.commit()
@@ -456,6 +462,21 @@ async def close_position(trade_id: int, price: float | None = None, db: Session 
         raise HTTPException(status_code=502, detail=f"Failed to close position on Deriv: {exc}") from exc
     db.refresh(trade)
     return trade
+
+
+@app.get("/api/trade-audit")
+def trade_audit_status() -> dict:
+    """Result of the most recent daily P&L check against Deriv's profit table."""
+    result = trade_audit.last_result
+    return {
+        "ran_at": result.ran_at,
+        "execution_mode": result.execution_mode,
+        "checked": result.checked,
+        "matched": result.matched,
+        "corrected": result.corrected,
+        "flagged": result.flagged,
+        "error": result.error,
+    }
 
 
 @app.get("/api/trade-history", response_model=list[TradeOut])
