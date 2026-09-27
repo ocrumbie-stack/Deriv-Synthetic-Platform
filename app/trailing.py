@@ -6,6 +6,10 @@ each open trade whose bot has a trail configured. Deriv then pushes the live
 profit on every tick - no per-trade polling - and the trade is sold once
 profit falls trail_distance below its peak. The fixed Deriv-side SL stays as
 the backstop for any time this connection is down.
+
+The same stream also carries the spot price, so it drives the dashboard's
+"close at price" too: any open trade with a close_at_price is subscribed and
+sold once the spot reaches it.
 """
 
 import asyncio
@@ -16,7 +20,7 @@ import time
 from dataclasses import dataclass
 
 import websockets
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 
 from app.config import settings
 from app.database import SessionLocal
@@ -38,10 +42,13 @@ SUBSCRIBE_RETRY_DELAY = 60.0
 class _Tracked:
     trade_id: int
     stake: float
-    start: float
-    distance: float
+    # None when the trade has no trailing stop, only a close-at price.
+    start: float | None
+    distance: float | None
     peak: float | None
     saved_peak: float | None
+    target: float | None = None
+    target_above: bool = True
     subscription_id: str | None = None
 
 
@@ -113,20 +120,21 @@ class TrailingStopMonitor:
         with SessionLocal() as db:
             rows = db.execute(
                 select(Trade, SignalBot)
-                .join(SignalBot, SignalBot.name == Trade.strategy_name)
+                .outerjoin(SignalBot, SignalBot.name == Trade.strategy_name)
                 .where(
                     Trade.status == PositionStatus.open,
                     Trade.execution_mode == mode,
                     Trade.exchange_order_id.is_not(None),
                     Trade.exchange_order_id != "",
-                    SignalBot.trail_distance_pct.is_not(None),
-                    SignalBot.trail_distance_pct > 0,
+                    or_(SignalBot.trail_distance_pct > 0, Trade.close_at_price.is_not(None)),
                 )
             ).all()
         trailed = {}
         for trade, bot in rows:
-            distance = trade.size * bot.trail_distance_pct / 100
-            start = trade.size * (bot.trail_start_pct or bot.trail_distance_pct) / 100
+            start = distance = None
+            if bot and bot.trail_distance_pct and bot.trail_distance_pct > 0:
+                distance = trade.size * bot.trail_distance_pct / 100
+                start = trade.size * (bot.trail_start_pct or bot.trail_distance_pct) / 100
             trailed[trade.exchange_order_id] = _Tracked(
                 trade_id=trade.id,
                 stake=trade.size,
@@ -134,6 +142,8 @@ class TrailingStopMonitor:
                 distance=distance,
                 peak=trade.peak_profit,
                 saved_peak=trade.peak_profit,
+                target=trade.close_at_price,
+                target_above=bool(trade.close_at_above),
             )
         return trailed
 
@@ -147,8 +157,10 @@ class TrailingStopMonitor:
         for contract_id, info in wanted.items():
             tracked = self._tracked.get(contract_id)
             if tracked:
-                # Pick up edited bot trail settings; keep the live peak.
+                # Pick up edited bot trail settings and close-at prices; keep
+                # the live peak.
                 tracked.start, tracked.distance = info.start, info.distance
+                tracked.target, tracked.target_above = info.target, info.target_above
                 continue
             if now - self._subscribe_failed_at.get(contract_id, -math.inf) < SUBSCRIBE_RETRY_DELAY:
                 continue
@@ -187,6 +199,21 @@ class TrailingStopMonitor:
                 self._spawn(self._reconcile(tracked.trade_id))
             return
 
+        if tracked.target is not None and contract_id not in self._closing:
+            try:
+                spot = float(poc.get("current_spot"))
+            except (TypeError, ValueError):
+                spot = math.nan
+            if math.isfinite(spot) and (spot >= tracked.target if tracked.target_above else spot <= tracked.target):
+                self._closing.add(contract_id)
+                self._spawn(self._close(
+                    contract_id, tracked, spot, "price_exit",
+                    {"trade_id": tracked.trade_id, "close_at_price": tracked.target, "trigger_spot": spot},
+                ))
+                return
+
+        if tracked.distance is None:
+            return
         try:
             profit = float(poc.get("profit"))
         except (TypeError, ValueError):
@@ -203,33 +230,31 @@ class TrailingStopMonitor:
             and contract_id not in self._closing
         ):
             self._closing.add(contract_id)
-            self._spawn(self._close(contract_id, tracked, profit))
+            self._spawn(self._close(
+                contract_id, tracked, None, "trailing_stop",
+                {
+                    "trade_id": tracked.trade_id,
+                    "peak_profit": tracked.peak,
+                    "trigger_profit": profit,
+                    "trail_start": tracked.start,
+                    "trail_distance": tracked.distance,
+                },
+            ))
 
-    async def _close(self, contract_id: str, tracked: _Tracked, profit: float) -> None:
+    async def _close(self, contract_id: str, tracked: _Tracked, price: float | None, source: str, payload: dict) -> None:
         try:
             with SessionLocal() as db:
                 trade = db.get(Trade, tracked.trade_id)
                 if not trade or trade.status != PositionStatus.open:
                     return
                 trade.peak_profit = tracked.peak
-                await close_position_with_signal(
-                    db, trade, None, "trailing_stop",
-                    {
-                        "trade_id": trade.id,
-                        "peak_profit": tracked.peak,
-                        "trigger_profit": profit,
-                        "trail_start": tracked.start,
-                        "trail_distance": tracked.distance,
-                    },
-                )
-            logger.info(
-                "Trailing stop closed trade %s (peak %.2f, triggered at %.2f)", tracked.trade_id, tracked.peak, profit
-            )
+                await close_position_with_signal(db, trade, price, source, payload)
+            logger.info("%s closed trade %s: %s", source, tracked.trade_id, payload)
         except DerivExecutionError as exc:
-            # Stays subscribed, so the next tick still below the trail retries.
-            logger.warning("Trailing stop failed to close trade %s: %s", tracked.trade_id, exc)
+            # Stays subscribed, so the next tick still past the trigger retries.
+            logger.warning("%s failed to close trade %s: %s", source, tracked.trade_id, exc)
         except Exception:
-            logger.exception("Trailing stop failed to close trade %s", tracked.trade_id)
+            logger.exception("%s failed to close trade %s", source, tracked.trade_id)
         finally:
             self._closing.discard(contract_id)
 

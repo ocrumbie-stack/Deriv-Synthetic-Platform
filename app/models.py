@@ -116,6 +116,11 @@ class Trade(Base):
     # Highest live profit seen while open - kept so a trailing stop survives
     # a restart instead of re-measuring its peak from scratch.
     peak_profit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Dashboard "close at price": sold once the spot reaches this level.
+    # close_at_above records which side of the market it was set on, so the
+    # trigger is "spot >= target" or "spot <= target" accordingly.
+    close_at_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    close_at_above: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     strategy: Mapped[Strategy] = relationship(back_populates="trades")
 

@@ -591,15 +591,15 @@ function renderPositions(rows) {
       <td>${number.format(t.entry_price)}</td><td>${number.format(t.size)}</td>
       <td>${number.format(t.leverage)}x</td>
       <td class="neutral" data-upl="${t.symbol}_${t.direction}">—</td>
-      <td>${statusBadge(t.status)}</td>
+      <td>${statusBadge(t.status)}${t.close_at_price != null ? `<div style="color:var(--muted);font-size:12px;white-space:nowrap">Closes at ${number.format(t.close_at_price)}</div>` : ""}</td>
       <td>${modeBadge(t.execution_mode)}</td>
       <td>${fmtDate(t.opened_at)}</td>
       <td>
         <select class="inline-input exit-select" data-trade-id="${t.id}" data-strategy="${escapeAttr(t.strategy_name)}" data-symbol="${t.symbol}" style="background:var(--red-dim);color:var(--red)">
           <option value="" selected disabled>Exit ▾</option>
           <option value="instant">Close instantly</option>
-          <option value="price">Close at price…</option>
-          <option value="webhook">Get webhook payload</option>
+          <option value="price">${t.close_at_price != null ? "Change close price…" : "Close at price…"}</option>
+          ${t.close_at_price != null ? `<option value="cancel-price">Cancel close at ${number.format(t.close_at_price)}</option>` : ""}          <option value="webhook">Get webhook payload</option>
         </select>
       </td>
     </tr>`).join("");
@@ -626,13 +626,13 @@ function renderPositions(rows) {
         if (!confirm(`Close ${label} now at market?`)) return;
         await closePositionNow(tradeId, null);
       } else if (action === "price") {
-        const raw = prompt(`Exit price for ${label} (optional - leave blank to use market):`);
-        if (raw === null) return; // cancelled
-        const price = raw.trim() === "" ? null : Number(raw);
-        if (raw.trim() !== "" && Number.isNaN(price)) { alert("Enter a valid number."); return; }
-        if (!confirm(`Close ${label} now${price != null ? ` at ${price}` : ""}?`)) return;
-        await closePositionNow(tradeId, price);
-      } else if (action === "webhook") {
+        const raw = prompt(`Close ${label} when the market reaches price:`);
+        if (raw === null || raw.trim() === "") return; // cancelled
+        const price = Number(raw);
+        if (!Number.isFinite(price) || price <= 0) { alert("Enter a valid price."); return; }
+        await setCloseAtPrice(tradeId, price);
+      } else if (action === "cancel-price") {
+        await setCloseAtPrice(tradeId, null);      } else if (action === "webhook") {
         const url = window.location.origin + "/webhook/exit";
         const payload = JSON.stringify({ secret: _webhookSecret, strategy: sel.dataset.strategy, symbol: sel.dataset.symbol, price: "{{close}}" }, null, 2);
         showExitWebhookModal(label, url, payload);
@@ -672,6 +672,20 @@ function showExitWebhookModal(label, url, payload) {
   document.querySelector("#exitWebhookModalX").addEventListener("click", hide);
   modal.addEventListener("click", e => { if (e.target === modal) hide(); });
   document.addEventListener("keydown", e => { if (e.key === "Escape" && modal.style.display !== "none") hide(); });
+}
+
+// Arms (or, with price null, cancels) a pending close - the server sells the
+// contract once the live spot reaches the price.
+async function setCloseAtPrice(tradeId, price) {
+  try {
+    const r = price == null
+      ? await fetch(`/api/open-positions/${tradeId}/close-at`, { method: "DELETE" })
+      : await fetch(`/api/open-positions/${tradeId}/close-at?price=${encodeURIComponent(price)}`, { method: "POST" });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "Update failed");
+    await refresh();
+  } catch (err) {
+    alert(err.message || "Failed to update close price.");
+  }
 }
 
 async function closePositionNow(tradeId, price) {

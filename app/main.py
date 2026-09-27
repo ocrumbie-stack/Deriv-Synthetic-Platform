@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import os
 import re
 from contextlib import asynccontextmanager
@@ -565,6 +566,50 @@ async def close_position(trade_id: int, price: float | None = None, db: Session 
         )
     except DerivExecutionError as exc:
         raise HTTPException(status_code=502, detail=f"Failed to close position on Deriv: {exc}") from exc
+    db.refresh(trade)
+    return trade
+
+
+def _get_open_trade(db: Session, trade_id: int) -> Trade:
+    trade = db.get(Trade, trade_id)
+    if not trade or trade.execution_mode != settings.execution_mode.lower():
+        raise HTTPException(status_code=404, detail="Open position not found.")
+    if trade.status != PositionStatus.open:
+        raise HTTPException(status_code=409, detail="Position is already closed.")
+    return trade
+
+
+@app.post("/api/open-positions/{trade_id}/close-at", response_model=TradeOut)
+async def set_close_at_price(trade_id: int, price: float, db: Session = Depends(get_db)) -> Trade:
+    """Arm a pending close: the trailing monitor sells the contract once the
+    spot reaches `price`, from whichever side of the market it is now."""
+    trade = _get_open_trade(db, trade_id)
+    if not math.isfinite(price) or price <= 0:
+        raise HTTPException(status_code=422, detail="Enter a positive price.")
+    if not trade.exchange_order_id:
+        raise HTTPException(status_code=409, detail="This position has no Deriv contract to watch.")
+    poc = await DerivClient().get_contract_status(trade.exchange_order_id, use_cache=False)
+    if poc and poc.get("is_sold"):
+        await reconcile_open_trade(db, trade)
+        db.commit()
+        raise HTTPException(status_code=409, detail="Position is already closed on Deriv.")
+    try:
+        spot = float((poc or {}).get("current_spot"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=502, detail="Couldn't read the current price from Deriv.")
+    trade.close_at_price = price
+    trade.close_at_above = price >= spot
+    db.commit()
+    db.refresh(trade)
+    return trade
+
+
+@app.delete("/api/open-positions/{trade_id}/close-at", response_model=TradeOut)
+def cancel_close_at_price(trade_id: int, db: Session = Depends(get_db)) -> Trade:
+    trade = _get_open_trade(db, trade_id)
+    trade.close_at_price = None
+    trade.close_at_above = None
+    db.commit()
     db.refresh(trade)
     return trade
 

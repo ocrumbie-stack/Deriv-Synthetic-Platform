@@ -177,5 +177,6 @@ class TradeOut(BaseModel):
     execution_mode: str
     opened_at: datetime
     closed_at: datetime | None
+    close_at_price: float | None = None
 
     model_config = {"from_attributes": True}
