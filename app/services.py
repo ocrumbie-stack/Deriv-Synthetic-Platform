@@ -354,8 +354,8 @@ async def close_trade(db: Session, trade: Trade, exit_price_hint: float | None, 
     trade.closed_at = datetime.utcnow()
     if bot:
         pair = get_or_create_bot_pair(db, bot, trade.symbol)
-        update_pair_session(db, pair, bot, net)
-        update_bot_session(db, bot, net)
+        update_pair_session(db, pair, bot, trade.net_result)
+        update_bot_session(db, bot, trade.net_result)
     return result
 
 
