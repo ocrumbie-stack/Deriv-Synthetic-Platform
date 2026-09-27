@@ -13,6 +13,8 @@ This file and that page list the same items - when adding a fix, update both.
 
 - **Multiplier safety cap is off while trading live.** `max_multiplier_floor` defaults to 10000 (raised for demo testing in e472ef5). Set `MAX_MULTIPLIER_FLOOR` on Railway (e.g. 20-50). See C7.
 - **Open issue:** `UNIQUE constraint failed: symbol_leverage.symbol` for frxXAUUSD (27 Sep 19:27 UTC). See F3.
+- **Open issue:** `database is locked` on the Open Positions refresh (self-heals). See I10.
+- **step200 alert has the wrong webhook secret** - its signals are rejected as "Invalid webhook secret". Update the alert message in TradingView.
 
 ## A. Signals from TradingView
 
@@ -29,6 +31,7 @@ This file and that page list the same items - when adding a fix, update both.
 | A9 | Reversals handled by the platform | With a long open, send a short entry. Then send a second short entry. | Long closes (journal: reversal) and short opens. The second same-direction entry is rejected. | 44d4a1c (25 Sep) |
 | A10 | Standalone exit webhook works | POST to /webhook/exit for an open position, including while its bot is paused. | Position closes; journal reason is webhook_exit. | 2e3b7f6 (25 Sep) |
 | A11 | Webhook secret is not exposed | Open /api/config and the alert templates on the Signal Bots page. | No secret in /api/config. Templates show YOUR_SECRET. | b7c685c (26 Sep) |
+| A12 | Webhook secret kept out of the logs | Send an alert that fails (e.g. an unknown symbol) and read the Railway log line. | The logged payload has no secret field. | 7644347 (27 Sep) |
 
 ## B. Opening trades on Deriv
 
@@ -41,6 +44,7 @@ This file and that page list the same items - when adding a fix, update both.
 | B5 | Failed orders don't leave stuck positions | Force a failure (e.g. invalid symbol) on an entry. | Trade marked failed and closed; the next entry isn't blocked. | 63e8213 (12 Sep) |
 | B6 | Bot TP/SL is set on each trade | Open a bot trade with TP/SL % set, then check the contract on Deriv. | Contract has a take profit / stop loss matching the % of stake. | e4e8d84 (26 Sep) |
 | B7 | TP/SL that rounds to $0 doesn't fail the order | Use a tiny stake with a small TP/SL %. | Order opens; the $0 side is just left off. | 27d2b4c (27 Sep) |
+| B8 | Deriv calls share one login (no rate limit) | Keep the dashboard open in two tabs with several positions open, and let a reversal fire. | No "OTP request failed (429)" / RateLimit in Railway logs or the journal. Reversals close the old position every time. | 7644347 (27 Sep) |
 
 ## C. Closing trades and P&L accuracy
 
@@ -117,6 +121,7 @@ This file and that page list the same items - when adding a fix, update both.
 | I7 | No Deriv rate-limit errors | Search Railway logs for 429. | None during normal use. | 7f4f366 (16 Sep) |
 | I8 | Account balance is correct | Compare the dashboard balance with Deriv for the current mode. | Matches. | 1acfe68 (12 Sep) |
 | I9 | Works on a phone | Open the dashboard on a phone. | No sideways scrolling; headers and controls wrap. | 1e0ce52 (16 Sep) |
+| I10 | Open Positions refresh doesn't lock the database | Search Railway logs for "database is locked" coming from /api/open-positions. | None. On 27 Sep it failed twice while recording a Deriv-side close (self-heals on the next refresh) — still to fix. | open issue |
 
 ## J. Trade History and charts
 
