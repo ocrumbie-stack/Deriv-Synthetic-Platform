@@ -217,13 +217,32 @@ def validate_signal(db: Session, payload: WebhookSignal, strategy: Strategy, bot
     return None
 
 
-def calculate_trade_result(trade: Trade, exit_price: float) -> tuple[float, float]:
-    if trade.direction.value == "long":
-        gross = (exit_price - trade.entry_price) * trade.size
-    else:
-        gross = (trade.entry_price - exit_price) * trade.size
-    net = gross - trade.fees
-    return gross, net
+def deriv_trade_gross(trade: Trade, profit) -> float:
+    """A closed trade's P&L, taken only from Deriv's own reported profit.
+
+    Never recomputed from underlying prices: (exit - entry) * stake ignores
+    the multiplier and doesn't share a unit with the dollar stake, so on
+    e.g. Jump 75 a -$0.98 trade came out as -$392.98. A missing figure is
+    recorded as 0 and a figure implausibly large for the stake (see
+    IMPLAUSIBLE_PROFIT_STAKE_MULTIPLE) is clamped - both are logged for
+    manual review against Deriv's statement rather than guessed at.
+    """
+    if not isinstance(profit, (int, float)):
+        logger.error(
+            "Deriv returned no profit for trade %s (contract %s) - recording 0. "
+            "Needs manual review against Deriv's statement.",
+            trade.id, trade.exchange_order_id,
+        )
+        return 0.0
+    stake_bound = max(trade.size, 1.0) * IMPLAUSIBLE_PROFIT_STAKE_MULTIPLE
+    if abs(profit) <= stake_bound:
+        return float(profit)
+    logger.warning(
+        "Deriv reported an implausible profit (%.2f) for trade %s (contract %s, stake %.2f) "
+        "- exceeds %sx stake, clamping to +/-%.2f instead. Needs manual review against Deriv's statement.",
+        profit, trade.id, trade.exchange_order_id, trade.size, IMPLAUSIBLE_PROFIT_STAKE_MULTIPLE, stake_bound,
+    )
+    return stake_bound if profit > 0 else -stake_bound
 
 
 async def get_live_unrealized_pnl(db: Session) -> dict[str, float]:
@@ -262,11 +281,15 @@ async def reconcile_open_trade(db: Session, trade: Trade) -> bool:
     if not poc or not poc.get("is_sold"):
         return False
 
-    profit = float(poc.get("profit") or 0)
+    try:
+        profit = float(poc.get("profit"))
+    except (TypeError, ValueError):
+        profit = None
+    gross = deriv_trade_gross(trade, profit)
     sell_time = poc.get("sell_time")
     trade.exit_price = float(poc.get("sell_spot") or poc.get("current_spot") or trade.entry_price)
-    trade.profit_loss = profit
-    trade.net_result = profit - trade.fees
+    trade.profit_loss = gross
+    trade.net_result = gross - trade.fees
     trade.status = PositionStatus.closed
     trade.execution_status = ExecutionStatus.closed
     trade.closed_at = datetime.utcfromtimestamp(float(sell_time)) if sell_time else datetime.utcnow()
@@ -291,40 +314,15 @@ async def close_trade(db: Session, trade: Trade, exit_price_hint: float | None, 
     # Deriv's portfolio by symbol/direction - that search has been observed
     # to silently miss genuinely open contracts, which would wrongly
     # conclude "no position" and leave the real contract running, untracked.
+    # Keep trade.exchange_order_id as the contract id (not the sale's
+    # transaction id) so the closed contract can still be looked up later.
     result = await DerivClient().close_order(trade.exchange_order_id)
-    if result.get("message") not in ("no_position", "already_sold"):
-        trade.exchange_order_id = str(result.get("order_id") or result.get("data", {}).get("orderId") or "")
 
     exit_price = exit_price_hint or trade.entry_price
-    # Use Deriv's own reported P&L for the contract rather than recomputing
-    # it from raw underlying prices, which don't share a unit with the
-    # dollar stake - unless it's implausibly large relative to the stake,
-    # which means the API response itself was bad rather than the trade
-    # actually moving that much (see IMPLAUSIBLE_PROFIT_STAKE_MULTIPLE).
-    live_profit = result.get("profit")
-    stake_bound = max(trade.size, 1.0) * IMPLAUSIBLE_PROFIT_STAKE_MULTIPLE
-    if isinstance(live_profit, (int, float)):
-        if abs(live_profit) <= stake_bound:
-            gross = float(live_profit)
-        else:
-            # Trust the sign, distrust the magnitude, and clamp rather than
-            # falling back to calculate_trade_result - that formula ignores
-            # the contract's multiplier entirely, so for a Multiplier
-            # contract it would likely reproduce an equally wrong number
-            # instead of a trustworthy one. This still needs a human to
-            # reconcile the real figure against Deriv's own statement.
-            logger.warning(
-                "Deriv reported an implausible profit (%.2f) for trade %s (contract %s, stake %.2f) "
-                "- exceeds %sx stake, clamping to +/-%.2f instead. Needs manual review against Deriv's statement.",
-                live_profit, trade.id, trade.exchange_order_id, trade.size, IMPLAUSIBLE_PROFIT_STAKE_MULTIPLE, stake_bound,
-            )
-            gross = stake_bound if live_profit > 0 else -stake_bound
-        net = gross - trade.fees
-    else:
-        gross, net = calculate_trade_result(trade, exit_price)
+    gross = deriv_trade_gross(trade, result.get("profit"))
     trade.exit_price = exit_price
     trade.profit_loss = gross
-    trade.net_result = net
+    trade.net_result = gross - trade.fees
     trade.status = PositionStatus.closed
     trade.execution_status = ExecutionStatus.closed
     trade.closed_at = datetime.utcnow()

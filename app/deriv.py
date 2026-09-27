@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import time
@@ -456,14 +457,25 @@ class DerivClient:
 
         result = await self._rpc("sell", {"sell": contract_id, "price": 0})
         sell_data = result.get("sell", result)
-        order_id = sell_data.get("transaction_id") if isinstance(sell_data, dict) else None
+        sell_data = sell_data if isinstance(sell_data, dict) else {}
+        order_id = sell_data.get("transaction_id")
 
         # Confirm the real realized profit from Deriv's own post-sale record
         # rather than trusting a pre-sale snapshot. Must bypass the cache -
         # the pre-sale check above may have just cached a stale "still open"
-        # result for this exact contract_id moments ago.
-        final = await self.get_contract_status(contract_id, use_cache=False)
-        profit = float(final["profit"]) if final and final.get("profit") is not None else None
+        # result for this exact contract_id moments ago. That lookup is a
+        # separate request that can fail or come back empty, so retry once,
+        # then fall back to the sale proceeds minus what the contract cost.
+        profit = None
+        for attempt in range(2):
+            if attempt:
+                await asyncio.sleep(1.0)
+            final = await self.get_contract_status(contract_id, use_cache=False)
+            if final and final.get("is_sold") and final.get("profit") is not None:
+                profit = float(final["profit"])
+                break
+        if profit is None and sell_data.get("sold_for") is not None and poc and poc.get("buy_price") is not None:
+            profit = round(float(sell_data["sold_for"]) - float(poc["buy_price"]), 2)
 
         return {
             "mode": mode,
