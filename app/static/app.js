@@ -114,6 +114,15 @@ function duration(start, end) {
   return h ? `${h}h ${m}m` : `${m}m`;
 }
 
+// Every dashboard call goes through fetch, so one wrapper sends the user back
+// to Google sign-in whenever their session has expired.
+const _fetch = window.fetch.bind(window);
+window.fetch = async (...args) => {
+  const r = await _fetch(...args);
+  if (r.status === 401) window.location.href = "/login";
+  return r;
+};
+
 async function getJson(url, timeoutMs = 12000) {
   // A single slow/hanging endpoint must never block the whole dashboard's
   // refresh cycle indefinitely (fetch has no default timeout).
@@ -2051,6 +2060,12 @@ function wireBotForm() {
     });
   });
 })();
+
+getJson("/api/me").then(me => {
+  if (!me.email) return;
+  document.querySelector("#signedInEmail").textContent = me.email;
+  document.querySelector("#signedIn").style.display = "";
+}).catch(() => {});
 
 refresh();
 setInterval(refresh, 10000);

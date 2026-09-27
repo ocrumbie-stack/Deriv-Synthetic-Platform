@@ -17,7 +17,7 @@ from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
 from app.schemas import BotPairOut, BotPairUpdate, ManualExitSignal, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
 from app.services import account_exposure, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal
-from app import trade_audit
+from app import auth, trade_audit
 from app.trade_audit import trade_audit_scheduler
 from app.trailing import trailing_monitor
 
@@ -122,6 +122,13 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
+app.middleware("http")(auth.require_login)
+app.include_router(auth.router)
+if not auth.auth_enabled():
+    logger.warning(
+        "Dashboard sign-in is OFF - anyone with the URL can use it. Set GOOGLE_CLIENT_ID, "
+        "GOOGLE_CLIENT_SECRET and ALLOWED_EMAILS to turn it on."
+    )
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 

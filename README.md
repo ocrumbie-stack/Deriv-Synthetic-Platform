@@ -94,6 +94,26 @@ and stores the SQLite file there. No environment variables need to be set by
 hand. This has to be done once through the dashboard; Railway does not support
 declaring volumes in `railway.json`.
 
+## Dashboard sign-in
+
+The dashboard uses Google sign-in, limited to the emails in `ALLOWED_EMAILS`.
+There is no platform password; account recovery goes through Google. The
+`/webhook` endpoints stay public, since TradingView can't sign in, and are
+protected by `WEBHOOK_SECRET`.
+
+Sign-in stays off until all three variables below are set:
+
+1. In Google Cloud Console, create an OAuth client (APIs & Services →
+   Credentials → Create credentials → OAuth client ID → Web application).
+   Add `https://<your-app>.up.railway.app/auth/callback` as an authorized
+   redirect URI.
+2. In Railway, set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and
+   `ALLOWED_EMAILS` (comma-separated).
+
+Sessions last 30 days. Setting or changing `SESSION_SECRET` signs out every
+device, and removing an email from `ALLOWED_EMAILS` locks that account out
+straight away.
+
 ## API
 
 - `GET /api/summary`

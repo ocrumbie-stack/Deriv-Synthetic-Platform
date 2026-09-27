@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     execution_mode: str = "demo"
     emergency_stop: bool = False
 
+    # Dashboard sign-in (see app/auth.py) - off until all three are set.
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    allowed_emails: str = ""
+    session_secret: str = ""
+    # e.g. https://web-production-a0f10.up.railway.app - only needed if the
+    # Google redirect URL can't be worked out from the request's own host.
+    public_url: str = ""
+
     deriv_app_id: str = ""
     deriv_api_token: str = ""
     deriv_account_id: str = "ROT90786324"
