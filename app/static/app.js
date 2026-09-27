@@ -2051,6 +2051,7 @@ async function refreshBots() {
               <label class="bot-field-label">Session P&amp;L</label>
               <div class="${pnlCls}" style="font-family:monospace;font-weight:700;font-size:15px">${total >= 0 ? "+" : ""}${currency.format(total)}</div>
               <div style="font-size:11px;color:var(--muted);margin-top:2px">${pnlPct}%</div>
+              <button class="mini-switch" data-reset-session="${b.id}" data-bot-name="${escapeAttr(b.name)}" style="margin-top:8px;background:transparent;border-color:var(--border);color:var(--text)">Reset session</button>
             </div>
           </div>
         </div>
@@ -2134,6 +2135,23 @@ async function refreshBots() {
       const current = btn.dataset.enabled === "true";
       await patchJson(`/api/signal-bots/${btn.dataset.botId}`, { enabled: !current });
       await refreshBots();
+    });
+  });
+
+  el.querySelectorAll("[data-reset-session]").forEach(btn => {
+    btn.addEventListener("click", async e => {
+      e.stopPropagation();
+      await openDialog({
+        title: `Reset ${btn.dataset.botName} session?`,
+        message: "Sets session P&L and cycle counts back to zero for the bot and every one of its coins. Trade history is kept.",
+        confirmLabel: "Reset session",
+        tone: "danger",
+        onSubmit: async () => {
+          const r = await fetch(`/api/signal-bots/${btn.dataset.resetSession}/reset-session`, { method: "POST" });
+          if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `Couldn't reset the session (server error ${r.status}).`);
+          await refreshBots();
+        },
+      });
     });
   });
 

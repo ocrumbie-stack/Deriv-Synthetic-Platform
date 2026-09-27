@@ -356,10 +356,11 @@ async def update_bot_pair(bot_id: int, symbol: str, updates: BotPairUpdate, db: 
     pair = db.scalar(select(BotPair).where(BotPair.bot_id == bot_id, BotPair.symbol == sym))
     if not pair:
         raise HTTPException(status_code=404, detail="Pair not found.")
-    if updates.enabled is True and not pair.enabled:
-        pair.session_pnl = 0.0
-        pair.cycles_completed = 0
-        pair.session_started_at = datetime.utcnow()
+    # Resuming a coin its cycle cap stopped starts a fresh session - otherwise
+    # it would stop again on its very next close. A manual pause/resume keeps
+    # the session running; "Reset session" on the bot clears it deliberately.
+    if updates.enabled is True and not pair.enabled and pair.max_cycles and (pair.cycles_completed or 0) >= pair.max_cycles:
+        _reset_session(pair)
     for field, value in updates.model_dump(exclude_unset=True).items():
         setattr(pair, field, value)
     db.commit()
@@ -369,6 +370,27 @@ async def update_bot_pair(bot_id: int, symbol: str, updates: BotPairUpdate, db: 
         if error:
             raise HTTPException(status_code=502, detail=f"Saved, but Deriv rejected the TP/SL update for the open trade: {error}")
     return pair
+
+
+def _reset_session(owner: SignalBot | BotPair) -> None:
+    owner.session_pnl = 0.0
+    owner.cycles_completed = 0
+    owner.session_started_at = datetime.utcnow()
+
+
+@app.post("/api/signal-bots/{bot_id}/reset-session", response_model=SignalBotOut)
+def reset_bot_session(bot_id: int, db: Session = Depends(get_db)) -> SignalBot:
+    """Start a fresh session for the bot and every one of its coins: session
+    P&L and cycle counts back to zero. Trade history is untouched."""
+    bot = db.get(SignalBot, bot_id)
+    if not bot:
+        raise HTTPException(status_code=404, detail="Signal bot not found.")
+    _reset_session(bot)
+    for pair in bot.pairs:
+        _reset_session(pair)
+    db.commit()
+    db.refresh(bot)
+    return bot
 
 
 async def _apply_tpsl_to_open_trade(db: Session, bot: SignalBot, pair: BotPair) -> str | None:
@@ -414,10 +436,6 @@ async def update_signal_bot(bot_id: int, updates: SignalBotUpdate, db: Session =
     if not bot:
         raise HTTPException(status_code=404, detail="Signal bot not found.")
     data = updates.model_dump(exclude_unset=True)
-    if data.get("enabled") is True and not bot.enabled:
-        bot.session_pnl = 0.0
-        bot.cycles_completed = 0
-        bot.session_started_at = datetime.utcnow()
     # A pair copies the bot's defaults when its coin first trades, so without
     # this a changed default would never reach a coin that had already traded.
     # Pairs still on the old default follow the new one; a value customised
