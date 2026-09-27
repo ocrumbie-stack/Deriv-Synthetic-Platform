@@ -616,27 +616,58 @@ function renderPositions(rows) {
       }
     });
   }).catch(() => {});
+  const byId = new Map(rows.map(t => [String(t.id), t]));
   el.querySelectorAll(".exit-select").forEach(sel => {
     sel.addEventListener("change", async () => {
       const action   = sel.value;
       const tradeId  = sel.dataset.tradeId;
+      const trade    = byId.get(tradeId);
       const row      = sel.closest("tr");
       const label    = row ? `${row.children[1].textContent} ${row.children[2].textContent}` : "this position";
+      const details  = positionDetails(trade, row);
       sel.value = ""; // reset to placeholder - each choice is a one-shot action, not a persisted setting
 
       if (action === "instant") {
-        if (!confirm(`Close ${label} now at market?`)) return;
-        await closePositionNow(tradeId, null);
+        await openDialog({
+          title: `Close ${label}`,
+          message: "Sells the contract on Deriv now, at the current market price.",
+          details,
+          confirmLabel: "Close position",
+          tone: "danger",
+          onSubmit: () => closePositionNow(tradeId),
+        });
       } else if (action === "price") {
-        const raw = prompt(`Close ${label} when the market reaches price:`);
-        if (raw === null || raw.trim() === "") return; // cancelled
-        const price = Number(raw);
-        if (!Number.isFinite(price) || price <= 0) { alert("Enter a valid price."); return; }
-        await setCloseAtPrice(tradeId, price);
+        await openDialog({
+          title: `Close ${label} at price`,
+          details,
+          fields: [{
+            name: "price",
+            label: "Close when price reaches",
+            value: trade?.close_at_price,
+            hint: "Triggers when the market touches this level, from above or below. The platform watches it, so it only fires while the server is running.",
+          }],
+          confirmLabel: "Set close price",
+          onSubmit: ({ price }) => setCloseAtPrice(tradeId, parsePositive(price, "Enter the price to close at.")),
+        });
       } else if (action === "cancel-price") {
-        await setCloseAtPrice(tradeId, null);
+        await setCloseAtPrice(tradeId, null).catch(err => showNotice("Couldn't cancel close price", err.message));
       } else if (action === "tpsl") {
-        await editPositionTpSl(tradeId, label);
+        let current = {};
+        try { current = await getJson(`/api/open-positions/${tradeId}/tpsl`); } catch { /* fields just start empty */ }
+        await openDialog({
+          title: `TP/SL for ${label}`,
+          details,
+          fields: [
+            { name: "take_profit", label: "Take profit", prefix: "$", value: current.take_profit, placeholder: "None" },
+            { name: "stop_loss",   label: "Stop loss",   prefix: "$", value: current.stop_loss,   placeholder: "None" },
+          ],
+          note: "Profit or loss amounts in dollars. Leave a field blank to remove it. Deriv enforces these, even if the server is down.",
+          confirmLabel: "Save TP/SL",
+          onSubmit: ({ take_profit, stop_loss }) => setPositionTpSl(tradeId, {
+            take_profit: take_profit === "" ? null : parsePositive(take_profit, "Take profit must be a positive dollar amount."),
+            stop_loss:   stop_loss   === "" ? null : parsePositive(stop_loss, "Stop loss must be a positive dollar amount."),
+          }),
+        });
       } else if (action === "webhook") {
         const url = window.location.origin + "/webhook/exit";
         const payload = JSON.stringify({ secret: _webhookSecret, strategy: sel.dataset.strategy, symbol: sel.dataset.symbol, price: "{{close}}" }, null, 2);
@@ -679,58 +710,135 @@ function showExitWebhookModal(label, url, payload) {
   document.addEventListener("keydown", e => { if (e.key === "Escape" && modal.style.display !== "none") hide(); });
 }
 
+// Position actions throw on failure so the dialog that started them can show
+// the reason in place. A response without a JSON detail (e.g. a server crash)
+// still names its status instead of a bare "failed".
+async function sendPositionAction(url, options, failure) {
+  const r = await fetch(url, options);
+  if (!r.ok) {
+    const detail = (await r.json().catch(() => ({}))).detail;
+    throw new Error(typeof detail === "string" ? detail : `${failure} (server error ${r.status}).`);
+  }
+  refresh();
+}
+
 // Arms (or, with price null, cancels) a pending close - the server sells the
 // contract once the live spot reaches the price.
-async function setCloseAtPrice(tradeId, price) {
-  try {
-    const r = price == null
-      ? await fetch(`/api/open-positions/${tradeId}/close-at`, { method: "DELETE" })
-      : await fetch(`/api/open-positions/${tradeId}/close-at?price=${encodeURIComponent(price)}`, { method: "POST" });
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "Update failed");
-    await refresh();
-  } catch (err) {
-    alert(err.message || "Failed to update close price.");
-  }
+function setCloseAtPrice(tradeId, price) {
+  return price == null
+    ? sendPositionAction(`/api/open-positions/${tradeId}/close-at`, { method: "DELETE" }, "Couldn't cancel the close price")
+    : sendPositionAction(`/api/open-positions/${tradeId}/close-at?price=${encodeURIComponent(price)}`, { method: "POST" }, "Couldn't set the close price");
 }
 
-// Dollar TP/SL on one open contract, set on Deriv itself. Blank removes that side.
-async function editPositionTpSl(tradeId, label) {
-  let current = {};
-  try { current = await getJson(`/api/open-positions/${tradeId}/tpsl`); } catch { /* prompts just start empty */ }
-  const ask = (side, value) => {
-    const raw = prompt(`${side} for ${label} in $ (profit/loss amount, blank for none):`, value != null ? String(value) : "");
-    if (raw === null) return undefined; // cancelled
-    if (raw.trim() === "") return null;
-    const amount = Number(raw);
-    if (!Number.isFinite(amount) || amount <= 0) { alert("Enter a positive dollar amount."); return undefined; }
-    return amount;
-  };
-  const take_profit = ask("Take profit", current.take_profit);
-  if (take_profit === undefined) return;
-  const stop_loss = ask("Stop loss", current.stop_loss);
-  if (stop_loss === undefined) return;
-  try {
-    const r = await fetch(`/api/open-positions/${tradeId}/tpsl`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ take_profit, stop_loss }),
+// Dollar TP/SL on one open contract, set on Deriv itself. null removes that side.
+function setPositionTpSl(tradeId, tpsl) {
+  return sendPositionAction(`/api/open-positions/${tradeId}/tpsl`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(tpsl),
+  }, "Couldn't update the TP/SL");
+}
+
+function closePositionNow(tradeId) {
+  return sendPositionAction(`/api/open-positions/${tradeId}/close`, { method: "POST" }, "Couldn't close the position");
+}
+
+function parsePositive(raw, message) {
+  const value = Number(raw);
+  if (raw === "" || !Number.isFinite(value) || value <= 0) throw new Error(message);
+  return value;
+}
+
+function positionDetails(trade, row) {
+  if (!trade) return [];
+  const upl = row?.querySelector("[data-upl]");
+  return [
+    ["Entry", number.format(trade.entry_price)],
+    ["Stake", currency.format(trade.size)],
+    ["Multiplier", `${number.format(trade.leverage)}x`],
+    ["Unrealized P/L", upl?.textContent || "—", upl?.className],
+  ];
+}
+
+// ─── In-app dialog (instead of the browser's confirm/prompt/alert) ─────────
+
+// Resolves true once onSubmit succeeds, false if dismissed. onSubmit receives
+// the trimmed field values by name; if it throws, the message is shown inside
+// the dialog and it stays open so the input can be corrected.
+function openDialog({ title, message, details = [], fields = [], note, confirmLabel = "Confirm", tone = "primary", cancelLabel = "Cancel", onSubmit }) {
+  return new Promise(resolve => {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `
+      <form class="modal-box dialog-box" role="dialog" aria-modal="true" novalidate>
+        <div class="modal-header">
+          <span class="modal-title">${escapeAttr(title)}</span>
+          <button type="button" class="modal-close-x" data-cancel aria-label="Close">&times;</button>
+        </div>
+        ${message ? `<p class="dialog-message">${escapeAttr(message)}</p>` : ""}
+        ${details.length ? `<dl class="dialog-details">${details.map(([k, v, cls]) => `
+          <div><dt>${escapeAttr(k)}</dt><dd class="${escapeAttr(cls || "")}">${escapeAttr(v)}</dd></div>`).join("")}</dl>` : ""}
+        ${fields.map(f => `
+          <label class="dialog-field">
+            <span class="webhook-label">${escapeAttr(f.label)}</span>
+            <span class="dialog-input${f.prefix ? " has-prefix" : ""}">
+              ${f.prefix ? `<span class="dialog-prefix">${escapeAttr(f.prefix)}</span>` : ""}
+              <input type="text" inputmode="decimal" autocomplete="off" name="${escapeAttr(f.name)}"
+                value="${f.value != null ? escapeAttr(f.value) : ""}" placeholder="${escapeAttr(f.placeholder || "")}" />
+            </span>
+            ${f.hint ? `<span class="dialog-hint">${escapeAttr(f.hint)}</span>` : ""}
+          </label>`).join("")}
+        ${note ? `<p class="dialog-hint">${escapeAttr(note)}</p>` : ""}
+        <p class="dialog-error" role="alert" hidden></p>
+        <div class="modal-footer">
+          ${cancelLabel ? `<button type="button" class="dialog-btn secondary" data-cancel>${escapeAttr(cancelLabel)}</button>` : ""}
+          <button type="submit" class="dialog-btn ${tone}">${escapeAttr(confirmLabel)}</button>
+        </div>
+      </form>`;
+    document.body.appendChild(overlay);
+
+    const form = overlay.querySelector("form");
+    const error = overlay.querySelector(".dialog-error");
+    const submit = form.querySelector("button[type=submit]");
+    let busy = false;
+    const close = ok => {
+      document.removeEventListener("keydown", onKey);
+      overlay.remove();
+      resolve(ok);
+    };
+    const onKey = e => { if (e.key === "Escape" && !busy) close(false); };
+    document.addEventListener("keydown", onKey);
+    overlay.addEventListener("click", e => { if (!busy && (e.target === overlay || e.target.closest("[data-cancel]"))) close(false); });
+
+    form.addEventListener("submit", async e => {
+      e.preventDefault();
+      if (busy) return;
+      const values = Object.fromEntries(fields.map(f => [f.name, form.elements[f.name].value.trim()]));
+      busy = true;
+      error.hidden = true;
+      form.querySelectorAll("button, input").forEach(n => { n.disabled = true; });
+      submit.textContent = "Working…";
+      try {
+        if (onSubmit) await onSubmit(values);
+        close(true);
+      } catch (err) {
+        busy = false;
+        form.querySelectorAll("button, input").forEach(n => { n.disabled = false; });
+        submit.textContent = confirmLabel;
+        error.textContent = err.message || "Something went wrong.";
+        error.hidden = false;
+        (form.querySelector("input") || submit).focus();
+      }
     });
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "Update failed");
-    await refresh();
-  } catch (err) {
-    alert(err.message || "Failed to update TP/SL.");
-  }
+
+    const firstInput = form.querySelector("input");
+    (firstInput || submit).focus();
+    firstInput?.select();
+  });
 }
 
-async function closePositionNow(tradeId, price) {
-  const qs = price != null && !Number.isNaN(price) ? `?price=${encodeURIComponent(price)}` : "";
-  try {
-    const r = await fetch(`/api/open-positions/${tradeId}/close${qs}`, { method: "POST" });
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "Close failed");
-    await refresh();
-  } catch (err) {
-    alert(err.message || "Failed to close position.");
-  }
+function showNotice(title, message) {
+  return openDialog({ title, message, confirmLabel: "OK", cancelLabel: null });
 }
 
 function symbolPerfRows(rows) {
@@ -1589,20 +1697,29 @@ document.querySelector("#emergencyStopToggle")?.addEventListener("click", async 
 // Execution mode — demo/live toggle
 document.querySelector("#executionModeToggle")?.addEventListener("click", async () => {
   const goingLive = latestState.risk.execution_mode !== "live";
-  if (goingLive && !confirm("Switch to LIVE trading? Real orders will be sent to your real Deriv account with real money.")) {
-    return;
+  const switchMode = async () => {
+    const r = await fetch("/api/risk", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ execution_mode: goingLive ? "live" : "demo" }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail || `Failed to switch execution mode (server error ${r.status}).`);
+    }
+    await refresh();
+  };
+  if (goingLive) {
+    await openDialog({
+      title: "Switch to live trading?",
+      message: "Real orders will be sent to your real Deriv account with real money.",
+      confirmLabel: "Switch to live",
+      tone: "danger",
+      onSubmit: switchMode,
+    });
+  } else {
+    await switchMode().catch(err => showNotice("Couldn't switch to demo", err.message));
   }
-  const r = await fetch("/api/risk", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ execution_mode: goingLive ? "live" : "demo" }),
-  });
-  if (!r.ok) {
-    const body = await r.json().catch(() => ({}));
-    alert(body.detail || "Failed to switch execution mode.");
-    return;
-  }
-  await refresh();
 });
 
 // Duplicate blocking
@@ -1782,7 +1899,7 @@ async function loadBotPairs(botId, botName) {
       try {
         await patchJson(`/api/signal-bots/${inp.dataset.botId}/pairs/${inp.dataset.symbol}`, { [inp.dataset.field]: val });
       } catch (err) {
-        alert(err.message);
+        showNotice(`Couldn't save ${inp.dataset.symbol} setting`, err.message);
       }
       await loadBotPairs(inp.dataset.botId, botName);
     });
@@ -1867,7 +1984,7 @@ async function refreshBots() {
         </button>
       </td>
       <td>
-        <button class="mini-switch" data-delete-bot="${b.id}" style="background:var(--red-dim);color:var(--red)">Delete</button>
+        <button class="mini-switch" data-delete-bot="${b.id}" data-bot-name="${escapeAttr(b.name)}" style="background:var(--red-dim);color:var(--red)">Delete</button>
       </td>
     </tr>
     <tr id="detail-${b.id}" style="display:none">
@@ -1998,7 +2115,7 @@ async function refreshBots() {
       try {
         await patchJson(`/api/signal-bots/${inp.dataset.botId}`, { [inp.dataset.field]: val });
       } catch (err) {
-        alert(err.message);
+        showNotice("Couldn't save bot setting", err.message);
       }
       await refreshBots();
     });
@@ -2022,9 +2139,17 @@ async function refreshBots() {
 
   el.querySelectorAll("[data-delete-bot]").forEach(btn => {
     btn.addEventListener("click", async () => {
-      if (!confirm(`Delete this bot?`)) return;
-      await fetch(`/api/signal-bots/${btn.dataset.deleteBot}`, { method: "DELETE" });
-      await refreshBots();
+      await openDialog({
+        title: `Delete ${btn.dataset.botName || "this bot"}?`,
+        message: "Removes the bot and its per-coin settings. New entry signals for it will be rejected. Its trade history is kept.",
+        confirmLabel: "Delete bot",
+        tone: "danger",
+        onSubmit: async () => {
+          const r = await fetch(`/api/signal-bots/${btn.dataset.deleteBot}`, { method: "DELETE" });
+          if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `Couldn't delete the bot (server error ${r.status}).`);
+          await refreshBots();
+        },
+      });
     });
   });
 }

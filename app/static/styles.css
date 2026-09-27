@@ -829,6 +829,87 @@ tr.clickable:hover td, tr.selected td { background: var(--panel-2, #16161e); }
 
 .modal-footer { display: flex; gap: 10px; justify-content: flex-end; }
 
+/* ── In-app dialog (confirm / price / TP-SL) ────────────────── */
+
+.dialog-box { max-width: 420px; gap: 16px; }
+
+.dialog-message { color: #a4a4bc; font-size: 13px; line-height: 1.5; }
+
+.dialog-details {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: grid;
+  gap: 10px 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 12px 14px;
+}
+
+.dialog-details dt {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.dialog-details dd { font-size: 13px; font-weight: 600; margin-top: 2px; }
+.dialog-details dd.neutral { color: var(--text); font-weight: 600; }
+
+.dialog-field { display: grid; gap: 6px; }
+
+.dialog-input { display: block; position: relative; }
+.dialog-input input { font-family: 'JetBrains Mono', Consolas, monospace; min-height: 38px; width: 100%; }
+.dialog-input.has-prefix input { padding-left: 24px; }
+
+.dialog-prefix {
+  color: var(--muted);
+  font-weight: 700;
+  left: 11px;
+  pointer-events: none;
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.dialog-hint { color: #7c7c98; font-size: 12px; line-height: 1.45; }
+
+.dialog-error {
+  background: var(--red-dim);
+  border: 1px solid rgba(255, 61, 90, 0.3);
+  border-radius: 6px;
+  color: var(--red);
+  font-size: 12px;
+  line-height: 1.45;
+  padding: 8px 10px;
+}
+
+.dialog-btn {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  min-height: 36px;
+  padding: 0 16px;
+  transition: filter 0.1s ease, background 0.1s ease;
+}
+
+.dialog-btn:hover:not(:disabled) { filter: brightness(1.12); }
+.dialog-btn:disabled { cursor: default; opacity: 0.6; }
+.dialog-btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+.dialog-btn.secondary { background: transparent; border-color: var(--border); color: var(--text); }
+.dialog-btn.secondary:hover:not(:disabled) { background: var(--panel-2); filter: none; }
+.dialog-btn.primary { background: var(--blue); color: #fff; }
+.dialog-btn.danger  { background: var(--red); color: #fff; }
+
+@media (max-width: 480px) {
+  .dialog-box { padding: 16px; }
+  .dialog-box .modal-footer .dialog-btn { flex: 1; }
+}
+
 /* ── Risk Status page ───────────────────────────────────────── */
 
 .status-banner {
