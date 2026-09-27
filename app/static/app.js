@@ -15,6 +15,9 @@ let historySymbolFilter = "all";
 // alert templates carry this placeholder for the user to fill in.
 let _webhookSecret = "YOUR_SECRET";
 let _botFormWired = false;
+// Latest /api/signal-bots rows by id, so a bot's pair table can tell which
+// pair settings differ from the bot's defaults.
+let botsById = {};
 let latestState    = {
   summary: {}, risk: {}, balance: {}, performance: [], positions: [],
   signals: [], history: [], analytics: { equity_curve: [], status_counts: {}, symbol_exposure: [] },
@@ -139,7 +142,11 @@ async function getJson(url, timeoutMs = 12000) {
 
 async function patchJson(url, body) {
   const r = await fetch(url, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  if (!r.ok) throw new Error(`Update failed: ${url}`);
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    const detail = Array.isArray(data.detail) ? data.detail.map(d => d.msg).join("; ") : data.detail;
+    throw new Error(detail || `Update failed: ${url}`);
+  }
   return r.json();
 }
 
@@ -1647,7 +1654,10 @@ async function loadBotPairs(botId, botName) {
 
   const openPositions = (latestState.positions || []).filter(p => p.strategy_name === botName);
   const openSymbols = new Set(openPositions.map(p => p.symbol));
-  const hasOverrides = p => p.tp_pct != null || p.sl_pct != null || p.max_cycles != null;
+  const bot = botsById[botId] || {};
+  const hasOverrides = p => p.tp_pct != bot.default_pair_tp_pct
+    || p.sl_pct != bot.default_pair_sl_pct
+    || p.max_cycles != bot.default_pair_max_cycles;
   const needsAttention = p => openSymbols.has(p.symbol) || !p.enabled || hasOverrides(p);
   const allSymbols = [...new Set([
     ...openPositions.map(p => p.symbol),
@@ -1721,8 +1731,12 @@ async function loadBotPairs(botId, botName) {
     inp.addEventListener("change", async () => {
       const nullables = ["tp_pct", "sl_pct", "max_cycles"];
       const val = inp.value === "" && nullables.includes(inp.dataset.field) ? null : Number(inp.value);
-      await patchJson(`/api/signal-bots/${inp.dataset.botId}/pairs/${inp.dataset.symbol}`, { [inp.dataset.field]: val });
-      await loadBotPairs(inp.dataset.botId);
+      try {
+        await patchJson(`/api/signal-bots/${inp.dataset.botId}/pairs/${inp.dataset.symbol}`, { [inp.dataset.field]: val });
+      } catch (err) {
+        alert(err.message);
+      }
+      await loadBotPairs(inp.dataset.botId, botName);
     });
   });
 
@@ -1731,7 +1745,7 @@ async function loadBotPairs(botId, botName) {
     btn.addEventListener("click", async () => {
       const current = btn.dataset.pairEnabled === "true";
       await patchJson(`/api/signal-bots/${btn.dataset.pairBot}/pairs/${btn.dataset.pairSym}`, { enabled: !current });
-      await loadBotPairs(btn.dataset.pairBot);
+      await loadBotPairs(btn.dataset.pairBot, botName);
     });
   });
 }
@@ -1743,6 +1757,7 @@ async function refreshBots() {
   ]);
   const el = document.querySelector("#signalBots");
   if (!el) return;
+  botsById = Object.fromEntries(bots.map(b => [b.id, b]));
 
   if (!bots.length) {
     el.innerHTML = emptyRow(6, "No signal bots yet — click + New Bot to create one.");
@@ -1932,7 +1947,11 @@ async function refreshBots() {
       const nullableFields = ["default_pair_tp_pct", "default_pair_sl_pct", "default_pair_max_cycles", "trail_start_pct", "trail_distance_pct"];
       const val = inp.value === "" && nullableFields.includes(inp.dataset.field)
         ? null : Number(inp.value);
-      await patchJson(`/api/signal-bots/${inp.dataset.botId}`, { [inp.dataset.field]: val });
+      try {
+        await patchJson(`/api/signal-bots/${inp.dataset.botId}`, { [inp.dataset.field]: val });
+      } catch (err) {
+        alert(err.message);
+      }
       await refreshBots();
     });
   });

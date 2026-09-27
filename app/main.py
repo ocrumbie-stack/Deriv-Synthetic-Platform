@@ -16,7 +16,7 @@ from app.database import Base, SessionLocal, engine, get_db, sync_schema
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
 from app.schemas import BotPairOut, BotPairUpdate, ManualExitSignal, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
-from app.services import account_exposure, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal
+from app.services import PAIR_DEFAULT_FIELDS, account_exposure, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal
 from app import auth, trade_audit
 from app.trade_audit import trade_audit_scheduler
 from app.trailing import trailing_monitor
@@ -355,25 +355,32 @@ async def update_bot_pair(bot_id: int, symbol: str, updates: BotPairUpdate, db: 
         setattr(pair, field, value)
     db.commit()
     db.refresh(pair)
-    # Apply a changed per-trade TP/SL to this coin's already-open contract too
+    if {"tp_pct", "sl_pct"} & updates.model_fields_set:
+        error = await _apply_tpsl_to_open_trade(db, bot, pair)
+        if error:
+            raise HTTPException(status_code=502, detail=f"Saved, but Deriv rejected the TP/SL update for the open trade: {error}")
+    return pair
+
+
+async def _apply_tpsl_to_open_trade(db: Session, bot: SignalBot, pair: BotPair) -> str | None:
+    """Apply a changed per-trade TP/SL to this coin's already-open contract
+    too. Returns Deriv's error, if it rejected the update."""
     open_trade = db.scalar(
         select(Trade).where(
             Trade.strategy_name == bot.name,
-            Trade.symbol == sym,
+            Trade.symbol == pair.symbol,
             Trade.status == PositionStatus.open,
             Trade.execution_mode == settings.execution_mode.lower(),
         )
     )
-    if open_trade and open_trade.exchange_order_id and {"tp_pct", "sl_pct"} & updates.model_fields_set:
-        take_profit, stop_loss = trade_tpsl_amounts(open_trade.size, pair.tp_pct, pair.sl_pct)
-        try:
-            await DerivClient().update_contract_tpsl(open_trade.exchange_order_id, take_profit, stop_loss)
-        except DerivExecutionError as exc:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Saved, but Deriv rejected the TP/SL update for the open trade: {exc}",
-            ) from exc
-    return pair
+    if not (open_trade and open_trade.exchange_order_id):
+        return None
+    take_profit, stop_loss = trade_tpsl_amounts(open_trade.size, pair.tp_pct, pair.sl_pct)
+    try:
+        await DerivClient().update_contract_tpsl(open_trade.exchange_order_id, take_profit, stop_loss)
+    except DerivExecutionError as exc:
+        return str(exc)
+    return None
 
 
 @app.get("/api/signal-bots", response_model=list[SignalBotOut])
@@ -393,7 +400,7 @@ def create_signal_bot(data: SignalBotCreate, db: Session = Depends(get_db)) -> S
 
 
 @app.patch("/api/signal-bots/{bot_id}", response_model=SignalBotOut)
-def update_signal_bot(bot_id: int, updates: SignalBotUpdate, db: Session = Depends(get_db)) -> SignalBot:
+async def update_signal_bot(bot_id: int, updates: SignalBotUpdate, db: Session = Depends(get_db)) -> SignalBot:
     bot = db.get(SignalBot, bot_id)
     if not bot:
         raise HTTPException(status_code=404, detail="Signal bot not found.")
@@ -402,10 +409,33 @@ def update_signal_bot(bot_id: int, updates: SignalBotUpdate, db: Session = Depen
         bot.session_pnl = 0.0
         bot.cycles_completed = 0
         bot.session_started_at = datetime.utcnow()
+    # A pair copies the bot's defaults when its coin first trades, so without
+    # this a changed default would never reach a coin that had already traded.
+    # Pairs still on the old default follow the new one; a value customised
+    # on the pair itself is left alone.
+    tpsl_changed: list[BotPair] = []
+    for bot_field, pair_field in PAIR_DEFAULT_FIELDS.items():
+        if bot_field not in data or data[bot_field] == getattr(bot, bot_field):
+            continue
+        for pair in bot.pairs:
+            if getattr(pair, pair_field) == getattr(bot, bot_field):
+                setattr(pair, pair_field, data[bot_field])
+                if pair_field != "max_cycles" and pair not in tpsl_changed:
+                    tpsl_changed.append(pair)
     for field, value in data.items():
         setattr(bot, field, value)
     db.commit()
     db.refresh(bot)
+    errors = []
+    for pair in tpsl_changed:
+        error = await _apply_tpsl_to_open_trade(db, bot, pair)
+        if error:
+            errors.append(f"{pair.symbol}: {error}")
+    if errors:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Saved, but Deriv rejected the TP/SL update for open trades - {'; '.join(errors)}",
+        )
     return bot
 
 

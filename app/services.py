@@ -103,6 +103,14 @@ def get_symbol_leverage(db: Session, symbol: str) -> int | None:
     return row.leverage if row else None
 
 
+# SignalBot default -> the BotPair setting it seeds when a coin first trades.
+PAIR_DEFAULT_FIELDS = {
+    "default_pair_tp_pct": "tp_pct",
+    "default_pair_sl_pct": "sl_pct",
+    "default_pair_max_cycles": "max_cycles",
+}
+
+
 def get_or_create_bot_pair(db: Session, bot: SignalBot, symbol: str) -> BotPair:
     pair = db.scalar(select(BotPair).where(BotPair.bot_id == bot.id, BotPair.symbol == symbol))
     if not pair:
@@ -135,10 +143,12 @@ def update_pair_session(db: Session, pair: BotPair, bot: SignalBot, trade_net: f
 def trade_tpsl_amounts(stake: float, tp_pct: float | None, sl_pct: float | None) -> tuple[float | None, float | None]:
     """Convert TP/SL % of a trade's stake into the dollar profit/loss amounts
     Deriv's multiplier limit_order expects. A stop at 100%+ of the stake is
-    left off - a multiplier contract can't lose more than its stake anyway."""
-    take_profit = stake * tp_pct / 100 if tp_pct and stake > 0 else None
-    stop_loss = stake * sl_pct / 100 if sl_pct and stake > 0 and sl_pct < 100 else None
-    return take_profit, stop_loss
+    left off - a multiplier contract can't lose more than its stake anyway.
+    Amounts are in cents, and one that rounds to $0 is left off rather than
+    sent as a 0 Deriv would reject (failing the whole order)."""
+    take_profit = round(stake * tp_pct / 100, 2) if tp_pct and stake > 0 else None
+    stop_loss = round(stake * sl_pct / 100, 2) if sl_pct and stake > 0 and sl_pct < 100 else None
+    return take_profit or None, stop_loss or None
 
 
 def update_bot_session(db: Session, bot: SignalBot, trade_net: float) -> None:
