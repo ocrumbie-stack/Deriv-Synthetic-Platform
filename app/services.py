@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
@@ -328,6 +329,16 @@ async def reconcile_open_trade(db: Session, trade: Trade) -> bool:
         update_bot_session(db, bot, trade.net_result)
     db.flush()
     return True
+
+
+# Every path that opens/closes a Deriv contract keeps its SQLite write
+# transaction open across the awaited Deriv call. A second such path starting
+# in that window (e.g. the exit+entry pair a reversal alert fires back to
+# back) would block on SQLite's busy timeout synchronously on the event loop
+# thread - so the first one can never resume to commit, and the second fails
+# with "database is locked" after the full timeout. Holding this lock around
+# each of those paths runs them one at a time, in arrival order, instead.
+trade_execution_lock = asyncio.Lock()
 
 
 async def close_trade(db: Session, trade: Trade, exit_price_hint: float | None, bot: SignalBot | None) -> dict:

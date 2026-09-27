@@ -26,7 +26,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import PositionStatus, SignalBot, Trade
-from app.services import IMPLAUSIBLE_PROFIT_STAKE_MULTIPLE, close_position_with_signal, reconcile_open_trade
+from app.services import IMPLAUSIBLE_PROFIT_STAKE_MULTIPLE, close_position_with_signal, reconcile_open_trade, trade_execution_lock
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -243,12 +243,13 @@ class TrailingStopMonitor:
 
     async def _close(self, contract_id: str, tracked: _Tracked, price: float | None, source: str, payload: dict) -> None:
         try:
-            with SessionLocal() as db:
-                trade = db.get(Trade, tracked.trade_id)
-                if not trade or trade.status != PositionStatus.open:
-                    return
-                trade.peak_profit = tracked.peak
-                await close_position_with_signal(db, trade, price, source, payload)
+            async with trade_execution_lock:
+                with SessionLocal() as db:
+                    trade = db.get(Trade, tracked.trade_id)
+                    if not trade or trade.status != PositionStatus.open:
+                        return
+                    trade.peak_profit = tracked.peak
+                    await close_position_with_signal(db, trade, price, source, payload)
             logger.info("%s closed trade %s: %s", source, tracked.trade_id, payload)
         except DerivExecutionError as exc:
             # Stays subscribed, so the next tick still past the trigger retries.

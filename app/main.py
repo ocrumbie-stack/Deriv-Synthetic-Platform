@@ -17,7 +17,7 @@ from app.database import Base, SessionLocal, engine, get_db, sync_schema
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
 from app.schemas import BotPairOut, BotPairUpdate, ManualExitSignal, PositionTpSl, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
-from app.services import PAIR_DEFAULT_FIELDS, account_exposure, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal
+from app.services import PAIR_DEFAULT_FIELDS, account_exposure, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal, trade_execution_lock
 from app import auth, trade_audit
 from app.trade_audit import trade_audit_scheduler
 from app.trailing import trailing_monitor
@@ -183,14 +183,15 @@ def health() -> dict[str, str]:
 
 
 async def _process_in_background(payload: WebhookSignal) -> None:
-    db = SessionLocal()
-    try:
-        await process_webhook_signal(db, payload)
-    except Exception:
-        db.rollback()
-        logger.exception("Failed to process webhook signal: %s", payload.model_dump(mode="json"))
-    finally:
-        db.close()
+    async with trade_execution_lock:
+        db = SessionLocal()
+        try:
+            await process_webhook_signal(db, payload)
+        except Exception:
+            db.rollback()
+            logger.exception("Failed to process webhook signal: %s", payload.model_dump(mode="json"))
+        finally:
+            db.close()
 
 
 @app.post("/webhook", status_code=202)
@@ -207,14 +208,15 @@ async def receive_webhook(payload: WebhookSignal, background_tasks: BackgroundTa
 
 
 async def _process_exit_in_background(payload: ManualExitSignal) -> None:
-    db = SessionLocal()
-    try:
-        await process_manual_exit(db, payload)
-    except Exception:
-        db.rollback()
-        logger.exception("Failed to process manual exit webhook: %s", payload.model_dump(mode="json"))
-    finally:
-        db.close()
+    async with trade_execution_lock:
+        db = SessionLocal()
+        try:
+            await process_manual_exit(db, payload)
+        except Exception:
+            db.rollback()
+            logger.exception("Failed to process manual exit webhook: %s", payload.model_dump(mode="json"))
+        finally:
+            db.close()
 
 
 @app.post("/webhook/exit", status_code=202)
@@ -581,29 +583,30 @@ async def open_positions(db: Session = Depends(get_db)) -> list[Trade]:
 
 @app.post("/api/open-positions/{trade_id}/close", response_model=TradeOut)
 async def close_position(trade_id: int, price: float | None = None, db: Session = Depends(get_db)) -> Trade:
-    trade = db.get(Trade, trade_id)
-    if not trade or trade.execution_mode != settings.execution_mode.lower():
-        raise HTTPException(status_code=404, detail="Open position not found.")
-    if trade.status != PositionStatus.open:
-        raise HTTPException(status_code=409, detail="Position is already closed.")
+    async with trade_execution_lock:
+        trade = db.get(Trade, trade_id)
+        if not trade or trade.execution_mode != settings.execution_mode.lower():
+            raise HTTPException(status_code=404, detail="Open position not found.")
+        if trade.status != PositionStatus.open:
+            raise HTTPException(status_code=409, detail="Position is already closed.")
 
-    # Deriv may have already stopped-out/sold this contract without a
-    # matching exit webhook - reconcile instead of attempting a redundant close.
-    if await reconcile_open_trade(db, trade):
-        db.commit()
+        # Deriv may have already stopped-out/sold this contract without a
+        # matching exit webhook - reconcile instead of attempting a redundant close.
+        if await reconcile_open_trade(db, trade):
+            db.commit()
+            db.refresh(trade)
+            return trade
+
+        try:
+            await close_position_with_signal(
+                db, trade, price,
+                "price_exit" if price is not None else "manual_close",
+                {"trade_id": trade_id, "price": price},
+            )
+        except DerivExecutionError as exc:
+            raise HTTPException(status_code=502, detail=f"Failed to close position on Deriv: {exc}") from exc
         db.refresh(trade)
         return trade
-
-    try:
-        await close_position_with_signal(
-            db, trade, price,
-            "price_exit" if price is not None else "manual_close",
-            {"trade_id": trade_id, "price": price},
-        )
-    except DerivExecutionError as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to close position on Deriv: {exc}") from exc
-    db.refresh(trade)
-    return trade
 
 
 def _get_open_trade(db: Session, trade_id: int) -> Trade:
