@@ -11,6 +11,8 @@ let historySymbolFilter = "all";
 // the script has executed past wherever these would otherwise be declared,
 // which throws a "Cannot access before initialization" TDZ error for a
 // `let` declared later in the file.
+// Never served by the API (anyone could read it and place trades), so copied
+// alert templates carry this placeholder for the user to fill in.
 let _webhookSecret = "YOUR_SECRET";
 let _botFormWired = false;
 let latestState    = {
@@ -431,11 +433,14 @@ function setMeter(el, ratio) {
 // ─── Render: Signal tables ───────────────────────────────────────────────────
 
 const EXIT_SOURCE_LABELS = {
+  strategy_entry: "Strategy entry",
   strategy_exit: "Strategy exit",
   reversal:      "Reversal",
   webhook_exit:  "Webhook exit",
   manual_close:  "Manual close",
   price_exit:    "Price exit",
+  trailing_stop: "Trailing stop",
+  deriv_close:   "Closed on Deriv (TP/SL/stop-out)",
 };
 
 function signalReason(s) {
@@ -1952,11 +1957,6 @@ function wireBotForm() {
   if (_botFormWired) return;
   _botFormWired = true;
 
-  // Load real webhook secret for template
-  getJson("/api/config").then(cfg => {
-    if (cfg.webhook_secret) _webhookSecret = cfg.webhook_secret;
-  }).catch(() => {});
-
 
   document.querySelector("#newBotToggle")?.addEventListener("click", () => {
     const form = document.querySelector("#newBotForm");
@@ -2041,10 +2041,6 @@ function wireBotForm() {
     });
   });
 
-  getJson("/api/config").then(cfg => {
-    if (cfg.webhook_secret) _webhookSecret = cfg.webhook_secret;
-  }).catch(() => {});
-
   const tplBtn = document.querySelector("#copyBotTemplate");
   if (tplBtn) tplBtn.addEventListener("click", () => {
     const tplEl = document.querySelector("#botTemplateDisplay");
@@ -2055,13 +2051,6 @@ function wireBotForm() {
     });
   });
 })();
-
-// Load the real webhook secret up front, regardless of which page loads
-// first - the Open Positions "Get webhook payload" action needs it too, not
-// just the Signal Bots page (which otherwise only fetches this lazily).
-getJson("/api/config").then(cfg => {
-  if (cfg.webhook_secret) _webhookSecret = cfg.webhook_secret;
-}).catch(() => {});
 
 refresh();
 setInterval(refresh, 10000);

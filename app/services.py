@@ -293,6 +293,22 @@ async def reconcile_open_trade(db: Session, trade: Trade) -> bool:
     trade.status = PositionStatus.closed
     trade.execution_status = ExecutionStatus.closed
     trade.closed_at = datetime.utcfromtimestamp(float(sell_time)) if sell_time else datetime.utcnow()
+    # No webhook or dashboard action triggered this close, so log it here or
+    # the Signal Journal would have no exit row explaining how it ended.
+    db.add(
+        Signal(
+            strategy_id=trade.strategy_id,
+            strategy_name=trade.strategy_name,
+            symbol=trade.symbol,
+            action=SignalAction.exit,
+            price=trade.exit_price,
+            status=ExecutionStatus.closed,
+            source="deriv_close",
+            raw_payload=json.dumps({"trade_id": trade.id, "contract_id": trade.exchange_order_id, "profit": profit}),
+            execution_mode=trade.execution_mode,
+            created_at=trade.closed_at,
+        )
+    )
     # A per-trade TP/SL hit closes the contract on Deriv's side, so this is a
     # normal way for a bot trade to finish - count it like any other close.
     bot = get_signal_bot(db, trade.strategy_name)
@@ -400,6 +416,7 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
         signal_id=payload.signal_id,
         status=ExecutionStatus.rejected if rejection else ExecutionStatus.accepted,
         rejection_reason=rejection,
+        source="strategy_entry" if payload.action == SignalAction.entry else "strategy_exit",
         raw_payload=json.dumps(payload.model_dump(mode="json")),
         execution_mode=settings.execution_mode.lower(),
     )
@@ -479,7 +496,6 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
     elif payload.action == SignalAction.exit:
         trade = find_open_trade(db, strategy.id, payload.symbol.upper())
         if trade:
-            signal.source = "strategy_exit"
             try:
                 await close_trade(db, trade, payload.price, bot)
                 signal.status = ExecutionStatus.closed

@@ -73,12 +73,13 @@ class Signal(Base):
     signal_id: Mapped[str | None] = mapped_column(String(160), index=True, nullable=True)
     status: Mapped[ExecutionStatus] = mapped_column(SqlEnum(ExecutionStatus), default=ExecutionStatus.received)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # How this signal was triggered - only meaningfully set on exits, since a
-    # position can now close five different ways (the strategy's own exit
-    # webhook, a reversing entry, the standalone manual exit webhook, or a
-    # dashboard manual close with or without a chosen price) and the Signal
-    # Journal needs to tell them apart. One of: strategy_exit, reversal,
-    # webhook_exit, manual_close, price_exit.
+    # How this signal was triggered, shown as the Signal Journal's reason.
+    # Entries are always strategy_entry; a position can close several ways
+    # (the strategy's own exit webhook, a reversing entry, the standalone
+    # manual exit webhook, a dashboard manual close with or without a chosen
+    # price, the trailing stop, or Deriv closing the contract itself). One of:
+    # strategy_entry, strategy_exit, reversal, webhook_exit, manual_close,
+    # price_exit, trailing_stop, deriv_close.
     source: Mapped[str | None] = mapped_column(String(30), nullable=True)
     raw_payload: Mapped[str] = mapped_column(Text)
     # "demo" or "live" - whichever execution mode was active when this signal

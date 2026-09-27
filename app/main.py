@@ -27,6 +27,57 @@ logger = logging.getLogger("uvicorn.error")
 Base.metadata.create_all(bind=engine)
 sync_schema()
 
+
+def _backfill_deriv_close_signals(db: Session) -> None:
+    """Log the missing Signal Journal exit for trades Deriv closed on its own
+    (TP/SL/stop-out) before reconcile_open_trade started logging one.
+
+    Such a close takes Deriv's whole-second sell_time as closed_at, while every
+    platform-driven close uses utcnow() - so require both that and no exit
+    signal for the same strategy/symbol around the close, to avoid mislabeling
+    a platform close. Idempotent: the row it adds is itself a matching exit.
+    """
+    window = timedelta(seconds=60)
+    trades = db.scalars(
+        select(Trade).where(
+            Trade.status == PositionStatus.closed,
+            Trade.execution_status == ExecutionStatus.closed,
+            Trade.exchange_order_id.is_not(None),
+            Trade.closed_at.is_not(None),
+        )
+    )
+    for trade in trades:
+        if trade.closed_at.microsecond:
+            continue
+        has_exit = db.scalar(
+            select(Signal.id).where(
+                Signal.action == SignalAction.exit,
+                Signal.status == ExecutionStatus.closed,
+                Signal.strategy_name == trade.strategy_name,
+                Signal.symbol == trade.symbol,
+                Signal.execution_mode == trade.execution_mode,
+                Signal.created_at.between(trade.closed_at - window, trade.closed_at + window),
+            )
+        )
+        if has_exit:
+            continue
+        db.add(
+            Signal(
+                strategy_id=trade.strategy_id,
+                strategy_name=trade.strategy_name,
+                symbol=trade.symbol,
+                action=SignalAction.exit,
+                price=trade.exit_price,
+                status=ExecutionStatus.closed,
+                source="deriv_close",
+                raw_payload=json.dumps({"trade_id": trade.id, "contract_id": trade.exchange_order_id, "backfilled": True}),
+                execution_mode=trade.execution_mode,
+                created_at=trade.closed_at,
+            )
+        )
+        logger.info("Backfilled Signal Journal exit for trade %s closed on Deriv", trade.id)
+
+
 # Failed exchange requests must not remain as open platform positions after a restart.
 with SessionLocal() as startup_db:
     startup_db.execute(
@@ -34,6 +85,28 @@ with SessionLocal() as startup_db:
         .where(Trade.execution_status == ExecutionStatus.failed, Trade.status != PositionStatus.closed)
         .values(status=PositionStatus.closed, closed_at=datetime.utcnow())
     )
+    # Signals logged before every row carried a source would otherwise show
+    # no reason in the Signal Journal.
+    startup_db.execute(
+        update(Signal)
+        .where(Signal.source.is_(None), Signal.action == SignalAction.entry)
+        .values(source="strategy_entry")
+    )
+    startup_db.execute(
+        update(Signal)
+        .where(Signal.source.is_(None), Signal.action == SignalAction.exit)
+        .values(source="strategy_exit")
+    )
+    startup_db.execute(
+        update(Signal)
+        .where(
+            Signal.action == SignalAction.exit,
+            Signal.status == ExecutionStatus.accepted,
+            Signal.rejection_reason.is_(None),
+        )
+        .values(rejection_reason="No open position to close.")
+    )
+    _backfill_deriv_close_signals(startup_db)
     # Apply any dashboard-toggled execution mode saved from a previous run,
     # since settings.execution_mode otherwise only reflects .env on boot.
     get_risk_settings(startup_db)
@@ -91,11 +164,6 @@ def dashboard() -> HTMLResponse:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "execution_mode": settings.execution_mode}
-
-
-@app.get("/api/config")
-def config() -> dict[str, str]:
-    return {"webhook_secret": settings.webhook_secret}
 
 
 async def _process_in_background(payload: WebhookSignal) -> None:
