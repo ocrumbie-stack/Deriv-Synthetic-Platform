@@ -147,18 +147,19 @@ def period_start(period: str) -> datetime | None:
     raise HTTPException(status_code=400, detail="Unsupported period. Use today, week, month, or all.")
 
 
+def _asset_version() -> int:
+    return int(max(os.path.getmtime("app/static/app.js"), os.path.getmtime("app/static/styles.css")))
+
+
 @app.get("/")
 def dashboard() -> HTMLResponse:
-    # Force browsers to fetch the current app.js instead of a stale cached
-    # copy after a deploy, by stamping the script tag with app.js's own
-    # mtime instead of a hand-maintained version number that's easy to
-    # forget to bump.
-    html_path = "app/static/index.html"
-    app_js_path = "app/static/app.js"
-    with open(html_path, "r", encoding="utf-8") as f:
+    # Force browsers to fetch the current app.js/styles.css instead of a stale
+    # cached copy after a deploy, by stamping them with the files' own mtime
+    # instead of a hand-maintained version number that's easy to forget to bump.
+    with open("app/static/index.html", "r", encoding="utf-8") as f:
         html = f.read()
-    version = int(os.path.getmtime(app_js_path))
-    html = re.sub(r'(/static/app\.js)(\?v=\d+)?"', rf'\1?v={version}"', html)
+    version = _asset_version()
+    html = re.sub(r'(/static/(?:app\.js|styles\.css))(\?v=\d+)?"', rf'\1?v={version}"', html)
     return HTMLResponse(
         content=html,
         headers={
@@ -167,6 +168,13 @@ def dashboard() -> HTMLResponse:
             "Expires": "0",
         },
     )
+
+
+@app.get("/api/version")
+def asset_version() -> dict:
+    """The version the dashboard is stamped with - an open tab compares it to
+    its own so it can reload onto a new deploy instead of running old code."""
+    return {"version": _asset_version()}
 
 
 @app.get("/health")

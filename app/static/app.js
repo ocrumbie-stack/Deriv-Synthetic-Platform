@@ -2261,3 +2261,18 @@ getJson("/api/me").then(me => {
 
 refresh();
 setInterval(refresh, 10000);
+
+// A tab left open across a deploy would otherwise keep running the old code
+// (refresh() only re-fetches data). Reload onto the new version once nothing
+// is in progress - no dialog open, no field being edited.
+const LOADED_VERSION = new URL(document.currentScript?.src || location.href).searchParams.get("v");
+if (LOADED_VERSION) {
+  setInterval(async () => {
+    try {
+      const { version } = await getJson("/api/version");
+      const busy = document.querySelector(".modal-overlay:not([style*='display:none']):not([style*='display: none'])")
+        || document.activeElement?.matches("input, select, textarea");
+      if (String(version) !== LOADED_VERSION && !busy) location.reload();
+    } catch { /* offline or mid-deploy - try again next tick */ }
+  }, 60000);
+}
