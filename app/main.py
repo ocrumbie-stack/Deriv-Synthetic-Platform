@@ -189,7 +189,7 @@ async def _process_in_background(payload: WebhookSignal) -> None:
             await process_webhook_signal(db, payload)
         except Exception:
             db.rollback()
-            logger.exception("Failed to process webhook signal: %s", payload.model_dump(mode="json"))
+            logger.exception("Failed to process webhook signal: %s", payload.model_dump(mode="json", exclude={"secret"}))
         finally:
             db.close()
 
@@ -214,7 +214,7 @@ async def _process_exit_in_background(payload: ManualExitSignal) -> None:
             await process_manual_exit(db, payload)
         except Exception:
             db.rollback()
-            logger.exception("Failed to process manual exit webhook: %s", payload.model_dump(mode="json"))
+            logger.exception("Failed to process manual exit webhook: %s", payload.model_dump(mode="json", exclude={"secret"}))
         finally:
             db.close()
 

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import itertools
 import re
 import time
 from collections.abc import Callable
@@ -45,6 +46,114 @@ def _active_credentials() -> tuple[str, str, str]:
     if settings.execution_mode.lower() == "live":
         return app_id, settings.deriv_api_token.strip(), settings.deriv_account_id.strip()
     return app_id, settings.deriv_demo_api_token.strip(), settings.deriv_demo_account_id.strip()
+
+
+# Deriv rate-limits the OTP login that every WebSocket connection needs.
+# Opening a fresh connection per request (dashboard polls check every open
+# contract every 10s, per tab) exhausted that limit and made a live reversal
+# fail to close its old position with a 429. Everything now shares one
+# long-lived connection per account instead, tagging each request with a
+# req_id so concurrent callers each get their own response.
+REQUEST_TIMEOUT = 20.0
+KEEPALIVE_INTERVAL = 30.0
+# After a failed connect, fail fast instead of every waiting caller spending
+# another OTP login on it in turn.
+RECONNECT_COOLDOWN = 5.0
+# Safe to resend on a fresh connection if the old one dropped mid-request.
+# Never buy/sell/contract_update - a retry could execute twice.
+_IDEMPOTENT_METHODS = {"proposal_open_contract", "active_symbols", "contracts_for", "portfolio", "proposal", "ping"}
+
+
+class _ConnectionLost(Exception):
+    pass
+
+
+class _DerivConnection:
+    """One authenticated socket, its reader task, and in-flight requests."""
+
+    def __init__(self, socket) -> None:
+        self.socket = socket
+        self._pending: dict[int, asyncio.Future] = {}
+        self._req_ids = itertools.count(1)
+        self._reader = asyncio.create_task(self._read())
+        self._keepalive = asyncio.create_task(self._ping())
+
+    @property
+    def alive(self) -> bool:
+        return not self._reader.done()
+
+    async def request(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if not self.alive:
+            raise _ConnectionLost("Deriv connection closed")
+        req_id = next(self._req_ids)
+        future = asyncio.get_running_loop().create_future()
+        self._pending[req_id] = future
+        try:
+            await self.socket.send(json.dumps({**payload, "req_id": req_id}))
+            return await asyncio.wait_for(future, timeout=REQUEST_TIMEOUT)
+        except (websockets.ConnectionClosed, OSError) as exc:
+            raise _ConnectionLost(str(exc)) from exc
+        finally:
+            self._pending.pop(req_id, None)
+
+    async def _read(self) -> None:
+        error: Exception = _ConnectionLost("Deriv connection closed")
+        try:
+            async for raw in self.socket:
+                data = json.loads(raw)
+                future = self._pending.get(data.get("req_id"))
+                if future and not future.done():
+                    future.set_result(data)
+        except Exception as exc:
+            error = _ConnectionLost(str(exc))
+        finally:
+            for future in self._pending.values():
+                if not future.done():
+                    future.set_exception(error)
+            self._keepalive.cancel()
+
+    async def _ping(self) -> None:
+        # Deriv drops idle connections after a couple of minutes.
+        while True:
+            await asyncio.sleep(KEEPALIVE_INTERVAL)
+            try:
+                await self.request({"ping": 1})
+            except Exception:
+                return
+
+
+class _DerivSession:
+    """Hands out the shared connection for one account, reconnecting when it drops."""
+
+    _sessions: dict[tuple[str, str], "_DerivSession"] = {}
+
+    def __init__(self) -> None:
+        self._connection: _DerivConnection | None = None
+        self._lock = asyncio.Lock()
+        self._failed_at = 0.0
+        self._failure: Exception | None = None
+
+    @classmethod
+    def for_account(cls, account_id: str) -> "_DerivSession":
+        key = (settings.execution_mode.lower(), account_id)
+        if key not in cls._sessions:
+            cls._sessions[key] = cls()
+        return cls._sessions[key]
+
+    async def connection(self, client: "DerivClient") -> _DerivConnection:
+        async with self._lock:
+            if self._connection is None or not self._connection.alive:
+                if self._failure and time.monotonic() - self._failed_at < RECONNECT_COOLDOWN:
+                    raise self._failure
+                try:
+                    uri = await client._authenticated_uri()
+                    socket = await websockets.connect(uri, open_timeout=15, close_timeout=5)
+                except Exception as exc:
+                    self._failure, self._failed_at = exc, time.monotonic()
+                    raise
+                self._failure = None
+                self._connection = _DerivConnection(socket)
+            return self._connection
 
 
 class DerivClient:
@@ -99,12 +208,18 @@ class DerivClient:
         request[method] = request.pop(method, 1)
         return request
 
-    async def _rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _session(self) -> _DerivSession:
+        return _DerivSession.for_account(_active_credentials()[2])
+
+    async def _request(self, connection: _DerivConnection, method: str, params: dict[str, Any] | None) -> dict[str, Any]:
         try:
-            uri = await self._authenticated_uri()
-            async with websockets.connect(uri, open_timeout=15, close_timeout=5) as socket:
-                await socket.send(json.dumps(self._build_request(method, params)))
-                data = json.loads(await socket.recv())
+            return await connection.request(self._build_request(method, params))
+        except asyncio.TimeoutError as exc:
+            raise DerivExecutionError(f"Deriv {method} request timed out.") from exc
+
+    async def _connect(self) -> _DerivConnection:
+        try:
+            return await self._session().connection(self)
         except DerivExecutionError:
             raise
         except Exception as exc:
@@ -112,7 +227,18 @@ class DerivClient:
                 raise DerivExecutionError(
                     "Deriv rejected DERIV_APP_ID (HTTP 401). Use a valid Deriv app ID, such as 1089."
                 ) from exc
-            raise DerivExecutionError(f"Deriv {method} request failed: {exc}") from exc
+            raise DerivExecutionError(f"Could not connect to Deriv: {exc}") from exc
+
+    async def _rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        attempts = 2 if method in _IDEMPOTENT_METHODS else 1
+        for attempt in range(attempts):
+            connection = await self._connect()
+            try:
+                data = await self._request(connection, method, params)
+                break
+            except _ConnectionLost as exc:
+                if attempt + 1 == attempts:
+                    raise DerivExecutionError(f"Deriv {method} request failed: connection lost ({exc})") from exc
         if data.get("error"):
             raise DerivExecutionError(f"Deriv {method} error: {data['error']}")
         return data
@@ -126,30 +252,20 @@ class DerivClient:
         """Run two RPCs on the same authenticated connection.
 
         Deriv scopes things like proposal IDs to the connection that created
-        them, so proposal -> buy must share one WebSocket session instead of
-        each going through separate _rpc() calls (which would each open a
-        fresh connection and make the second request fail).
+        them, so proposal -> buy must share one WebSocket session.
         """
         second_method = first_method
+        connection = await self._connect()
         try:
-            uri = await self._authenticated_uri()
-            async with websockets.connect(uri, open_timeout=15, close_timeout=5) as socket:
-                await socket.send(json.dumps(self._build_request(first_method, first_params)))
-                first_data = json.loads(await socket.recv())
-                if first_data.get("error"):
-                    raise DerivExecutionError(f"Deriv {first_method} error: {first_data['error']}")
-
-                second_method, second_params = second_builder(first_data)
-                await socket.send(json.dumps(self._build_request(second_method, second_params)))
-                second_data = json.loads(await socket.recv())
-        except DerivExecutionError:
-            raise
-        except Exception as exc:
-            if "HTTP 401" in str(exc):
-                raise DerivExecutionError(
-                    "Deriv rejected DERIV_APP_ID (HTTP 401). Use a valid Deriv app ID, such as 1089."
-                ) from exc
-            raise DerivExecutionError(f"Deriv {first_method}/{second_method} request failed: {exc}") from exc
+            first_data = await self._request(connection, first_method, first_params)
+            if first_data.get("error"):
+                raise DerivExecutionError(f"Deriv {first_method} error: {first_data['error']}")
+            second_method, second_params = second_builder(first_data)
+            second_data = await self._request(connection, second_method, second_params)
+        except _ConnectionLost as exc:
+            raise DerivExecutionError(
+                f"Deriv {first_method}/{second_method} request failed: connection lost ({exc})"
+            ) from exc
         if second_data.get("error"):
             raise DerivExecutionError(f"Deriv {second_method} error: {second_data['error']}")
         return first_data, second_data
