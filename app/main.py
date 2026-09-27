@@ -16,7 +16,7 @@ from app.config import ENV_EXECUTION_MODE, deriv_credential_names, settings
 from app.database import Base, SessionLocal, engine, get_db, sync_schema
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
-from app.schemas import BotPairOut, BotPairUpdate, ManualExitSignal, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
+from app.schemas import BotPairOut, BotPairUpdate, ManualExitSignal, PositionTpSl, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
 from app.services import PAIR_DEFAULT_FIELDS, account_exposure, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal
 from app import auth, trade_audit
 from app.trade_audit import trade_audit_scheduler
@@ -612,6 +612,39 @@ def cancel_close_at_price(trade_id: int, db: Session = Depends(get_db)) -> Trade
     db.commit()
     db.refresh(trade)
     return trade
+
+
+def _limit_amount(poc: dict | None, side: str) -> float | None:
+    order = ((poc or {}).get("limit_order") or {}).get(side)
+    try:
+        # Deriv reports the stop loss as a negative amount.
+        return abs(float(order["order_amount"])) if isinstance(order, dict) else None
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+@app.get("/api/open-positions/{trade_id}/tpsl", response_model=PositionTpSl)
+async def get_position_tpsl(trade_id: int, db: Session = Depends(get_db)) -> PositionTpSl:
+    """The contract's live TP/SL on Deriv, in dollars."""
+    trade = _get_open_trade(db, trade_id)
+    if not trade.exchange_order_id:
+        return PositionTpSl()
+    poc = await DerivClient().get_contract_status(trade.exchange_order_id, use_cache=False)
+    return PositionTpSl(take_profit=_limit_amount(poc, "take_profit"), stop_loss=_limit_amount(poc, "stop_loss"))
+
+
+@app.put("/api/open-positions/{trade_id}/tpsl", response_model=PositionTpSl)
+async def set_position_tpsl(trade_id: int, data: PositionTpSl, db: Session = Depends(get_db)) -> PositionTpSl:
+    """Set a dollar TP/SL on one open contract, replacing whatever it opened
+    with. Deriv enforces it, so it holds even while this server is down."""
+    trade = _get_open_trade(db, trade_id)
+    if not trade.exchange_order_id:
+        raise HTTPException(status_code=409, detail="This position has no Deriv contract to update.")
+    try:
+        await DerivClient().update_contract_tpsl(trade.exchange_order_id, data.take_profit, data.stop_loss)
+    except DerivExecutionError as exc:
+        raise HTTPException(status_code=502, detail=f"Deriv rejected the TP/SL: {exc}") from exc
+    return data
 
 
 @app.get("/api/trade-audit")

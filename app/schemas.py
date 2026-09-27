@@ -47,6 +47,14 @@ class ManualExitSignal(BaseModel):
     price: float | None = None
 
 
+class PositionTpSl(BaseModel):
+    """Dollar TP/SL for one open contract - profit/loss amounts, the unit
+    Deriv's limit_order takes. None removes that side."""
+
+    take_profit: float | None = Field(default=None, gt=0)
+    stop_loss: float | None = Field(default=None, gt=0)
+
+
 class SignalBotCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     symbol: str | None = Field(default=None, max_length=200)

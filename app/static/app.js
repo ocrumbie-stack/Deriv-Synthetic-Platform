@@ -599,7 +599,9 @@ function renderPositions(rows) {
           <option value="" selected disabled>Exit ▾</option>
           <option value="instant">Close instantly</option>
           <option value="price">${t.close_at_price != null ? "Change close price…" : "Close at price…"}</option>
-          ${t.close_at_price != null ? `<option value="cancel-price">Cancel close at ${number.format(t.close_at_price)}</option>` : ""}          <option value="webhook">Get webhook payload</option>
+          ${t.close_at_price != null ? `<option value="cancel-price">Cancel close at ${number.format(t.close_at_price)}</option>` : ""}
+          <option value="tpsl">Set TP/SL ($)…</option>
+          <option value="webhook">Get webhook payload</option>
         </select>
       </td>
     </tr>`).join("");
@@ -632,7 +634,10 @@ function renderPositions(rows) {
         if (!Number.isFinite(price) || price <= 0) { alert("Enter a valid price."); return; }
         await setCloseAtPrice(tradeId, price);
       } else if (action === "cancel-price") {
-        await setCloseAtPrice(tradeId, null);      } else if (action === "webhook") {
+        await setCloseAtPrice(tradeId, null);
+      } else if (action === "tpsl") {
+        await editPositionTpSl(tradeId, label);
+      } else if (action === "webhook") {
         const url = window.location.origin + "/webhook/exit";
         const payload = JSON.stringify({ secret: _webhookSecret, strategy: sel.dataset.strategy, symbol: sel.dataset.symbol, price: "{{close}}" }, null, 2);
         showExitWebhookModal(label, url, payload);
@@ -685,6 +690,35 @@ async function setCloseAtPrice(tradeId, price) {
     await refresh();
   } catch (err) {
     alert(err.message || "Failed to update close price.");
+  }
+}
+
+// Dollar TP/SL on one open contract, set on Deriv itself. Blank removes that side.
+async function editPositionTpSl(tradeId, label) {
+  let current = {};
+  try { current = await getJson(`/api/open-positions/${tradeId}/tpsl`); } catch { /* prompts just start empty */ }
+  const ask = (side, value) => {
+    const raw = prompt(`${side} for ${label} in $ (profit/loss amount, blank for none):`, value != null ? String(value) : "");
+    if (raw === null) return undefined; // cancelled
+    if (raw.trim() === "") return null;
+    const amount = Number(raw);
+    if (!Number.isFinite(amount) || amount <= 0) { alert("Enter a positive dollar amount."); return undefined; }
+    return amount;
+  };
+  const take_profit = ask("Take profit", current.take_profit);
+  if (take_profit === undefined) return;
+  const stop_loss = ask("Stop loss", current.stop_loss);
+  if (stop_loss === undefined) return;
+  try {
+    const r = await fetch(`/api/open-positions/${tradeId}/tpsl`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ take_profit, stop_loss }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "Update failed");
+    await refresh();
+  } catch (err) {
+    alert(err.message || "Failed to update TP/SL.");
   }
 }
 
