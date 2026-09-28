@@ -619,6 +619,29 @@ async def close_position(trade_id: int, price: float | None = None, db: Session 
         return trade
 
 
+@app.post("/api/open-positions/close-all")
+async def close_all_positions(db: Session = Depends(get_db)) -> dict:
+    """Flatten every open position in the current mode. One failure doesn't
+    stop the rest - each is reported back so the user can retry just those."""
+    async with trade_execution_lock:
+        mode = settings.execution_mode.lower()
+        trades = list(db.scalars(
+            select(Trade).where(Trade.status == PositionStatus.open, Trade.execution_mode == mode)
+        ))
+        closed, failed = 0, []
+        for trade in trades:
+            try:
+                # Already sold on Deriv (stop-out, TP/SL) - just record it.
+                if await reconcile_open_trade(db, trade):
+                    db.commit()
+                else:
+                    await close_position_with_signal(db, trade, None, "manual_close", {"trade_id": trade.id, "close_all": True})
+                closed += 1
+            except DerivExecutionError as exc:
+                failed.append({"trade_id": trade.id, "symbol": trade.symbol, "error": str(exc)})
+        return {"closed": closed, "failed": failed}
+
+
 def _get_open_trade(db: Session, trade_id: int) -> Trade:
     trade = db.get(Trade, trade_id)
     if not trade or trade.execution_mode != settings.execution_mode.lower():

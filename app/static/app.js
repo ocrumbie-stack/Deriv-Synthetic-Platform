@@ -814,6 +814,41 @@ function closePositionNow(tradeId) {
   return sendPositionAction(`/api/open-positions/${tradeId}/close`, { method: "POST" }, "Couldn't close the position");
 }
 
+// Closes every open position in the current mode. The server keeps going
+// past a failure, so a partial result is reported rather than thrown.
+async function closeAllPositions() {
+  const r = await fetch("/api/open-positions/close-all", { method: "POST" });
+  if (!r.ok) {
+    const detail = (await r.json().catch(() => ({}))).detail;
+    throw new Error(typeof detail === "string" ? detail : `Couldn't close the positions (server error ${r.status}).`);
+  }
+  const result = await r.json();
+  refresh();
+  if (result.failed.length) {
+    openDialog({
+      title: "Some positions are still open",
+      message: `Closed ${result.closed}, but ${result.failed.length} couldn't be closed on Deriv and are still open.`,
+      details: result.failed.map(f => [f.symbol, f.error]),
+      confirmLabel: "OK",
+      cancelLabel: null,
+    });
+  }
+}
+
+document.querySelector("#closeAllPositions")?.addEventListener("click", () => {
+  const positions = latestState.positions || [];
+  if (!positions.length) return;
+  const mode = (positions[0].execution_mode || "").toUpperCase();
+  openDialog({
+    title: `Close all ${positions.length} open position${positions.length === 1 ? "" : "s"}`,
+    message: `Sells every ${mode} contract on Deriv now, at the current market price. This can't be undone.`,
+    details: positions.map(p => [p.strategy_name, `${p.symbol} ${p.direction}`]),
+    confirmLabel: "Close all",
+    tone: "danger",
+    onSubmit: closeAllPositions,
+  });
+});
+
 function parsePositive(raw, message) {
   const value = Number(raw);
   if (raw === "" || !Number.isFinite(value) || value <= 0) throw new Error(message);
@@ -1183,6 +1218,8 @@ function renderAll() {
   // Header badges
   const el = (id) => document.querySelector(id);
   if (el("#positionCount"))  el("#positionCount").textContent  = `${positions.length} open`;
+  // visibility, not display, so the header keeps its height and the page doesn't jump.
+  if (el("#closeAllPositions")) el("#closeAllPositions").style.visibility = positions.length ? "visible" : "hidden";
   if (el("#historyCount"))   el("#historyCount").textContent   = `${history.length} trades`;
 
   const fl = document.querySelector("#focusLabel");
