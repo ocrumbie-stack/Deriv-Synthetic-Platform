@@ -541,6 +541,9 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
                 take_profit, stop_loss = trade_tpsl_amounts(payload.size, pair.tp_pct, pair.sl_pct)
             result = await client.place_order(payload, hedge_mode=hedge, take_profit=take_profit, stop_loss=stop_loss)
             trade.exchange_order_id = str(result.get("order_id") or result.get("data", {}).get("orderId") or "")
+            # Record the multiplier the contract actually runs at, not the one
+            # requested - otherwise Open Positions shows e.g. 1x for a 50x trade.
+            trade.leverage = result.get("multiplier") or trade.leverage
             trade.execution_status = ExecutionStatus.executed
             signal.status = ExecutionStatus.executed
         except DerivExecutionError as exc:

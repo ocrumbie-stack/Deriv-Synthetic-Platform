@@ -94,6 +94,16 @@ class ReversalTests(unittest.TestCase):
         _, client = self._send(signal_id="fresh")
         client.close_order.assert_called_once_with("111")
 
+    def test_trade_records_multiplier_deriv_used(self):
+        client = AsyncMock()
+        client.place_order.return_value = {"order_id": "333", "multiplier": 50}
+        client.close_order.return_value = {"profit": 1.0}
+        client.get_contract_status.return_value = {"is_sold": 0}
+        payload = WebhookSignal(secret="s", strategy="v25", symbol="VOLATILITY_25_INDEX", action="entry", direction="long")
+        with patch.object(services, "DerivClient", return_value=client):
+            result = asyncio.run(services.process_webhook_signal(self.db, payload))
+        self.assertEqual(result.trade.leverage, 50)
+
     def test_exit_symbol_case_still_finds_open_position(self):
         client = AsyncMock()
         client.close_order.return_value = {"profit": 1.0}

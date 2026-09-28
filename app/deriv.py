@@ -559,7 +559,14 @@ class DerivClient:
         _, result = await self._rpc_chain("proposal", proposal, _build_buy)
         buy_data = result.get("buy", result)
         order_id = buy_data.get("contract_id") if isinstance(buy_data, dict) else None
-        return {"order_id": str(order_id or self._timestamp()), "mode": settings.execution_mode.lower(), "result": result}
+        return {
+            "order_id": str(order_id or self._timestamp()),
+            "mode": settings.execution_mode.lower(),
+            # Snapped to Deriv's allowed set, so it can differ from the
+            # requested leverage (e.g. "Auto" requests 1x).
+            "multiplier": multiplier,
+            "result": result,
+        }
 
     async def close_order(self, contract_id: str) -> dict[str, Any]:
         mode = settings.execution_mode.lower()
