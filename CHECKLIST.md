@@ -14,6 +14,7 @@ This file and that page list the same items - when adding a fix, update both.
 - **Multiplier safety cap is off while trading live.** `max_multiplier_floor` defaults to 10000 (raised for demo testing in e472ef5). Set `MAX_MULTIPLIER_FLOOR` on Railway (e.g. 20-50). See C7.
 - **Open issue:** `UNIQUE constraint failed: symbol_leverage.symbol` for frxXAUUSD (27 Sep 19:27 UTC). See F3.
 - **Open issue:** `database is locked` on the Open Positions refresh (self-heals). See I10.
+- **Live v25 entries rejected as "An open position already exists" (28 Sep).** A demo position left open was blocking live signals. After deploying the fix, switch to demo and close any leftover v25 position there. See H6.
 - **step200 alert has the wrong webhook secret** - its signals are rejected as "Invalid webhook secret". Update the alert message in TradingView.
 
 ## A. Signals from TradingView
@@ -32,6 +33,8 @@ This file and that page list the same items - when adding a fix, update both.
 | A10 | Standalone exit webhook works | POST to /webhook/exit for an open position, including while its bot is paused. | Position closes; journal reason is webhook_exit. | 2e3b7f6 (25 Sep) |
 | A11 | Webhook secret is not exposed | Open /api/config and the alert templates on the Signal Bots page. | No secret in /api/config. Templates show YOUR_SECRET. | b7c685c (26 Sep) |
 | A12 | Webhook secret kept out of the logs | Send an alert that fails (e.g. an unknown symbol) and read the Railway log line. | The logged payload has no secret field. | 7644347 (27 Sep) |
+| A13 | Reversals fit within max account exposure | Set max account exposure to one bot stake. With a position open, send an opposite entry. | Old position closes and the new one opens. No "Signal would exceed max account exposure." | (28 Sep) |
+| A14 | A blocked reversal still closes the old position | With a position open, pause its bot (or hit a daily loss limit), then send an opposite entry. Repeat with a wrong secret. | Entry is rejected with "…The opposite position was still closed." and a reversal row follows. With the wrong secret nothing closes. | (28 Sep) |
 
 ## B. Opening trades on Deriv
 
@@ -107,6 +110,7 @@ This file and that page list the same items - when adding a fix, update both.
 | H3 | DEMO/LIVE badge under the logo | Look at the sidebar. | Badge under the logo matches the current mode. | a951fa8 (24 Sep) |
 | H4 | Demo and live data kept apart | Switch modes and look at Trade History, Journal, Positions and Overview. | Each mode shows only its own rows and stats. | d7937b2 (25 Sep) |
 | H5 | Risk limits count only the current mode | Compare the daily loss/exposure figures in each mode. | Demo losses don't count toward live limits, and the reverse. | 8baf7c6 (24 Sep) |
+| H6 | A demo position never blocks or gets reversed by live signals | Leave a demo position open, switch to live, then send an entry for the same strategy and symbol, first in the same direction and then in the opposite direction. | Both live entries execute. No "An open position already exists" rejection. The demo position is untouched and still open when you switch back to demo. | (28 Sep) |
 
 ## I. Dashboard reliability
 

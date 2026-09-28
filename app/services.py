@@ -159,11 +159,16 @@ def update_bot_session(db: Session, bot: SignalBot, trade_net: float) -> None:
 
 
 def find_open_trade(db: Session, strategy_id: int, symbol: str) -> Trade | None:
+    """Scoped to the currently active execution mode - a demo position left
+    open must never block a live entry as a "duplicate", or be picked as the
+    position a live reversal/exit sells (its contract isn't on the live
+    account, so the sell fails and the real live position is left alone)."""
     return db.scalar(
         select(Trade).where(
             Trade.strategy_id == strategy_id,
             Trade.symbol == symbol,
             Trade.status == PositionStatus.open,
+            Trade.execution_mode == settings.execution_mode.lower(),
         )
     )
 
@@ -211,10 +216,13 @@ def validate_signal(db: Session, payload: WebhookSignal, strategy: Strategy, bot
             return "Account daily loss limit has been reached."
         if strategy.daily_loss_limit and daily_strategy_net(db, strategy.id) <= -abs(strategy.daily_loss_limit):
             return "Strategy daily loss limit has been reached."
-        projected_exposure = account_exposure(db) + payload.size
+        existing = find_open_trade(db, strategy.id, payload.symbol)
+        # A reversal closes the existing position before opening the new one,
+        # so that position's stake is freed up rather than added to.
+        released = existing.size if existing and existing.direction != payload.direction else 0.0
+        projected_exposure = account_exposure(db) - released + payload.size
         if risk.max_account_exposure and projected_exposure > risk.max_account_exposure:
             return "Signal would exceed max account exposure."
-        existing = find_open_trade(db, strategy.id, payload.symbol)
         # An entry in the same direction as an already-open position is a
         # duplicate/pyramiding attempt and stays rejected. An entry in the
         # opposite direction is a reversal - process_webhook_signal handles
@@ -401,7 +409,33 @@ async def close_position_with_signal(
     return signal
 
 
+async def close_reversed_position(
+    db: Session, strategy: Strategy, payload: WebhookSignal, trade: Trade, bot: SignalBot | None
+) -> None:
+    """Close the position an opposite-direction entry reverses. Raises
+    DerivExecutionError on failure; callers decide how to record that."""
+    await close_trade(db, trade, payload.price, bot)
+    # The Signal row for the entry itself is built by the caller - log the
+    # close too, so the Signal Journal shows why the old position ended.
+    db.add(
+        Signal(
+            strategy_id=strategy.id,
+            strategy_name=strategy.name,
+            symbol=payload.symbol.upper(),
+            action=SignalAction.exit,
+            price=payload.price,
+            status=ExecutionStatus.closed,
+            source="reversal",
+            raw_payload=json.dumps(payload.model_dump(mode="json")),
+            execution_mode=settings.execution_mode.lower(),
+        )
+    )
+
+
 async def process_webhook_signal(db: Session, payload: WebhookSignal) -> ProcessedSignal:
+    # Applies the dashboard's demo/live choice before the first
+    # find_open_trade below - after a restart it isn't loaded until then.
+    get_risk_settings(db)
     strategy = get_or_create_strategy(db, payload.strategy)
     bot = get_signal_bot(db, payload.strategy)
     if bot:
@@ -425,6 +459,18 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
             await reconcile_open_trade(db, existing)
 
     rejection = validate_signal(db, payload, strategy, bot)
+    # An opposite-direction entry means the strategy has left its current
+    # position, even when the new entry itself is blocked (paused bot, loss
+    # limit, exposure). Still close that position whenever a plain exit
+    # signal would have been accepted, so a blocked entry never strands it.
+    # Checked before this signal's own row is added, or its signal_id would
+    # count as a duplicate of itself.
+    stranded = None
+    if rejection and payload.action == SignalAction.entry and payload.direction is not None:
+        opposite = find_open_trade(db, strategy.id, payload.symbol.upper())
+        exit_payload = payload.model_copy(update={"action": SignalAction.exit})
+        if opposite and opposite.direction != payload.direction and validate_signal(db, exit_payload, strategy, bot) is None:
+            stranded = opposite
     signal = Signal(
         strategy_id=strategy.id,
         strategy_name=strategy.name,
@@ -445,9 +491,15 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
     db.flush()
 
     if rejection:
+        if stranded:
+            try:
+                await close_reversed_position(db, strategy, payload, stranded, bot)
+                signal.rejection_reason = f"{rejection} The opposite position was still closed."
+            except DerivExecutionError as exc:
+                signal.rejection_reason = f"{rejection} Closing the opposite position also failed: {exc}"
         db.commit()
         db.refresh(signal)
-        return ProcessedSignal(signal=signal, trade=None)
+        return ProcessedSignal(signal=signal, trade=stranded)
 
     trade = None
     if payload.action == SignalAction.entry:
@@ -458,29 +510,13 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
         opposite = find_open_trade(db, strategy.id, payload.symbol.upper())
         if opposite:
             try:
-                await close_trade(db, opposite, payload.price, bot)
+                await close_reversed_position(db, strategy, payload, opposite, bot)
             except DerivExecutionError as exc:
                 signal.status = ExecutionStatus.failed
                 signal.rejection_reason = f"Failed to close opposite position before reversing: {exc}"
                 db.commit()
                 db.refresh(signal)
                 return ProcessedSignal(signal=signal, trade=opposite)
-            # The reversal closed a position, but the Signal row being built in
-            # this call is for the new entry - log the close itself too, so the
-            # Signal Journal shows why the old position ended.
-            db.add(
-                Signal(
-                    strategy_id=strategy.id,
-                    strategy_name=strategy.name,
-                    symbol=payload.symbol.upper(),
-                    action=SignalAction.exit,
-                    price=payload.price,
-                    status=ExecutionStatus.closed,
-                    source="reversal",
-                    raw_payload=json.dumps(payload.model_dump(mode="json")),
-                    execution_mode=settings.execution_mode.lower(),
-                )
-            )
 
         trade = Trade(
             strategy_id=strategy.id,
