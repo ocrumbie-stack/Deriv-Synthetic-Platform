@@ -94,6 +94,15 @@ class ReversalTests(unittest.TestCase):
         _, client = self._send(signal_id="fresh")
         client.close_order.assert_called_once_with("111")
 
+    def test_exit_symbol_case_still_finds_open_position(self):
+        client = AsyncMock()
+        client.close_order.return_value = {"profit": 1.0}
+        payload = WebhookSignal(secret="s", strategy="v25", symbol=" Volatility_25_Index ", action="exit")
+        with patch.object(services, "DerivClient", return_value=client):
+            result = asyncio.run(services.process_webhook_signal(self.db, payload))
+        self.assertEqual(result.signal.status.value, "closed", result.signal.rejection_reason)
+        client.close_order.assert_called_once_with("111")
+
 
 if __name__ == "__main__":
     unittest.main()

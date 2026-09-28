@@ -1,9 +1,16 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models import Direction, ExecutionStatus, PositionStatus, SignalAction
+
+
+def normalize_symbol(value: str) -> str:
+    """Trades are stored with an upper-cased symbol, so every lookup has to
+    use the same form - otherwise an exit sent as e.g. "Volatility_25_Index"
+    never finds the open position its entry created."""
+    return value.strip().upper()
 
 
 class WebhookSignal(BaseModel):
@@ -20,6 +27,8 @@ class WebhookSignal(BaseModel):
     stop_loss: float | None = None
     take_profit: float | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    _normalize_symbol = field_validator("symbol")(normalize_symbol)
 
     @model_validator(mode="before")
     @classmethod
@@ -45,6 +54,8 @@ class ManualExitSignal(BaseModel):
     strategy: str = Field(..., min_length=1, max_length=120)
     symbol: str = Field(..., min_length=1, max_length=40)
     price: float | None = None
+
+    _normalize_symbol = field_validator("symbol")(normalize_symbol)
 
 
 class PositionTpSl(BaseModel):
