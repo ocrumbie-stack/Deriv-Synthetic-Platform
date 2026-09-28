@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, time, timedelta
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
@@ -175,6 +175,16 @@ def asset_version() -> dict:
     """The version the dashboard is stamped with - an open tab compares it to
     its own so it can reload onto a new deploy instead of running old code."""
     return {"version": _asset_version()}
+
+
+@app.get("/api/webhook-secret")
+def webhook_secret() -> JSONResponse:
+    """Lets the Copy buttons fill in the real secret so a copied alert works
+    as pasted. Only served behind Google sign-in (require_login guards /api/);
+    without it anyone could read the secret and place trades, so the dashboard
+    falls back to the YOUR_SECRET placeholder."""
+    secret = settings.webhook_secret if auth.auth_enabled() else None
+    return JSONResponse({"secret": secret}, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/health")

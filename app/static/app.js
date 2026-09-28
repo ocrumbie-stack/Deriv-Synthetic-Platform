@@ -11,9 +11,11 @@ let historySymbolFilter = "all";
 // the script has executed past wherever these would otherwise be declared,
 // which throws a "Cannot access before initialization" TDZ error for a
 // `let` declared later in the file.
-// Never served by the API (anyone could read it and place trades), so copied
-// alert templates carry this placeholder for the user to fill in.
+// Templates on screen always show this placeholder so the secret is never
+// displayed. Copy buttons swap in the real one (withRealSecret) when the
+// server hands it over - only behind Google sign-in.
 let _webhookSecret = "YOUR_SECRET";
+let _realWebhookSecret = null;
 let _botFormWired = false;
 // Latest /api/signal-bots rows by id, so a bot's pair table can tell which
 // pair settings differ from the bot's defaults.
@@ -128,6 +130,18 @@ window.fetch = async (...args) => {
   if (r.status === 401) window.location.href = "/login";
   return r;
 };
+
+// Fetched up front rather than on click: a clipboard write after an await can
+// lose the click's user activation and be refused by the browser.
+function loadWebhookSecret() {
+  getJson("/api/webhook-secret").then(d => { _realWebhookSecret = d.secret || null; }).catch(() => {});
+}
+
+function withRealSecret(text) {
+  if (!_realWebhookSecret) return text;
+  // A function replacement, so a "$" in the secret isn't read as a pattern.
+  return text.replace(`"${_webhookSecret}"`, () => JSON.stringify(_realWebhookSecret));
+}
 
 async function getJson(url, timeoutMs = 12000) {
   // A single slow/hanging endpoint must never block the whole dashboard's
@@ -759,7 +773,7 @@ function showExitWebhookModal(label, url, payload) {
     copy(document.querySelector("#exitWebhookModalUrl").textContent, this);
   });
   document.querySelector("#exitWebhookModalCopyPayload").addEventListener("click", function () {
-    copy(document.querySelector("#exitWebhookModalPayload").textContent, this);
+    copy(withRealSecret(document.querySelector("#exitWebhookModalPayload").textContent), this);
   });
   document.querySelector("#exitWebhookModalDismiss").addEventListener("click", hide);
   document.querySelector("#exitWebhookModalX").addEventListener("click", hide);
@@ -1812,7 +1826,7 @@ document.querySelector("#accountExposureLimit")?.addEventListener("change", asyn
   const payloadEl  = document.querySelector("#payloadDisplay");
   const payloadBtn = document.querySelector("#copyPayload");
   if (payloadBtn && payloadEl) payloadBtn.addEventListener("click", () => {
-    navigator.clipboard.writeText(payloadEl.textContent).then(() => {
+    navigator.clipboard.writeText(withRealSecret(payloadEl.textContent)).then(() => {
       payloadBtn.textContent = "Copied!";
       setTimeout(() => { payloadBtn.textContent = "Copy"; }, 2000);
     });
@@ -1832,7 +1846,7 @@ document.querySelector("#accountExposureLimit")?.addEventListener("change", asyn
   const exitPayloadEl  = document.querySelector("#exitPayloadDisplay");
   const exitPayloadBtn = document.querySelector("#copyExitPayload");
   if (exitPayloadBtn && exitPayloadEl) exitPayloadBtn.addEventListener("click", () => {
-    navigator.clipboard.writeText(exitPayloadEl.textContent).then(() => {
+    navigator.clipboard.writeText(withRealSecret(exitPayloadEl.textContent)).then(() => {
       exitPayloadBtn.textContent = "Copied!";
       setTimeout(() => { exitPayloadBtn.textContent = "Copy"; }, 2000);
     });
@@ -2159,7 +2173,7 @@ async function refreshBots() {
 
   el.querySelectorAll("[data-copy-tpl]").forEach(btn => {
     btn.addEventListener("click", () => {
-      navigator.clipboard.writeText(botTemplate(btn.dataset.copyTpl)).then(() => {
+      navigator.clipboard.writeText(withRealSecret(botTemplate(btn.dataset.copyTpl))).then(() => {
         btn.textContent = "Copied!";
         setTimeout(() => { btn.textContent = "Copy"; }, 2000);
       });
@@ -2335,6 +2349,7 @@ getJson("/api/me").then(me => {
   document.querySelector("#signedIn").style.display = "";
 }).catch(() => {});
 
+loadWebhookSecret();
 refresh();
 setInterval(refresh, 10000);
 
