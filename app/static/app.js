@@ -584,6 +584,9 @@ function renderSymbolLeverage(rows) {
 function renderPositions(rows) {
   const el = document.querySelector("#positions");
   if (!el) return;
+  const totalBadge = document.querySelector("#positionsPnl");
+  const totalValue = document.querySelector("#positionsPnlValue");
+  if (totalBadge) totalBadge.hidden = !rows.length;
   if (!rows.length) { el.innerHTML = emptyRow(11, "No open positions."); return; }
   el.innerHTML = rows.map(t => `
     <tr>
@@ -607,14 +610,21 @@ function renderPositions(rows) {
     </tr>`).join("");
   // Fetch live unrealized P&L from Deriv
   getJson("/api/unrealized-pnl").then(upl => {
+    let total = 0, priced = 0;
     el.querySelectorAll("[data-upl]").forEach(cell => {
       const key = cell.dataset.upl;
       const val = upl[key] ?? upl[key.split("_")[0]];
       if (val !== undefined) {
         cell.textContent = (val >= 0 ? "+" : "") + currency.format(val);
         cell.className   = pnlClass(val);
+        total += val;
+        priced++;
       }
     });
+    if (totalValue && priced) {
+      totalValue.textContent = (total >= 0 ? "+" : "") + currency.format(total);
+      totalValue.className   = pnlClass(total);
+    }
   }).catch(() => {});
   const byId = new Map(rows.map(t => [String(t.id), t]));
   el.querySelectorAll(".exit-select").forEach(sel => {
@@ -1952,7 +1962,8 @@ async function refreshBots() {
     const pairBadges = openPairs.map(p => {
       const pUpl = uplData[`${p.symbol}_${p.direction}`] ?? uplData[p.symbol] ?? null;
       const uplStr = pUpl !== null ? ` ${pUpl >= 0 ? "+" : ""}${currency.format(pUpl)}` : "";
-      return `<span class="badge ${p.direction === "long" ? "ok" : "warn"}" style="font-size:9px;margin-right:3px">${p.symbol}${uplStr}</span>`;
+      const uplCls = pUpl > 0 ? "ok" : pUpl < 0 ? "warn" : "";
+      return `<span class="badge ${uplCls}" style="font-size:9px;margin-right:3px">${p.symbol}${uplStr}</span>`;
     }).join("");
 
     return `
