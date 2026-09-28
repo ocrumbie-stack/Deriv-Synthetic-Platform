@@ -35,6 +35,7 @@ This file and that page list the same items - when adding a fix, update both.
 | A12 | Webhook secret kept out of the logs | Send an alert that fails (e.g. an unknown symbol) and read the Railway log line. | The logged payload has no secret field. | 7644347 (27 Sep) |
 | A13 | Reversals fit within max account exposure | Set max account exposure to one bot stake. With a position open, send an opposite entry. | Old position closes and the new one opens. No "Signal would exceed max account exposure." | 4582910 (28 Sep) |
 | A14 | A blocked reversal still closes the old position | With a position open, pause its bot (or hit a daily loss limit), then send an opposite entry. Repeat with a wrong secret. | Entry is rejected with "…The opposite position was still closed." and a reversal row follows. With the wrong secret nothing closes. | 4582910 (28 Sep) |
+| A15 | Symbol case and spaces never break an exit | With a position open, send an exit (and separately a /webhook/exit) with the same symbol in mixed case or with a trailing space, e.g. "Volatility_25_Index ". | Position closes. No "No open position exists for this strategy and symbol." | e2199ce (28 Sep) |
 
 ## B. Opening trades on Deriv
 
