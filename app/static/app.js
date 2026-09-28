@@ -23,6 +23,9 @@ let latestState    = {
   signals: [], history: [], analytics: { equity_curve: [], status_counts: {}, symbol_exposure: [] },
   symbolLeverage: [],
 };
+// Last summed unrealized P&L, shown while the next Deriv fetch is in flight
+// so the Open Positions Running P/L card doesn't flash "—" on every refresh.
+let lastRunningPnl = null;
 
 const equityState2 = { points: [], pad: null, width: 0, height: 0 };
 
@@ -581,12 +584,54 @@ function renderSymbolLeverage(rows) {
 
 // ─── Render: Positions / History ─────────────────────────────────────────────
 
+function renderPositionsSummary(rows) {
+  const box = document.querySelector("#positionsSummary");
+  if (!box) return;
+  const { risk, balance } = latestState;
+
+  const isDemo = balance?.mode === "demo";
+  const equity = balance?.equity ?? null;
+  const avail  = balance?.available ?? null;
+
+  const longs  = rows.filter(t => t.direction === "long").length;
+  const shorts = rows.length - longs;
+
+  const maxExp    = risk?.max_account_exposure || 0;
+  const curExp    = risk?.current_account_exposure || 0;
+  const expPct    = maxExp ? Math.round(curExp / maxExp * 100) : null;
+  const expCls    = expPct === null ? "neutral" : expPct > 80 ? "negative" : "positive";
+
+  if (!rows.length) lastRunningPnl = null;
+
+  box.innerHTML = `
+    <div class="metric highlight">
+      <span class="metric-label">Account Balance</span>
+      <span class="metric-value neutral">${equity !== null ? currency.format(equity) : "—"}</span>
+      <span class="metric-sub">${avail !== null ? currency.format(avail) + " available" : "failed to fetch"}${isDemo ? " · demo" : ""}</span>
+    </div>
+    <div class="metric highlight">
+      <span class="metric-label">Open Positions</span>
+      <span class="metric-value ${rows.length ? "positive" : "neutral"}">${rows.length}</span>
+      <span class="metric-sub">${rows.length ? `${longs} long · ${shorts} short` : "no trades running"}</span>
+    </div>
+    <div class="metric highlight">
+      <span class="metric-label">Account Exposure</span>
+      <span class="metric-value ${expCls}">${expPct !== null ? expPct + "%" : currency.format(curExp)}</span>
+      <span class="metric-sub">${maxExp ? `${currency.format(curExp)} of ${currency.format(maxExp)} limit` : "no limit set"}</span>
+    </div>
+    <div class="metric highlight">
+      <span class="metric-label">Running P/L</span>
+      <span class="metric-value ${lastRunningPnl === null ? "neutral" : pnlClass(lastRunningPnl)}" id="runningPnl">${lastRunningPnl === null ? (rows.length ? "—" : currency.format(0)) : signedCurrency(lastRunningPnl)}</span>
+      <span class="metric-sub">unrealized, all open positions</span>
+    </div>`;
+}
+
+function signedCurrency(v) { return (v >= 0 ? "+" : "") + currency.format(v); }
+
 function renderPositions(rows) {
   const el = document.querySelector("#positions");
   if (!el) return;
-  const totalBadge = document.querySelector("#positionsPnl");
-  const totalValue = document.querySelector("#positionsPnlValue");
-  if (totalBadge) totalBadge.hidden = !rows.length;
+  renderPositionsSummary(rows);
   if (!rows.length) { el.innerHTML = emptyRow(11, "No open positions."); return; }
   el.innerHTML = rows.map(t => `
     <tr>
@@ -621,9 +666,11 @@ function renderPositions(rows) {
         priced++;
       }
     });
-    if (totalValue && priced) {
-      totalValue.textContent = (total >= 0 ? "+" : "") + currency.format(total);
-      totalValue.className   = pnlClass(total);
+    const runningEl = document.querySelector("#runningPnl");
+    if (runningEl && priced) {
+      lastRunningPnl = total;
+      runningEl.textContent = signedCurrency(total);
+      runningEl.className   = `metric-value ${pnlClass(total)}`;
     }
   }).catch(() => {});
   const byId = new Map(rows.map(t => [String(t.id), t]));

@@ -312,6 +312,10 @@ body {
   grid-template-columns: repeat(2, 1fr);
 }
 
+.positions-summary { grid-template-columns: repeat(4, 1fr); }
+.positions-summary .metric.highlight { padding: 20px 22px; }
+.positions-summary .metric.highlight .metric-value { font-size: 28px; }
+
 .metrics {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -1228,7 +1232,7 @@ tr.clickable:hover td, tr.selected td { background: var(--panel-2, #16161e); }
 /* ── Responsive ─────────────────────────────────────────────── */
 
 @media (max-width: 1200px) {
-  .metrics { grid-template-columns: repeat(2, 1fr); }
+  .metrics, .positions-summary { grid-template-columns: repeat(2, 1fr); }
 }
 
 @media (max-width: 900px) {
