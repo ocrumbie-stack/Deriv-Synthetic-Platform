@@ -33,8 +33,8 @@ This file and that page list the same items - when adding a fix, update both.
 | A10 | Standalone exit webhook works | POST to /webhook/exit for an open position, including while its bot is paused. | Position closes; journal reason is webhook_exit. | 2e3b7f6 (25 Sep) |
 | A11 | Webhook secret is not exposed | Open /api/config and the alert templates on the Signal Bots page. | No secret in /api/config. Templates show YOUR_SECRET. | b7c685c (26 Sep) |
 | A12 | Webhook secret kept out of the logs | Send an alert that fails (e.g. an unknown symbol) and read the Railway log line. | The logged payload has no secret field. | 7644347 (27 Sep) |
-| A13 | Reversals fit within max account exposure | Set max account exposure to one bot stake. With a position open, send an opposite entry. | Old position closes and the new one opens. No "Signal would exceed max account exposure." | (28 Sep) |
-| A14 | A blocked reversal still closes the old position | With a position open, pause its bot (or hit a daily loss limit), then send an opposite entry. Repeat with a wrong secret. | Entry is rejected with "…The opposite position was still closed." and a reversal row follows. With the wrong secret nothing closes. | (28 Sep) |
+| A13 | Reversals fit within max account exposure | Set max account exposure to one bot stake. With a position open, send an opposite entry. | Old position closes and the new one opens. No "Signal would exceed max account exposure." | 4582910 (28 Sep) |
+| A14 | A blocked reversal still closes the old position | With a position open, pause its bot (or hit a daily loss limit), then send an opposite entry. Repeat with a wrong secret. | Entry is rejected with "…The opposite position was still closed." and a reversal row follows. With the wrong secret nothing closes. | 4582910 (28 Sep) |
 
 ## B. Opening trades on Deriv
 
@@ -110,7 +110,7 @@ This file and that page list the same items - when adding a fix, update both.
 | H3 | DEMO/LIVE badge under the logo | Look at the sidebar. | Badge under the logo matches the current mode. | a951fa8 (24 Sep) |
 | H4 | Demo and live data kept apart | Switch modes and look at Trade History, Journal, Positions and Overview. | Each mode shows only its own rows and stats. | d7937b2 (25 Sep) |
 | H5 | Risk limits count only the current mode | Compare the daily loss/exposure figures in each mode. | Demo losses don't count toward live limits, and the reverse. | 8baf7c6 (24 Sep) |
-| H6 | A demo position never blocks or gets reversed by live signals | Leave a demo position open, switch to live, then send an entry for the same strategy and symbol, first in the same direction and then in the opposite direction. | Both live entries execute. No "An open position already exists" rejection. The demo position is untouched and still open when you switch back to demo. | (28 Sep) |
+| H6 | A demo position never blocks or gets reversed by live signals | Leave a demo position open, switch to live, then send an entry for the same strategy and symbol, first in the same direction and then in the opposite direction. | Both live entries execute. No "An open position already exists" rejection. The demo position is untouched and still open when you switch back to demo. | 4582910 (28 Sep) |
 
 ## I. Dashboard reliability
 
@@ -126,6 +126,8 @@ This file and that page list the same items - when adding a fix, update both.
 | I8 | Account balance is correct | Compare the dashboard balance with Deriv for the current mode. | Matches. | 1acfe68 (12 Sep) |
 | I9 | Works on a phone | Open the dashboard on a phone. | No sideways scrolling; headers and controls wrap. | 1e0ce52 (16 Sep) |
 | I10 | Open Positions refresh doesn't lock the database | Search Railway logs for "database is locked" coming from /api/open-positions. | None. On 27 Sep it failed twice while recording a Deriv-side close (self-heals on the next refresh) — still to fix. | open issue |
+| I11 | Signal bot position badges colour by P&L | Open Signal Bots with a winning and a losing position (try a losing long and a winning short). | Badge is green when the position is up, yellow when down, plain when flat or not yet priced — regardless of direction. | 5b52adc (28 Sep) |
+| I12 | Total P/L on Open Positions | Open Open Positions with two or more trades. | Header shows Total P/L equal to the sum of the Unrealized P/L column, green if up, yellow if down; hidden with no open positions. | 5b52adc (28 Sep) |
 
 ## J. Trade History and charts
 
