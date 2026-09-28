@@ -127,7 +127,7 @@ This file and that page list the same items - when adding a fix, update both.
 | I9 | Works on a phone | Open the dashboard on a phone. | No sideways scrolling; headers and controls wrap. | 1e0ce52 (16 Sep) |
 | I10 | Open Positions refresh doesn't lock the database | Search Railway logs for "database is locked" coming from /api/open-positions. | None. On 27 Sep it failed twice while recording a Deriv-side close (self-heals on the next refresh) — still to fix. | open issue |
 | I11 | Signal bot position badges colour by P&L | Open Signal Bots with a winning and a losing position (try a losing long and a winning short). | Badge is green when the position is up, yellow when down, plain when flat or not yet priced — regardless of direction. | 5b52adc (28 Sep) |
-| I12 | Total P/L on Open Positions | Open Open Positions with two or more trades. | Header shows Total P/L equal to the sum of the Unrealized P/L column, green if up, yellow if down; hidden with no open positions. | 5b52adc (28 Sep) |
+| I12 | Summary cards on Open Positions | Open Open Positions with two or more trades, then with none. | Four cards above the table: Account Balance (with available), Open Positions (long/short split), Account Exposure (% of limit, yellow above 80%), Running P/L (sum of the Unrealized P/L column, green if up, yellow if down). Running P/L doesn't flash — between refreshes; with no positions it shows $0.00. | fd49df2 (28 Sep) |
 
 ## J. Trade History and charts
 
