@@ -50,6 +50,7 @@ This file and that page list the same items - when adding a fix, update both.
 | B6 | Bot TP/SL is set on each trade | Open a bot trade with TP/SL % set, then check the contract on Deriv. | Contract has a take profit / stop loss matching the % of stake. | e4e8d84 (26 Sep) |
 | B7 | TP/SL that rounds to $0 doesn't fail the order | Use a tiny stake with a small TP/SL %. | Order opens; the $0 side is just left off. | 27d2b4c (27 Sep) |
 | B8 | Deriv calls share one login (no rate limit) | Keep the dashboard open in two tabs with several positions open, and let a reversal fire. | No "OTP request failed (429)" / RateLimit in Railway logs or the journal. Reversals close the old position every time. | 7644347 (27 Sep) |
+| B9 | Leverage column shows the real multiplier | Open a trade from a bot with leverage "Auto" and no Leverage-page setting for the symbol. Compare Open Positions with the contract on Deriv. | Leverage matches Deriv's multiplier (e.g. 50x on Volatility 25), not 1x. | 237b0a6 (28 Sep) |
 
 ## C. Closing trades and P&L accuracy
 
@@ -72,6 +73,7 @@ This file and that page list the same items - when adding a fix, update both.
 | D2 | Close at price waits for the market | Exit → Close at price, with a level away from the current price. | Position stays open showing the armed price; closes when spot crosses it (price_exit). Change and cancel both work. | f5da257 (27 Sep) |
 | D3 | Set TP/SL in dollars | Exit → Set TP/SL ($). Enter values, then clear one. | Shows current values from Deriv; new values appear on the Deriv contract; a blank side is removed. | c1f53f9 (27 Sep) |
 | D4 | Exit webhook payload | Exit → Get exit webhook. | Modal with URL and payload, each with its own Copy button. No "Copy & close". | 8234b05 (25 Sep) |
+| D5 | Close all | Open Positions with two or more trades → Close all → confirm. Then look with no positions open. | Dialog lists every position and names the mode. All close at market (journal: manual_close); only the current mode's positions are touched. If one fails, the rest still close and a dialog names the ones still open. Button hidden when nothing is open, with no jump in the header. | be059a8 (28 Sep) |
 | D5 | In-app dialogs replace browser pop-ups | Trigger a close, delete a bot, switch to live. | Styled dialog with position details; errors show inline. No browser confirm/alert boxes. | fe93881 (27 Sep) |
 | D6 | Trailing stop | Run a bot with trail start/distance set and let a trade go into profit then pull back. | Closes once profit drops the trail distance below its peak; journal reason trailing_stop. Peak survives a redeploy. | 161cb0c (26 Sep) |
 
