@@ -73,7 +73,7 @@ This file and that page list the same items - when adding a fix, update both.
 | D2 | Close at price waits for the market | Exit → Close at price, with a level away from the current price. | Position stays open showing the armed price; closes when spot crosses it (price_exit). Change and cancel both work. | f5da257 (27 Sep) |
 | D3 | Set TP/SL in dollars | Exit → Set TP/SL ($). Enter values, then clear one. | Shows current values from Deriv; new values appear on the Deriv contract; a blank side is removed. | c1f53f9 (27 Sep) |
 | D4 | Exit webhook payload | Exit → Get exit webhook. | Modal with URL and payload, each with its own Copy button. No "Copy & close". | 8234b05 (25 Sep) |
-| D5 | Close all | Open Positions with two or more trades → Close all → confirm. Then look with no positions open. | Dialog lists every position and names the mode. All close at market (journal: manual_close); only the current mode's positions are touched. If one fails, the rest still close and a dialog names the ones still open. Button hidden when nothing is open, with no jump in the header. | be059a8 (28 Sep) |
+| D7 | Close all | Open Positions with two or more trades → Close all → confirm. Then look with no positions open. | Dialog lists every position and names the mode. All close at market (journal: manual_close); only the current mode's positions are touched. If one fails, the rest still close and a dialog names the ones still open. Button hidden when nothing is open, with no jump in the header. | be059a8 (28 Sep) |
 | D5 | In-app dialogs replace browser pop-ups | Trigger a close, delete a bot, switch to live. | Styled dialog with position details; errors show inline. No browser confirm/alert boxes. | fe93881 (27 Sep) |
 | D6 | Trailing stop | Run a bot with trail start/distance set and let a trade go into profit then pull back. | Closes once profit drops the trail distance below its peak; journal reason trailing_stop. Peak survives a redeploy. | 161cb0c (26 Sep) |
 
@@ -88,6 +88,7 @@ This file and that page list the same items - when adding a fix, update both.
 | E5 | Save errors show on the input | Enter an invalid bot/pair value and save. | Error shown next to the field, not silently ignored. | 27d2b4c (27 Sep) |
 | E6 | Blank bot leverage means Auto | Leave bot leverage blank; set the symbol on the Leverage page. | Trade uses the Leverage page's value. | 89c7705 (15 Sep) |
 | E7 | Hedge checkbox layout | Open the bot form. | Hedge checkbox lines up with its label. | 41f52f8 (9 Sep) |
+| E8 | TP / SL column names manual exits | Set a bot's trail distance; on one of its open trades use Exit → Close at price, and on another Exit → Set TP/SL ($). Then cancel the close price and clear the TP/SL. | Bot's TP / SL column lists Trailing, Close at price, Manual TP/SL (words only, under any % values). Each disappears once removed; a bot with none still shows — / —. | 53ea4d2 (28 Sep) |
 
 ## F. Leverage page
 
