@@ -716,6 +716,8 @@ async def set_position_tpsl(trade_id: int, data: PositionTpSl, db: Session = Dep
         await DerivClient().update_contract_tpsl(trade.exchange_order_id, data.take_profit, data.stop_loss)
     except DerivExecutionError as exc:
         raise HTTPException(status_code=502, detail=f"Deriv rejected the TP/SL: {exc}") from exc
+    trade.manual_tpsl = (data.take_profit is not None or data.stop_loss is not None) or None
+    db.commit()
     return data
 
 

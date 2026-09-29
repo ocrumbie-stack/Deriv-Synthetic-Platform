@@ -121,6 +121,10 @@ class Trade(Base):
     # trigger is "spot >= target" or "spot <= target" accordingly.
     close_at_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     close_at_above: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # True once a dollar TP/SL was set on this contract from the dashboard.
+    # The amounts themselves live on Deriv; this only lets the Bots page
+    # show that a manual TP/SL is in place.
+    manual_tpsl: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     strategy: Mapped[Strategy] = relationship(back_populates="trades")
 

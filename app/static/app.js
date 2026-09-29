@@ -2054,9 +2054,19 @@ async function refreshBots() {
     const total  = b.session_pnl + upl;
     const pnlCls = total > 0 ? "positive" : total < 0 ? "negative" : "neutral";
     const pnlPct = b.size > 0 ? ((total / b.size) * 100).toFixed(1) : "0.0";
-    const tpsl   = `${b.default_pair_tp_pct ? "+" + b.default_pair_tp_pct + "%" : "—"} / ${b.default_pair_sl_pct ? "-" + b.default_pair_sl_pct + "%" : "—"}`;
-
     const openPairs = (latestState.positions || []).filter(p => p.strategy_name === b.name);
+
+    // Name any manual exits in place alongside the bot's % TP/SL (no values).
+    const exitLabels = [
+      b.trail_distance_pct > 0 && "Trailing",
+      openPairs.some(p => p.close_at_price != null) && "Close at price",
+      openPairs.some(p => p.manual_tpsl) && "Manual TP/SL",
+    ].filter(Boolean);
+    const pctTpsl = b.default_pair_tp_pct || b.default_pair_sl_pct
+      ? `${b.default_pair_tp_pct ? "+" + b.default_pair_tp_pct + "%" : "—"} / ${b.default_pair_sl_pct ? "-" + b.default_pair_sl_pct + "%" : "—"}`
+      : "";
+    const labelHtml = exitLabels.map(l => `<div style="white-space:nowrap">${l}</div>`).join("");
+    const tpsl = pctTpsl || exitLabels.length ? `${pctTpsl}${labelHtml}` : "— / —";
     const pairBadges = openPairs.map(p => {
       const pUpl = uplData[`${p.symbol}_${p.direction}`] ?? uplData[p.symbol] ?? null;
       const uplStr = pUpl !== null ? ` ${pUpl >= 0 ? "+" : ""}${currency.format(pUpl)}` : "";
