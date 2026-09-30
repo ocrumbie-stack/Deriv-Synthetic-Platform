@@ -198,5 +198,6 @@ class TradeOut(BaseModel):
     closed_at: datetime | None
     close_at_price: float | None = None
     manual_tpsl: bool | None = None
+    close_reason: str | None = None
 
     model_config = {"from_attributes": True}

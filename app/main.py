@@ -79,6 +79,35 @@ def _backfill_deriv_close_signals(db: Session) -> None:
         logger.info("Backfilled Signal Journal exit for trade %s closed on Deriv", trade.id)
 
 
+def _backfill_trade_close_reasons(db: Session) -> None:
+    """Give trades closed before Trade.close_reason existed the reason of
+    their Signal Journal exit row - the closed exit for the same strategy,
+    symbol and mode nearest to closed_at. Trades with no such row stay blank.
+    """
+    window = timedelta(seconds=60)
+    trades = db.scalars(
+        select(Trade).where(
+            Trade.close_reason.is_(None),
+            Trade.execution_status == ExecutionStatus.closed,
+            Trade.closed_at.is_not(None),
+        )
+    ).all()
+    for trade in trades:
+        exits = db.execute(
+            select(Signal.source, Signal.created_at).where(
+                Signal.action == SignalAction.exit,
+                Signal.status == ExecutionStatus.closed,
+                Signal.source.is_not(None),
+                Signal.strategy_name == trade.strategy_name,
+                Signal.symbol == trade.symbol,
+                Signal.execution_mode == trade.execution_mode,
+                Signal.created_at.between(trade.closed_at - window, trade.closed_at + window),
+            )
+        ).all()
+        if exits:
+            trade.close_reason = min(exits, key=lambda e: abs(e.created_at - trade.closed_at)).source
+
+
 # Failed exchange requests must not remain as open platform positions after a restart.
 with SessionLocal() as startup_db:
     startup_db.execute(
@@ -108,6 +137,8 @@ with SessionLocal() as startup_db:
         .values(rejection_reason="No open position to close.")
     )
     _backfill_deriv_close_signals(startup_db)
+    startup_db.flush()
+    _backfill_trade_close_reasons(startup_db)
     # Apply any dashboard-toggled execution mode saved from a previous run,
     # since settings.execution_mode otherwise only reflects .env on boot.
     get_risk_settings(startup_db)

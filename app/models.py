@@ -125,6 +125,10 @@ class Trade(Base):
     # The amounts themselves live on Deriv; this only lets the Bots page
     # show that a manual TP/SL is in place.
     manual_tpsl: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # How the position closed, using the same values as Signal.source for
+    # exits (strategy_exit, reversal, webhook_exit, manual_close, price_exit,
+    # trailing_stop, deriv_close). Shown as Trade History's reason.
+    close_reason: Mapped[str | None] = mapped_column(String(30), nullable=True)
 
     strategy: Mapped[Strategy] = relationship(back_populates="trades")
 

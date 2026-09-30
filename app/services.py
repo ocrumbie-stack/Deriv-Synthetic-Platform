@@ -312,6 +312,7 @@ async def reconcile_open_trade(db: Session, trade: Trade) -> bool:
     trade.status = PositionStatus.closed
     trade.execution_status = ExecutionStatus.closed
     trade.closed_at = datetime.utcfromtimestamp(float(sell_time)) if sell_time else datetime.utcnow()
+    trade.close_reason = "deriv_close"
     # No webhook or dashboard action triggered this close, so log it here or
     # the Signal Journal would have no exit row explaining how it ended.
     db.add(
@@ -349,9 +350,12 @@ async def reconcile_open_trade(db: Session, trade: Trade) -> bool:
 trade_execution_lock = asyncio.Lock()
 
 
-async def close_trade(db: Session, trade: Trade, exit_price_hint: float | None, bot: SignalBot | None) -> dict:
+async def close_trade(
+    db: Session, trade: Trade, exit_price_hint: float | None, bot: SignalBot | None, reason: str
+) -> dict:
     """Close an open trade on Deriv and update its record - shared by an
     explicit exit signal and an entry that reverses an opposite position.
+    `reason` is recorded as the trade's close_reason (a Signal.source value).
 
     Raises DerivExecutionError on failure; callers decide how to record that.
     """
@@ -371,6 +375,7 @@ async def close_trade(db: Session, trade: Trade, exit_price_hint: float | None, 
     trade.status = PositionStatus.closed
     trade.execution_status = ExecutionStatus.closed
     trade.closed_at = datetime.utcnow()
+    trade.close_reason = reason
     if bot:
         pair = get_or_create_bot_pair(db, bot, trade.symbol)
         update_pair_session(db, pair, bot, trade.net_result)
@@ -398,7 +403,7 @@ async def close_position_with_signal(
     )
     db.add(signal)
     try:
-        await close_trade(db, trade, price, bot)
+        await close_trade(db, trade, price, bot, source)
         signal.status = ExecutionStatus.closed
     except DerivExecutionError as exc:
         signal.status = ExecutionStatus.failed
@@ -414,7 +419,7 @@ async def close_reversed_position(
 ) -> None:
     """Close the position an opposite-direction entry reverses. Raises
     DerivExecutionError on failure; callers decide how to record that."""
-    await close_trade(db, trade, payload.price, bot)
+    await close_trade(db, trade, payload.price, bot, "reversal")
     # The Signal row for the entry itself is built by the caller - log the
     # close too, so the Signal Journal shows why the old position ended.
     db.add(
@@ -557,7 +562,7 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
         trade = find_open_trade(db, strategy.id, payload.symbol.upper())
         if trade:
             try:
-                await close_trade(db, trade, payload.price, bot)
+                await close_trade(db, trade, payload.price, bot, "strategy_exit")
                 signal.status = ExecutionStatus.closed
             except DerivExecutionError as exc:
                 signal.status = ExecutionStatus.failed
@@ -626,7 +631,7 @@ async def process_manual_exit(db: Session, payload: ManualExitSignal) -> Process
 
     bot = get_signal_bot(db, payload.strategy)
     try:
-        await close_trade(db, trade, payload.price, bot)
+        await close_trade(db, trade, payload.price, bot, "webhook_exit")
         signal.status = ExecutionStatus.closed
     except DerivExecutionError as exc:
         signal.status = ExecutionStatus.failed

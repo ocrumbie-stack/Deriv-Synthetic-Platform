@@ -479,6 +479,12 @@ const EXIT_SOURCE_LABELS = {
   deriv_close:   "Closed on Deriv (TP/SL/stop-out)",
 };
 
+function tradeReason(t) {
+  if (t.execution_status === "failed") return "Order failed";
+  if (t.status === "open") return "Open";
+  return EXIT_SOURCE_LABELS[t.close_reason] || "—";
+}
+
 function signalReason(s) {
   return s.rejection_reason || EXIT_SOURCE_LABELS[s.source] || "—";
 }
@@ -1179,7 +1185,7 @@ function renderHistory(rows) {
       </div>`;
   }
 
-  if (!filtered.length) { el.innerHTML = emptyRow(12, "No trades recorded."); return; }
+  if (!filtered.length) { el.innerHTML = emptyRow(13, "No trades recorded."); return; }
   el.innerHTML = filtered.map(t => `
     <tr>
       <td>${t.strategy_name}</td><td>${t.symbol}</td><td>${t.direction}</td>
@@ -1188,6 +1194,7 @@ function renderHistory(rows) {
       <td>${number.format(t.size)}</td>
       <td class="${pnlClass(t.profit_loss)}">${currency.format(t.profit_loss)}</td>
       <td class="${pnlClass(t.net_result)}">${currency.format(t.net_result)}</td>
+      <td>${tradeReason(t)}</td>
       <td>${modeBadge(t.execution_mode)}</td>
       <td>${fmtDate(t.opened_at)}</td>
       <td>${fmtDate(t.closed_at)}</td>
