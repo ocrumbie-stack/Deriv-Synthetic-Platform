@@ -287,7 +287,7 @@ function renderSummary() {
         <span class="metric-label">Daily P&amp;L</span>
         <span class="metric-value ${pnlClass(dailyPnl)}">${currency.format(dailyPnl)}</span>
         <span class="metric-sub">closed · ${lossUsedPct !== null ? lossUsedPct + "% of limit" : "no limit set"}</span>
-        <span class="metric-sub">Running <b class="${runningPnl !== null ? pnlClass(runningPnl) : ""}" style="font-family:monospace">${runningPnl !== null ? currency.format(runningPnl) : "—"}</b>${upl !== null ? ` · open ${(upl >= 0 ? "+" : "") + currency.format(upl)}` : ""}</span>
+        <span class="metric-sub">Running <b style="font-family:monospace;color:var(--blue)">${runningPnl !== null ? currency.format(runningPnl) : "—"}</b>${upl !== null ? ` · open <b class="${pnlClass(upl)}" style="font-family:monospace">${(upl >= 0 ? "+" : "") + currency.format(upl)}</b>` : ""}</span>
       </div>
     </div>
     <div class="metrics">
