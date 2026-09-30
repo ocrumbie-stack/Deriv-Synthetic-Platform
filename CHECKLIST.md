@@ -89,6 +89,7 @@ This file and that page list the same items - when adding a fix, update both.
 | E6 | Blank bot leverage means Auto | Leave bot leverage blank; set the symbol on the Leverage page. | Trade uses the Leverage page's value. | 89c7705 (15 Sep) |
 | E7 | Hedge checkbox layout | Open the bot form. | Hedge checkbox lines up with its label. | 41f52f8 (9 Sep) |
 | E8 | TP / SL column names manual exits | Set a bot's trail distance; on one of its open trades use Exit → Close at price, and on another Exit → Set TP/SL ($). Then cancel the close price and clear the TP/SL. | Bot's TP / SL column lists Trailing, Close at price, Manual TP/SL (words only, under any % values). Each disappears once removed; a bot with none still shows — / —. | 53ea4d2 (28 Sep) |
+| E9 | Bots sorted by Session P&L | Open Signal Bots with three or more bots, including one with an open position. | Rows run highest Session P&L (closed + unrealized) to lowest. Order only changes when you reopen the page or edit a bot, not on each refresh. | 6d7f429 (30 Sep) |
 
 ## F. Leverage page
 
