@@ -257,6 +257,8 @@ function renderSummary() {
   const equity = balance?.equity ?? null;
   const avail  = balance?.available ?? null;
   const upl    = balance?.unrealized_pnl ?? null;
+  // Running = today's closed P&L + live unrealized on open positions.
+  const runningPnl = upl !== null ? dailyPnl + upl : null;
   const balVal     = equity !== null ? currency.format(equity) : "—";
   const balSub     = avail !== null
     ? `${currency.format(avail)} avail · UPL ${upl !== null ? (upl >= 0 ? "+" : "") + currency.format(upl) : "—"}${isDemo ? " (demo)" : ""}`
@@ -284,7 +286,8 @@ function renderSummary() {
       <div class="metric highlight">
         <span class="metric-label">Daily P&amp;L</span>
         <span class="metric-value ${pnlClass(dailyPnl)}">${currency.format(dailyPnl)}</span>
-        <span class="metric-sub">${lossUsedPct !== null ? lossUsedPct + "% of limit" : "no limit set"}</span>
+        <span class="metric-sub">closed · ${lossUsedPct !== null ? lossUsedPct + "% of limit" : "no limit set"}</span>
+        <span class="metric-sub">Running <b class="${runningPnl !== null ? pnlClass(runningPnl) : ""}" style="font-family:monospace">${runningPnl !== null ? currency.format(runningPnl) : "—"}</b>${upl !== null ? ` · open ${(upl >= 0 ? "+" : "") + currency.format(upl)}` : ""}</span>
       </div>
     </div>
     <div class="metrics">
