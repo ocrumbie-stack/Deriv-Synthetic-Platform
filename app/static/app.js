@@ -2043,18 +2043,22 @@ async function refreshBots() {
   const thStyle = "padding:10px 16px;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:left;border-bottom:1px solid var(--border);white-space:nowrap;background:var(--panel)";
   const tdStyle = "padding:12px 16px;border-bottom:1px solid var(--border)";
 
-  el.innerHTML = bots.map(b => {
-    // Aggregate unrealized P&L — per symbol for single-pair, across all positions for multi-pair
-    const upl = (() => {
-      if (b.symbol) {
-        const syms = b.symbol.split(",").map(s => s.trim().toUpperCase());
-        return syms.reduce((sum, sym) => sum + (uplData[`${sym}_long`] ?? uplData[`${sym}_short`] ?? uplData[sym] ?? 0), 0);
-      }
-      return (latestState.positions || [])
-        .filter(p => p.strategy_name === b.name)
-        .reduce((sum, p) => sum + (uplData[`${p.symbol}_${p.direction}`] ?? uplData[p.symbol] ?? 0), 0);
-    })();
-    const total  = b.session_pnl + upl;
+  // Aggregate unrealized P&L — per symbol for single-pair, across all positions for multi-pair
+  const botUpl = b => {
+    if (b.symbol) {
+      const syms = b.symbol.split(",").map(s => s.trim().toUpperCase());
+      return syms.reduce((sum, sym) => sum + (uplData[`${sym}_long`] ?? uplData[`${sym}_short`] ?? uplData[sym] ?? 0), 0);
+    }
+    return (latestState.positions || [])
+      .filter(p => p.strategy_name === b.name)
+      .reduce((sum, p) => sum + (uplData[`${p.symbol}_${p.direction}`] ?? uplData[p.symbol] ?? 0), 0);
+  };
+  // Highest Session P&L (closed + unrealized) first.
+  const rows = bots
+    .map(b => { const upl = botUpl(b); return { b, upl, total: b.session_pnl + upl }; })
+    .sort((x, y) => y.total - x.total);
+
+  el.innerHTML = rows.map(({ b, upl, total }) => {
     const pnlCls = total > 0 ? "positive" : total < 0 ? "negative" : "neutral";
     const pnlPct = b.size > 0 ? ((total / b.size) * 100).toFixed(1) : "0.0";
     const openPairs = (latestState.positions || []).filter(p => p.strategy_name === b.name);
