@@ -44,6 +44,18 @@ class RiskSettings(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class AppSettings(Base):
+    """Platform-wide settings edited on the dashboard's Settings page (a
+    single row, id 1). A NULL column means "use the .env value"."""
+
+    __tablename__ = "app_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    max_multiplier_floor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Strategy(Base):
     __tablename__ = "strategies"
 

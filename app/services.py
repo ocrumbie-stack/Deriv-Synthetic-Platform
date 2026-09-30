@@ -2,14 +2,15 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, time
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
-from app.config import ENV_EXECUTION_MODE, settings
+from app.config import ENV_EXECUTION_MODE, ENV_MAX_MULTIPLIER_FLOOR, ENV_TIMEZONE, settings
 from app.deriv import DerivClient, DerivExecutionError
-from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
+from app.models import AppSettings, BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
 from app.schemas import ManualExitSignal, WebhookSignal
 
 logger = logging.getLogger("uvicorn.error")
@@ -58,8 +59,46 @@ def get_risk_settings(db: Session) -> RiskSettings:
     return risk
 
 
+def get_app_settings(db: Session) -> AppSettings:
+    """Load the Settings page's row and apply it to `settings`, the same way
+    get_risk_settings applies the execution-mode toggle."""
+    app_settings = db.get(AppSettings, 1)
+    if not app_settings:
+        app_settings = AppSettings(id=1)
+        db.add(app_settings)
+        db.flush()
+    settings.max_multiplier_floor = app_settings.max_multiplier_floor or ENV_MAX_MULTIPLIER_FLOOR
+    settings.timezone = app_settings.timezone or ENV_TIMEZONE
+    return app_settings
+
+
+def local_period_start(period: str) -> datetime | None:
+    """Start of today / this week (Monday) / this month in the configured
+    time zone, as the naive UTC datetime every timestamp column is stored in.
+    None for "all"; ValueError for anything else."""
+    if period == "all":
+        return None
+    try:
+        tz = ZoneInfo(settings.timezone)
+    except Exception:
+        tz = ZoneInfo("UTC")
+    today = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    if period == "today":
+        start = today
+    elif period == "week":
+        start = today - timedelta(days=today.weekday())
+    elif period == "month":
+        start = today.replace(day=1)
+    else:
+        raise ValueError(period)
+    # Re-attach the zone after the wall-clock arithmetic so a DST change
+    # between then and now uses the offset in effect at that midnight.
+    start = start.replace(tzinfo=tz)
+    return start.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def daily_strategy_net(db: Session, strategy_id: int) -> float:
-    start = datetime.combine(datetime.utcnow().date(), time.min)
+    start = local_period_start("today")
     total = db.scalar(
         select(func.coalesce(func.sum(Trade.net_result), 0.0)).where(
             Trade.strategy_id == strategy_id,
@@ -73,7 +112,7 @@ def daily_strategy_net(db: Session, strategy_id: int) -> float:
 def daily_account_net(db: Session) -> float:
     """Scoped to the currently active execution mode - a bad demo test run
     must never trip the live daily loss limit, or vice versa."""
-    start = datetime.combine(datetime.utcnow().date(), time.min)
+    start = local_period_start("today")
     total = db.scalar(
         select(func.coalesce(func.sum(Trade.net_result), 0.0)).where(
             Trade.closed_at >= start,

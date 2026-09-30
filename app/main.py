@@ -4,7 +4,7 @@ import math
 import os
 import re
 from contextlib import asynccontextmanager
-from datetime import datetime, time, timedelta
+from datetime import datetime, timedelta
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -12,12 +12,14 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from app.config import ENV_EXECUTION_MODE, deriv_credential_names, settings
+from zoneinfo import ZoneInfo
+
+from app.config import ENV_EXECUTION_MODE, ENV_MAX_MULTIPLIER_FLOOR, ENV_TIMEZONE, deriv_credential_names, settings
 from app.database import Base, SessionLocal, engine, get_db, sync_schema
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
 from app.schemas import BotPairOut, BotPairUpdate, ManualExitSignal, PositionTpSl, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
-from app.services import PAIR_DEFAULT_FIELDS, account_exposure, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal, trade_execution_lock
+from app.services import PAIR_DEFAULT_FIELDS, account_exposure, get_app_settings, local_period_start, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal, trade_execution_lock
 from app import auth, trade_audit
 from app.trade_audit import trade_audit_scheduler
 from app.trailing import trailing_monitor
@@ -142,6 +144,8 @@ with SessionLocal() as startup_db:
     # Apply any dashboard-toggled execution mode saved from a previous run,
     # since settings.execution_mode otherwise only reflects .env on boot.
     get_risk_settings(startup_db)
+    # Likewise the Settings page's multiplier cap and time zone.
+    get_app_settings(startup_db)
     startup_db.commit()
 
 @asynccontextmanager
@@ -165,17 +169,10 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
 def period_start(period: str) -> datetime | None:
-    now = datetime.utcnow()
-    today = datetime.combine(now.date(), time.min)
-    if period == "today":
-        return today
-    if period == "week":
-        return today - timedelta(days=today.weekday())
-    if period == "month":
-        return today.replace(day=1)
-    if period == "all":
-        return None
-    raise HTTPException(status_code=400, detail="Unsupported period. Use today, week, month, or all.")
+    try:
+        return local_period_start(period)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Unsupported period. Use today, week, month, or all.")
 
 
 def _asset_version() -> int:
@@ -585,6 +582,65 @@ def update_risk_settings(updates: dict, db: Session = Depends(get_db)) -> dict:
         risk.execution_mode_override = mode
     db.commit()
     return risk_settings(db)
+
+
+MULTIPLIER_CAP_RANGE = (1, 10000)
+
+
+@app.get("/api/app-settings")
+def app_settings(db: Session = Depends(get_db)) -> dict:
+    """The Settings page. Connection details are reported as set/missing
+    only - tokens and secrets never leave the server."""
+    row = get_app_settings(db)
+    db.commit()
+    deriv = []
+    for mode, account_id in (("demo", settings.deriv_demo_account_id), ("live", settings.deriv_account_id)):
+        missing = [name for name, value in deriv_credential_names(mode).items() if not value.strip()]
+        deriv.append({"mode": mode, "account_id": account_id or None, "missing": missing})
+    return {
+        "max_multiplier_floor": settings.max_multiplier_floor,
+        "max_multiplier_floor_saved": row.max_multiplier_floor,
+        "env_max_multiplier_floor": ENV_MAX_MULTIPLIER_FLOOR,
+        "timezone": settings.timezone,
+        "timezone_saved": row.timezone,
+        "env_timezone": ENV_TIMEZONE,
+        "execution_mode": settings.execution_mode,
+        "deriv": deriv,
+        "webhook_secret_set": settings.webhook_secret.strip() not in ("", "change-me"),
+        "sign_in_enabled": auth.auth_enabled(),
+        "allowed_email_count": len(auth.allowed_emails()),
+    }
+
+
+@app.patch("/api/app-settings")
+def update_app_settings(updates: dict, db: Session = Depends(get_db)) -> dict:
+    """Blank (null) for either field goes back to the .env value."""
+    row = get_app_settings(db)
+    if "max_multiplier_floor" in updates:
+        value = updates["max_multiplier_floor"]
+        if value in (None, ""):
+            row.max_multiplier_floor = None
+        else:
+            try:
+                cap = int(value)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="Multiplier cap must be a whole number.")
+            low, high = MULTIPLIER_CAP_RANGE
+            if not low <= cap <= high:
+                raise HTTPException(status_code=400, detail=f"Multiplier cap must be between {low} and {high}.")
+            row.max_multiplier_floor = cap
+    if "timezone" in updates:
+        value = (updates["timezone"] or "").strip()
+        if value:
+            try:
+                ZoneInfo(value)
+            except Exception:
+                raise HTTPException(status_code=400, detail=f"Unknown time zone: {value}.")
+        row.timezone = value or None
+    db.flush()
+    get_app_settings(db)
+    db.commit()
+    return app_settings(db)
 
 
 @app.get("/api/signals", response_model=list[SignalOut])

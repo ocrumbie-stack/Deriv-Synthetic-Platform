@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     # the user's request to allow every symbol through on the demo account -
     # lower this again before trading real money on symbols above ~20x-50x.
     max_multiplier_floor: int = 10000
+    # IANA time zone (e.g. America/Jamaica) that decides when "today", "this
+    # week" and "this month" start - the daily loss limit resets at midnight
+    # here. The Settings page can override it (see get_app_settings).
+    timezone: str = "UTC"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
@@ -55,6 +59,9 @@ settings = Settings()
 # get_risk_settings) so trading code doesn't need a db session to check it.
 # Keep the original .env value around so the toggle can fall back to it.
 ENV_EXECUTION_MODE = settings.execution_mode
+# Same for the Settings page's overrides - blank there falls back to these.
+ENV_MAX_MULTIPLIER_FLOOR = settings.max_multiplier_floor
+ENV_TIMEZONE = settings.timezone
 
 
 def deriv_credential_names(mode: str) -> dict[str, str]:

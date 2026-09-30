@@ -557,6 +557,20 @@ canvas { display: block; width: 100%; }
 .page-tab:hover { color: var(--text); }
 .page-tab.active { border-bottom-color: var(--yellow); color: var(--text); }
 
+/* ── Settings page ──────────────────────────────────────────── */
+
+#page-system-settings .risk-panel { align-content: start; }
+#useDeviceZone { justify-self: start; margin-left: 0; }
+.settings-hint { font-size: 12px; margin: 0; }
+.settings-status { color: var(--muted); font-size: 12px; margin: 0; }
+.settings-status strong { color: var(--text); font-family: monospace; }
+.settings-status .warn-text { color: var(--yellow); }
+.settings-error { color: var(--red); font-size: 12px; margin: 0; }
+.settings-error:empty, .settings-status:empty { display: none; }
+.settings-rows { display: grid; gap: 10px; }
+.settings-row { align-items: center; display: flex; gap: 12px; justify-content: space-between; font-size: 13px; }
+.settings-row .sub { color: var(--muted); display: block; font-size: 11px; margin-top: 2px; }
+
 /* ── Risk panels ────────────────────────────────────────────── */
 
 .risk-grid {

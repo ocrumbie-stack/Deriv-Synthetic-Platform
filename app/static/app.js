@@ -28,6 +28,9 @@ let latestState    = {
 // Last summed unrealized P&L, shown while the next Deriv fetch is in flight
 // so the Open Positions Running P/L card doesn't flash "—" on every refresh.
 let lastRunningPnl = null;
+// Last /api/app-settings response, so the Settings page can redraw its
+// balance-check row on each refresh without refetching.
+let lastAppSettings = null;
 
 const equityState2 = { points: [], pad: null, width: 0, height: 0 };
 
@@ -179,6 +182,7 @@ const pageIds = new Set([
   "strategies-settings",
   "strategies-leverage",
   "system-risk",
+  "system-settings",
 ]);
 
 // Pages shown as tabs of another page, mapped to the sidebar item that stays
@@ -208,6 +212,7 @@ function navigate(pageId, updateUrl = true) {
     refreshBots();
     wireBotForm();
   }
+  if (pageId === "system-settings") loadAppSettings();
   if (updateUrl && window.location.hash !== `#${pageId}`) {
     history.pushState(null, "", `#${pageId}`);
   }
@@ -1257,6 +1262,7 @@ function renderAll() {
   renderPerformance(focused);
   renderStrategyRisk(performance);
   renderSymbolLeverage(symbolLeverage);
+  if (lastAppSettings && document.querySelector("#page-system-settings.active")) renderAppSettings(lastAppSettings);
   renderPositions(positions);
   renderSignals(signals);
   renderHistory(history);
@@ -1865,6 +1871,91 @@ document.querySelector("#accountLossLimit")?.addEventListener("change", async e 
 document.querySelector("#accountExposureLimit")?.addEventListener("change", async e => {
   await patchJson("/api/risk", { max_account_exposure: Number(e.target.value || 0) });
   await refresh();
+});
+
+// ─── Settings page (whole platform) ─────────────────────────────────────────
+
+async function loadAppSettings() {
+  try {
+    renderAppSettings(await getJson("/api/app-settings"));
+  } catch (err) {
+    document.querySelector("#capError").textContent = `Couldn't load settings: ${err.message}`;
+  }
+}
+
+function renderAppSettings(s) {
+  lastAppSettings = s;
+  // Cap: the input holds only a value saved here; blank shows the Railway one.
+  const capInput = document.querySelector("#multiplierCap");
+  if (document.activeElement !== capInput) capInput.value = s.max_multiplier_floor_saved ?? "";
+  capInput.placeholder = `${s.env_max_multiplier_floor} (Railway)`;
+  const capSrc = s.max_multiplier_floor_saved != null ? "saved here" : "from Railway";
+  const noCap = s.max_multiplier_floor >= 10000;
+  document.querySelector("#capStatus").innerHTML =
+    `In use: <strong>${s.max_multiplier_floor}x</strong> (${capSrc})` +
+    (noCap ? ` · <span class="warn-text">effectively no cap — every symbol is allowed</span>` : "");
+  document.querySelector("#capPanel").classList.toggle("critical", noCap);
+
+  // Time zone: "" = the Railway value.
+  const sel = document.querySelector("#timezoneSelect");
+  let zones = [];
+  try { zones = Intl.supportedValuesOf("timeZone"); } catch { zones = []; }
+  for (const z of [s.env_timezone, s.timezone_saved, "UTC"]) if (z && !zones.includes(z)) zones.unshift(z);
+  if (sel.options.length !== zones.length + 1) {
+    sel.innerHTML = `<option value="">Railway value (${escapeAttr(s.env_timezone)})</option>` +
+      zones.map(z => `<option value="${escapeAttr(z)}">${escapeAttr(z.replace(/_/g, " "))}</option>`).join("");
+  }
+  sel.value = s.timezone_saved ?? "";
+  document.querySelector("#tzStatus").innerHTML =
+    `In use: <strong>${escapeAttr(s.timezone)}</strong> (${s.timezone_saved ? "saved here" : "from Railway"})`;
+  const device = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const useDevice = document.querySelector("#useDeviceZone");
+  useDevice.hidden = !device || device === s.timezone;
+  useDevice.textContent = `Use this device's zone (${device})`;
+  useDevice.dataset.zone = device || "";
+
+  // Connections - set/missing only.
+  const row = (label, sub, badge, cls) =>
+    `<div class="settings-row"><div>${label}${sub ? `<span class="sub">${sub}</span>` : ""}</div><span class="badge ${cls}">${badge}</span></div>`;
+  const deriv = s.deriv.map(d => {
+    const active = d.mode === s.execution_mode;
+    const sub = [d.account_id ? escapeAttr(d.account_id) : "no account id", active ? "in use now" : ""].filter(Boolean).join(" · ");
+    return d.missing.length
+      ? row(`Deriv ${d.mode}`, `Missing ${d.missing.map(escapeAttr).join(", ")}`, "Missing", "bad")
+      : row(`Deriv ${d.mode}`, sub, "Ready", "ok");
+  }).join("");
+  // From the dashboard's own balance fetch; redrawn on each refresh (renderAll).
+  const bal = latestState.balance || {};
+  const balanceRow = !("equity" in bal)
+    ? row("Balance check", `${escapeAttr(s.execution_mode)} account`, "Checking…", "")
+    : bal.equity == null
+      ? row("Balance check", `${escapeAttr(s.execution_mode)} account: ${escapeAttr(bal.error || "no answer")}`, "Failing", "bad")
+      : row("Balance check", `${escapeAttr(s.execution_mode)} account answering`, "OK", "ok");
+  document.querySelector("#connectionRows").innerHTML = deriv + balanceRow +
+    row("Webhook secret", s.webhook_secret_set ? "set in Railway" : "still the default — alerts can be forged", s.webhook_secret_set ? "Set" : "Default", s.webhook_secret_set ? "ok" : "bad") +
+    row("Dashboard sign-in", s.sign_in_enabled ? `Google · ${s.allowed_email_count} allowed email${s.allowed_email_count === 1 ? "" : "s"}` : "anyone with the URL can open the dashboard", s.sign_in_enabled ? "On" : "Off", s.sign_in_enabled ? "ok" : "warn");
+}
+
+async function saveAppSetting(body, errorSel) {
+  const errEl = document.querySelector(errorSel);
+  errEl.textContent = "";
+  try {
+    renderAppSettings(await patchJson("/api/app-settings", body));
+    await refresh();  // "today" may have moved
+  } catch (err) {
+    errEl.textContent = err.message;
+  }
+}
+
+document.querySelector("#multiplierCap")?.addEventListener("change", e => {
+  const v = e.target.value.trim();
+  saveAppSetting({ max_multiplier_floor: v === "" ? null : Number(v) }, "#capError");
+});
+document.querySelector("#timezoneSelect")?.addEventListener("change", e => {
+  saveAppSetting({ timezone: e.target.value || null }, "#tzError");
+});
+document.querySelector("#useDeviceZone")?.addEventListener("click", e => {
+  saveAppSetting({ timezone: e.currentTarget.dataset.zone }, "#tzError");
 });
 
 // Webhook URL display + copy (multiple instances)
