@@ -144,6 +144,7 @@ This file and that page list the same items - when adding a fix, update both.
 | J2 | Net P&L by Symbol chart | Look at the chart, especially the largest negative bar. | Bars sorted best to worst; value labels never overlap symbol names. | 177a93e (17 Sep) |
 | J3 | Overview charts use real data | Open Overview. | Charts reflect your actual trades. | 511d682 (3 Jul) |
 | J4 | Trade History shows why each trade closed | After the deploy, open Trade History. Then close trades a few different ways (strategy exit, reversal, dashboard Close, a Deriv TP/SL hit). | Reason column after Net P/L matches the Signal Journal: Strategy exit, Reversal, Webhook exit, Manual close, Price exit, Trailing stop, or Closed on Deriv. Open trades say Open; failed orders say Order failed. Older trades are filled in from the journal; only ones with no journal exit show —. | 5b11abd (30 Sep) |
+| J5 | Performance and Signal Journal are tabs of Trade History | Click Trade History in the sidebar, then the Performance and Signal Journal tabs under the page title. Refresh while on #signals-journal and on #strategies-ranking. Check on a phone too. | Sidebar has no separate Performance or Signal Journal items. Each tab opens its page with the tab underlined and Trade History still highlighted in the sidebar. Refreshing or opening an old link lands on the right tab. On a phone the tab row fits or scrolls sideways within itself; the page doesn't. | 0b6c3f0 (30 Sep) |
 
 ## K. Access and data safety
 
