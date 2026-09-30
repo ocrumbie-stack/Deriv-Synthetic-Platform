@@ -99,7 +99,7 @@ This file and that page list the same items - when adding a fix, update both.
 | F2 | Lists synthetics, FX, metals and crypto | Scroll the Leverage page. | FX, metals and crypto appear alongside synthetic indices. | e1b46b8 (27 Sep) |
 | F3 | No duplicate-symbol error on save | Change leverage on frxXAUUSD (and another new symbol) and save. | Saves cleanly. On 27 Sep this raised UNIQUE constraint failed: symbol_leverage.symbol — still to fix. | open issue |
 | F4 | Page loads without holding up the dashboard | Open the dashboard right after a deploy. | Everything loads within seconds; the Leverage table doesn't block other panels. | 23f40ba (15 Sep) |
-| F5 | Settings and Leverage are tabs of Risk Controls | Click Risk Controls in the sidebar, then the Settings and Leverage tabs. Refresh while on #strategies-leverage. Use Overview's Manage → button. | Sidebar has no Strategies section. Each tab opens its page with the tab underlined and Risk Controls still highlighted. Refreshing or an old link lands on the right tab; Manage → opens Risk Controls. Leverage still saves as before (F1). | 8ff0f87 (30 Sep) |
+| F5 | Strategy Limits and Leverage are tabs of Risk Controls | Click Risk Controls in the sidebar, then the Strategy Limits and Leverage tabs. Refresh while on #strategies-leverage. Use Overview's Manage → button. | Sidebar has no Strategies section. Each tab opens its page with the tab underlined and Risk Controls still highlighted. Refreshing or an old link lands on the right tab; Manage → opens Risk Controls. Leverage still saves as before (F1). | 8ff0f87, b21f906 (30 Sep) |
 
 ## G. Signal Journal
 
