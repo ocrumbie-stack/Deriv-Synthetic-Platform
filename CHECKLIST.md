@@ -12,7 +12,6 @@ This file and that page list the same items - when adding a fix, update both.
 ## Check these first
 
 - **Multiplier safety cap is off while trading live.** `max_multiplier_floor` defaults to 10000 (raised for demo testing in e472ef5). Set it on the new Settings page → Multiplier Safety Cap (e.g. 20-50) - no redeploy needed. See C7.
-- **Open issue:** `UNIQUE constraint failed: symbol_leverage.symbol` for frxXAUUSD (27 Sep 19:27 UTC). See F3.
 - **Open issue:** `database is locked` on the Open Positions refresh (self-heals). See I10.
 - **Live v25 entries rejected as "An open position already exists" (28 Sep).** A demo position left open was blocking live signals. After deploying the fix, switch to demo and close any leftover v25 position there. See H6.
 - **step200 alert has the wrong webhook secret** - its signals are rejected as "Invalid webhook secret". Update the alert message in TradingView.
@@ -97,9 +96,10 @@ This file and that page list the same items - when adding a fix, update both.
 |---|---|---|---|---|
 | F1 | Only valid multipliers can be picked | Open the Leverage page and a symbol's dropdown. | Options match Deriv's allowed list; the server rejects anything else. | 943d4ac (15 Sep) |
 | F2 | Lists synthetics, FX, metals and crypto | Scroll the Leverage page. | FX, metals and crypto appear alongside synthetic indices. | e1b46b8 (27 Sep) |
-| F3 | No duplicate-symbol error on save | Change leverage on frxXAUUSD (and another new symbol) and save. | Saves cleanly. On 27 Sep this raised UNIQUE constraint failed: symbol_leverage.symbol — still to fix. | open issue |
+| F3 | No duplicate-symbol error on save | Change leverage on frxXAUUSD (and another symbol you haven't set before) and save, with the dashboard open in a second tab. | Saves cleanly and the dropdown keeps your value after the next refresh. No UNIQUE constraint failed: symbol_leverage.symbol (seen 27 Sep: a dashboard refresh added the row while the save waited on Deriv). | e21fd1e (30 Sep) |
 | F4 | Page loads without holding up the dashboard | Open the dashboard right after a deploy. | Everything loads within seconds; the Leverage table doesn't block other panels. | 23f40ba (15 Sep) |
 | F5 | Strategy Limits and Leverage are tabs of Risk Controls | Click Risk Controls in the sidebar, then the Strategy Limits and Leverage tabs. Refresh while on #strategies-leverage. Use Overview's Manage → button. | Sidebar has no Strategies section. Each tab opens its page with the tab underlined and Risk Controls still highlighted. Refreshing or an old link lands on the right tab; Manage → opens Risk Controls. Leverage still saves as before (F1). | 8ff0f87, b21f906 (30 Sep) |
+| F6 | Leverage page applies to TradingView ticker names | Set Volatility 25 (R_25) to a non-minimum multiplier on the Leverage page, leave the bot's leverage on Auto, and fire an alert with symbol VOLATILITY_25_INDEX and "leverage":10. Change the page value and fire again. Repeat with EURUSD or STEP_INDEX. | Each trade opens at the page's current value (Leverage column and the Deriv contract agree), not 10x or the old value. A symbol never set on the page opens at its minimum. A bot leverage above 0 still wins over the page. | e21fd1e (30 Sep) |
 
 ## G. Signal Journal
 
