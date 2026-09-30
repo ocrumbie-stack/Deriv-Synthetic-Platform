@@ -181,13 +181,18 @@ const pageIds = new Set([
   "system-risk",
 ]);
 
-// Performance and Signal Journal are tabs of Trade History, so its sidebar
-// item stays highlighted on all three.
-const historyTabs = new Set(["trading-history", "strategies-ranking", "signals-journal"]);
+// Pages shown as tabs of another page, mapped to the sidebar item that stays
+// highlighted while they're open.
+const tabParent = {
+  "strategies-ranking":  "trading-history",
+  "signals-journal":     "trading-history",
+  "strategies-settings": "system-risk",
+  "strategies-leverage": "system-risk",
+};
 
 function navigate(pageId, updateUrl = true) {
   if (!pageIds.has(pageId)) pageId = "dashboard-overview";
-  const navId = historyTabs.has(pageId) ? "trading-history" : pageId;
+  const navId = tabParent[pageId] || pageId;
   document.querySelectorAll(".nav-item").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.page === navId);
   });
