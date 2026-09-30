@@ -138,8 +138,16 @@ def get_signal_bot(db: Session, name: str) -> SignalBot | None:
     return db.scalar(select(SignalBot).where(SignalBot.name == name))
 
 
-def get_symbol_leverage(db: Session, symbol: str) -> int | None:
-    row = db.scalar(select(SymbolLeverage).where(SymbolLeverage.symbol == symbol))
+async def get_symbol_leverage(db: Session, symbol: str) -> int | None:
+    # The Leverage page stores rows under Deriv's own code (R_25, frxEURUSD,
+    # stpRNG), while a webhook sends TradingView's ticker (VOLATILITY_25_INDEX,
+    # EURUSD, STEP_INDEX) - resolve it the same way place_order will, or the
+    # page's setting is silently skipped for every aliased ticker.
+    try:
+        code = await DerivClient().resolve_symbol(symbol)
+    except DerivExecutionError:
+        code = symbol
+    row = db.scalar(select(SymbolLeverage).where(SymbolLeverage.symbol == code))
     return row.leverage if row else None
 
 
@@ -493,9 +501,11 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
     if bot and bot.leverage > 0:
         payload = payload.model_copy(update={"leverage": bot.leverage})
     else:
-        symbol_leverage = get_symbol_leverage(db, payload.symbol.upper())
-        if symbol_leverage is not None:
-            payload = payload.model_copy(update={"leverage": symbol_leverage})
+        # No row yet means the Leverage page shows the symbol's minimum, and
+        # 1x snaps to exactly that in place_order - never fall through to
+        # whatever leverage the webhook payload happened to carry.
+        symbol_leverage = await get_symbol_leverage(db, payload.symbol)
+        payload = payload.model_copy(update={"leverage": symbol_leverage or 1})
 
     if payload.action == SignalAction.entry:
         existing = find_open_trade(db, strategy.id, payload.symbol.upper())

@@ -41,6 +41,7 @@ class ModeIsolationTests(unittest.TestCase):
 
     def _send(self, direction):
         client = AsyncMock()
+        client.resolve_symbol.return_value = "R_25"
         client.place_order.return_value = {"order_id": "222"}
         client.get_contract_status.return_value = {"is_sold": 0}
         payload = WebhookSignal(

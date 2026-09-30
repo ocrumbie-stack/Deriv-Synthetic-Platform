@@ -10,6 +10,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from zoneinfo import ZoneInfo
@@ -347,7 +348,14 @@ async def list_symbol_leverage(db: Session = Depends(get_db)) -> list[SymbolLeve
             )
         )
     if dirty:
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            # A save or another tab's refresh seeded one of these symbols
+            # while this request awaited Deriv - keep the value it stored.
+            db.rollback()
+            saved = {row.symbol: row.leverage for row in db.scalars(select(SymbolLeverage))}
+            out = [item.model_copy(update={"leverage": saved.get(item.symbol, item.leverage)}) for item in out]
     return sorted(out, key=lambda row: min(row.allowed_multipliers))
 
 
@@ -373,14 +381,24 @@ async def update_symbol_leverage(symbol: str, updates: SymbolLeverageUpdate, db:
             detail=f"{code} only accepts a multiplier of {', '.join(str(v) for v in allowed)}.",
         )
 
-    if not row:
-        row = SymbolLeverage(symbol=code, leverage=updates.leverage)
-        db.add(row)
-    else:
+    # Awaiting Deriv above gives a dashboard refresh time to seed this
+    # symbol's row first (F3: UNIQUE constraint failed) - on that conflict,
+    # save onto the row it created instead of losing the change.
+    for attempt in range(2):
+        row = db.scalar(select(SymbolLeverage).where(SymbolLeverage.symbol == code))
+        if not row:
+            row = SymbolLeverage(symbol=code)
+            db.add(row)
         row.leverage = updates.leverage
-    if allowed:
-        row.allowed_multipliers = ",".join(str(v) for v in allowed)
-    db.commit()
+        if allowed:
+            row.allowed_multipliers = ",".join(str(v) for v in allowed)
+        try:
+            db.commit()
+            break
+        except IntegrityError:
+            db.rollback()
+            if attempt:
+                raise
     db.refresh(row)
     return SymbolLeverageOut(
         symbol=code,
