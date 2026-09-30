@@ -530,6 +530,33 @@ canvas { display: block; width: 100%; }
 
 .tabs button.active { background: var(--panel-2, #16161e); color: var(--text); }
 
+/* ── Page tabs (Trade History / Performance / Signal Journal) ── */
+
+.page-tabs {
+  display: flex;
+  flex-basis: 100%;
+  gap: 4px;
+  margin-bottom: -19px;   /* sit the active underline on the header's border */
+  overflow-x: auto;
+}
+
+.page-tab {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  min-height: 0;
+  padding: 8px 12px 10px;
+  white-space: nowrap;
+}
+
+.page-tab:hover { color: var(--text); }
+.page-tab.active { border-bottom-color: var(--yellow); color: var(--text); }
+
 /* ── Risk panels ────────────────────────────────────────────── */
 
 .risk-grid {
@@ -1254,5 +1281,6 @@ tr.clickable:hover td, tr.selected td { background: var(--panel-2, #16161e); }
   .metric, .metric.highlight { min-width: 0; }
   .url-row { min-width: 0; }
   .page-header { padding: 14px 16px; }
+  .page-tabs { margin-bottom: -15px; }
   .page-body { padding: 16px 16px 40px; }
 }
