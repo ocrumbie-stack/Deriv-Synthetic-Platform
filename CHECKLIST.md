@@ -143,6 +143,7 @@ This file and that page list the same items - when adding a fix, update both.
 | J1 | Symbol filter and stats | Pick a symbol in Trade History and wait for a refresh. | Filter stays set; count, win rate and P&L cover just that symbol; up to 1000 trades load. | 4a5df41 (16 Sep) |
 | J2 | Net P&L by Symbol chart | Look at the chart, especially the largest negative bar. | Bars sorted best to worst; value labels never overlap symbol names. | 177a93e (17 Sep) |
 | J3 | Overview charts use real data | Open Overview. | Charts reflect your actual trades. | 511d682 (3 Jul) |
+| J4 | Trade History shows why each trade closed | After the deploy, open Trade History. Then close trades a few different ways (strategy exit, reversal, dashboard Close, a Deriv TP/SL hit). | Reason column after Net P/L matches the Signal Journal: Strategy exit, Reversal, Webhook exit, Manual close, Price exit, Trailing stop, or Closed on Deriv. Open trades say Open; failed orders say Order failed. Older trades are filled in from the journal; only ones with no journal exit show —. | 5b11abd (30 Sep) |
 
 ## K. Access and data safety
 
