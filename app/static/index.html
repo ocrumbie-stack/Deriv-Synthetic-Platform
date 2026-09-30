@@ -387,11 +387,16 @@
               <h1 class="page-title">Performance</h1>
               <p id="focusLabel" class="subtle">All strategies</p>
             </div>
-            <div class="tabs" role="tablist">
-              <button data-period-table="today" class="active">Today</button>
-              <button data-period-table="week">This week</button>
-              <button data-period-table="month">This month</button>
-              <button data-period-table="all">All time</button>
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+              <select id="performanceSymbolFilter" class="inline-input" style="width:auto;min-width:160px">
+                <option value="all">All symbols</option>
+              </select>
+              <div class="tabs" role="tablist">
+                <button data-period-table="today" class="active">Today</button>
+                <button data-period-table="week">This week</button>
+                <button data-period-table="month">This month</button>
+                <button data-period-table="all">All time</button>
+              </div>
             </div>
             <nav class="page-tabs" role="tablist" aria-label="History">
               <button class="page-tab" data-page="trading-history" role="tab" aria-selected="false">Trade History</button>

@@ -837,7 +837,7 @@ def trade_history(limit: int = 200, db: Session = Depends(get_db)) -> list[Trade
 
 
 @app.get("/api/performance")
-def strategy_performance(period: str = "today", db: Session = Depends(get_db)) -> list[dict]:
+def strategy_performance(period: str = "today", symbol: str | None = None, db: Session = Depends(get_db)) -> list[dict]:
     start = period_start(period)
     strategies = list(db.scalars(select(Strategy).order_by(Strategy.name)))
     rows = []
@@ -845,6 +845,14 @@ def strategy_performance(period: str = "today", db: Session = Depends(get_db)) -
     mode = settings.execution_mode.lower()
     for strategy in strategies:
         trade_query = select(Trade).where(Trade.strategy_id == strategy.id, Trade.execution_mode == mode)
+        open_query = select(func.count(Trade.id)).where(
+            Trade.strategy_id == strategy.id,
+            Trade.status == PositionStatus.open,
+            Trade.execution_mode == mode,
+        )
+        if symbol:
+            trade_query = trade_query.where(Trade.symbol == symbol)
+            open_query = open_query.where(Trade.symbol == symbol)
         if start:
             trade_query = trade_query.where(Trade.opened_at >= start)
         trades = list(db.scalars(trade_query))
@@ -853,13 +861,7 @@ def strategy_performance(period: str = "today", db: Session = Depends(get_db)) -
         losses = [trade for trade in closed if trade.net_result < 0]
         total_net = sum(trade.net_result for trade in closed)
         total_fees = sum(trade.fees for trade in closed)
-        open_count = db.scalar(
-            select(func.count(Trade.id)).where(
-                Trade.strategy_id == strategy.id,
-                Trade.status == PositionStatus.open,
-                Trade.execution_mode == mode,
-            )
-        )
+        open_count = db.scalar(open_query)
 
         rows.append(
             {
@@ -905,6 +907,7 @@ def analytics(period: str = "all", db: Session = Depends(get_db)) -> dict:
             {
                 "time": (trade.closed_at or trade.opened_at).isoformat(),
                 "strategy_name": trade.strategy_name,
+                "symbol": trade.symbol,
                 "net_result": round(trade.net_result, 8),
                 "cumulative_net": round(running_net, 8),
             }

@@ -5,6 +5,7 @@ let activePeriod      = "today";
 let rejectionsFilter  = false;
 let activeStrategy = "all";
 let historySymbolFilter = "all";
+let performanceSymbolFilter = "all";
 // Declared here (not near their first use further down) because a cold
 // load landing directly on a non-overview page (e.g. a refresh on
 // #trading-bots) calls navigate() - and transitively wireBotForm() - before
@@ -565,6 +566,29 @@ function renderPerformance(rows) {
       renderAll();
     });
   });
+}
+
+function renderPerformanceSymbolFilter(history) {
+  const filterEl = document.querySelector("#performanceSymbolFilter");
+  if (!filterEl) return;
+  // Same rebuild-only-on-change rule as the Trade History filter, so the
+  // selection survives the refresh cycle.
+  const symbols = [...new Set(history.map(t => t.symbol))].sort();
+  if (performanceSymbolFilter !== "all" && !symbols.includes(performanceSymbolFilter)) symbols.push(performanceSymbolFilter);
+  const existing = [...filterEl.options].slice(1).map(o => o.value);
+  if (existing.join(",") !== symbols.join(",")) {
+    filterEl.innerHTML = `<option value="all">All symbols</option>` +
+      symbols.map(s => `<option value="${escapeAttr(s)}">${s}</option>`).join("");
+  }
+  filterEl.value = performanceSymbolFilter;
+  if (!filterEl.dataset.wired) {
+    // The strategy table is filtered server-side, so a change refetches.
+    filterEl.addEventListener("change", () => {
+      performanceSymbolFilter = filterEl.value;
+      refresh();
+    });
+    filterEl.dataset.wired = "1";
+  }
 }
 
 function renderStrategyRisk(rows) {
@@ -1221,24 +1245,30 @@ function renderHistory(rows) {
 // ─── Refresh / Render ────────────────────────────────────────────────────────
 
 async function refresh() {
-  const [summary, risk, balance, performance, positions, signals, history, analytics, symbolLeverage] = await Promise.all([
+  const [summary, risk, balance, performance, symbolPerformance, positions, signals, history, analytics, symbolLeverage] = await Promise.all([
     getJson("/api/summary"),
     getJson("/api/risk"),
     getJson("/api/account-balance").catch(() => ({})),
     getJson(`/api/performance?period=${activePeriod}`),
+    // Strategy Limits keeps using the unfiltered rows; only the Performance
+    // page follows the symbol picker.
+    performanceSymbolFilter === "all"
+      ? null
+      : getJson(`/api/performance?period=${activePeriod}&symbol=${encodeURIComponent(performanceSymbolFilter)}`),
     getJson("/api/open-positions"),
     getJson("/api/signals?limit=200"),
     getJson("/api/trade-history?limit=1000"),
     getJson(`/api/analytics?period=${activePeriod}`),
     getJson("/api/symbol-leverage").catch(() => []),
   ]);
-  latestState = { summary, risk, balance, performance, positions, signals, history, analytics, symbolLeverage };
+  latestState = { summary, risk, balance, performance, symbolPerformance, positions, signals, history, analytics, symbolLeverage };
   renderAll();
 }
 
 function renderAll() {
   const { risk, performance, positions, signals, history, analytics, symbolLeverage } = latestState;
-  const focused = activeStrategy === "all" ? performance : performance.filter(r => r.strategy_name === activeStrategy);
+  const tableRows = (performanceSymbolFilter !== "all" && latestState.symbolPerformance) || performance;
+  const focused = activeStrategy === "all" ? tableRows : tableRows.filter(r => r.strategy_name === activeStrategy);
 
   // Header badges
   const el = (id) => document.querySelector(id);
@@ -1248,11 +1278,15 @@ function renderAll() {
   if (el("#historyCount"))   el("#historyCount").textContent   = `${history.length} trades`;
 
   const fl = document.querySelector("#focusLabel");
-  if (fl) fl.textContent = activeStrategy === "all" ? "All strategies" : `Focused on ${activeStrategy}`;
+  if (fl) {
+    const strategyText = activeStrategy === "all" ? "All strategies" : `Focused on ${activeStrategy}`;
+    fl.textContent = performanceSymbolFilter === "all" ? strategyText : `${strategyText} · ${performanceSymbolFilter}`;
+  }
+  renderPerformanceSymbolFilter(history);
 
-  const rawCurve = activeStrategy === "all"
-    ? analytics.equity_curve
-    : analytics.equity_curve.filter(p => p.strategy_name === activeStrategy);
+  const rawCurve = analytics.equity_curve
+    .filter(p => activeStrategy === "all" || p.strategy_name === activeStrategy)
+    .filter(p => performanceSymbolFilter === "all" || p.symbol === performanceSymbolFilter);
   const curve = cumulativeCurve(rawCurve);
 
   renderSummary();
