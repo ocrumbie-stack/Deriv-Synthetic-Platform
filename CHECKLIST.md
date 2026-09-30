@@ -11,7 +11,7 @@ This file and that page list the same items - when adding a fix, update both.
 
 ## Check these first
 
-- **Multiplier safety cap is off while trading live.** `max_multiplier_floor` defaults to 10000 (raised for demo testing in e472ef5). Set `MAX_MULTIPLIER_FLOOR` on Railway (e.g. 20-50). See C7.
+- **Multiplier safety cap is off while trading live.** `max_multiplier_floor` defaults to 10000 (raised for demo testing in e472ef5). Set it on the new Settings page → Multiplier Safety Cap (e.g. 20-50) - no redeploy needed. See C7.
 - **Open issue:** `UNIQUE constraint failed: symbol_leverage.symbol` for frxXAUUSD (27 Sep 19:27 UTC). See F3.
 - **Open issue:** `database is locked` on the Open Positions refresh (self-heals). See I10.
 - **Live v25 entries rejected as "An open position already exists" (28 Sep).** A demo position left open was blocking live signals. After deploying the fix, switch to demo and close any leftover v25 position there. See H6.
@@ -62,7 +62,7 @@ This file and that page list the same items - when adding a fix, update both.
 | C4 | Deriv-side closes are picked up | Let a trade hit its TP/SL or stop out on Deriv. | Trade shows closed with Deriv's profit; journal adds a deriv_close row. | b7c685c (26 Sep) |
 | C5 | Still-open contracts are never marked closed | Compare Open Positions to Deriv's open contracts. | Same list on both. Nothing open on Deriv is missing from the dashboard. | b573823 (16 Sep) |
 | C6 | Platform closes don't crash | Close a bot trade from the dashboard. | Success, not "Close failed". Journal reason is manual_close, not deriv_close. | 049199a (27 Sep) |
-| C7 | Multiplier safety cap is set for live | Check Railway variables for MAX_MULTIPLIER_FLOOR. | Set to a sensible value (e.g. 20–50). Currently defaults to 10000, which means no cap. | e472ef5 (16 Sep) |
+| C7 | Multiplier safety cap is set for live | Open Settings → Multiplier Safety Cap and enter a value (e.g. 20–50). Then send an entry on a symbol whose lowest multiplier is above it. | "In use" shows your value, "saved here", and the yellow no-cap warning is gone. The entry is refused naming the safety cap. It survives a redeploy. Clearing the field goes back to the Railway value (currently 10000 = no cap). | e472ef5 (16 Sep), a24778d (30 Sep) |
 | C8 | Daily P&L audit runs clean | Open /api/trade-audit or search Railway logs for "Trade audit". | Recent run with 0 flagged. Any corrections explained. | 313369a (26 Sep) |
 
 ## D. Open Positions exit menu
@@ -136,6 +136,7 @@ This file and that page list the same items - when adding a fix, update both.
 | I11 | Signal bot position badges colour by P&L | Open Signal Bots with a winning and a losing position (try a losing long and a winning short). | Badge is green when the position is up, yellow when down, plain when flat or not yet priced — regardless of direction. | 5b52adc (28 Sep) |
 | I12 | Summary cards on Open Positions | Open Open Positions with two or more trades, then with none. | Four cards above the table: Account Balance (with available), Open Positions (long/short split), Account Exposure (% of limit, yellow above 80%), Running P/L (sum of the Unrealized P/L column, green if up, yellow if down). Running P/L doesn't flash — between refreshes; with no positions it shows $0.00. | fd49df2 (28 Sep) |
 | I13 | Running P&L on Overview's Daily P&L card | Open Overview with a trade open and at least one trade closed today. | Big figure is still today's closed P&L (what the loss limit uses). Below it, Running = closed + open, with "open ±$X" matching the Running P/L card on Open Positions. Running figure is blue; the open amount is green if up, yellow if down. Shows — if the balance can't be fetched. | 6d116bb (30 Sep) |
+| I14 | Time zone sets when the day starts | Settings → Time Zone: pick your zone (or "Use this device's zone"). Compare Overview's Daily P&L just after your midnight. | Daily P&L, the daily loss limit, and Today / This week / This month reset at midnight in that zone, not 7–8pm the day before (UTC). "In use" shows the zone. An invalid zone can't be saved. | a24778d (30 Sep) |
 
 ## J. Trade History and charts
 
@@ -153,3 +154,4 @@ This file and that page list the same items - when adding a fix, update both.
 |---|---|---|---|---|
 | K1 | Google sign-in protects the dashboard | Open the dashboard in a private window. | Google sign-in required; only allowed emails get in. Webhooks still work without sign-in. | eea0300 (26 Sep) |
 | K2 | Data survives deploys | Check bots and history after a redeploy. | Nothing lost. | f79d4ac (13 Sep) |
+| K3 | Settings shows connections without secrets | Open Settings → Accounts & Access. Switch demo/live once. | Deriv demo and live show Ready (or name the missing variable), the account in use is marked, Balance check says OK (or the Deriv error), Webhook secret says Set, Sign-in says On with your email count. No token or secret value appears anywhere on the page or in /api/app-settings. | a24778d (30 Sep) |
