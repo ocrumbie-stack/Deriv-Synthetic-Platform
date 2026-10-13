@@ -19,8 +19,8 @@ from app.config import ENV_EXECUTION_MODE, ENV_MAX_MULTIPLIER_FLOOR, ENV_TIMEZON
 from app.database import Base, SessionLocal, engine, get_db, sync_schema
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
-from app.schemas import BotPairOut, BotPairUpdate, ManualExitSignal, PositionTpSl, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
-from app.services import PAIR_DEFAULT_FIELDS, account_exposure, get_app_settings, local_period_start, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal, trade_execution_lock
+from app.schemas import BotPairOut, BotPairUpdate, CloseAllTarget, ManualExitSignal, PositionTpSl, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
+from app.services import PAIR_DEFAULT_FIELDS, account_exposure, close_all_open_trades, close_all_target, get_app_settings, local_period_start, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal, trade_execution_lock
 from app import auth, trade_audit
 from app.trade_audit import trade_audit_scheduler
 from app.trailing import trailing_monitor
@@ -575,6 +575,7 @@ def risk_settings(db: Session = Depends(get_db)) -> dict:
         "account_daily_loss_limit": risk.account_daily_loss_limit,
         "current_account_exposure": round(account_exposure(db), 8),
         "today_account_net": round(daily_account_net(db), 8),
+        "close_all_target": close_all_target(risk, settings.execution_mode.lower()),
         "execution_mode": settings.execution_mode,
         "env_execution_mode": ENV_EXECUTION_MODE,
         "updated_at": risk.updated_at.isoformat() if risk.updated_at else None,
@@ -729,22 +730,31 @@ async def close_all_positions(db: Session = Depends(get_db)) -> dict:
     """Flatten every open position in the current mode. One failure doesn't
     stop the rest - each is reported back so the user can retry just those."""
     async with trade_execution_lock:
-        mode = settings.execution_mode.lower()
-        trades = list(db.scalars(
-            select(Trade).where(Trade.status == PositionStatus.open, Trade.execution_mode == mode)
-        ))
-        closed, failed = 0, []
-        for trade in trades:
-            try:
-                # Already sold on Deriv (stop-out, TP/SL) - just record it.
-                if await reconcile_open_trade(db, trade):
-                    db.commit()
-                else:
-                    await close_position_with_signal(db, trade, None, "manual_close", {"trade_id": trade.id, "close_all": True})
-                closed += 1
-            except DerivExecutionError as exc:
-                failed.append({"trade_id": trade.id, "symbol": trade.symbol, "error": str(exc)})
+        closed, failed = await close_all_open_trades(db, settings.execution_mode.lower(), "manual_close", {"close_all": True})
         return {"closed": closed, "failed": failed}
+
+
+@app.put("/api/open-positions/close-all-target")
+def set_close_all_target(target: CloseAllTarget, db: Session = Depends(get_db)) -> dict:
+    """Arm the close-all target for the current mode: every open position is
+    closed once their summed unrealized P/L reaches +take_profit or
+    -stop_loss. The trailing monitor watches it, then clears it."""
+    if target.take_profit is None and target.stop_loss is None:
+        raise HTTPException(status_code=422, detail="Enter a profit target, a loss limit, or both.")
+    risk = get_risk_settings(db)
+    risk.close_all_take_profit = target.take_profit
+    risk.close_all_stop_loss = target.stop_loss
+    risk.close_all_mode = settings.execution_mode.lower()
+    db.commit()
+    return risk_settings(db)
+
+
+@app.delete("/api/open-positions/close-all-target")
+def clear_close_all_target(db: Session = Depends(get_db)) -> dict:
+    risk = get_risk_settings(db)
+    risk.close_all_take_profit = risk.close_all_stop_loss = risk.close_all_mode = None
+    db.commit()
+    return risk_settings(db)
 
 
 def _get_open_trade(db: Session, trade_id: int) -> Trade:

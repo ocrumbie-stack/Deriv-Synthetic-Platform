@@ -492,6 +492,7 @@ const EXIT_SOURCE_LABELS = {
   manual_close:  "Manual close",
   price_exit:    "Price exit",
   trailing_stop: "Trailing stop",
+  close_all_target: "Close-all target",
   deriv_close:   "Closed on Deriv (TP/SL/stop-out)",
 };
 
@@ -664,6 +665,7 @@ function renderPositionsSummary(rows) {
   const expCls    = expPct === null ? "neutral" : expPct > 80 ? "negative" : "positive";
 
   if (!rows.length) lastRunningPnl = null;
+  const target = risk?.close_all_target;
 
   box.innerHTML = `
     <div class="metric highlight">
@@ -684,8 +686,16 @@ function renderPositionsSummary(rows) {
     <div class="metric highlight">
       <span class="metric-label">Running P/L</span>
       <span class="metric-value ${lastRunningPnl === null ? "neutral" : pnlClass(lastRunningPnl)}" id="runningPnl">${lastRunningPnl === null ? (rows.length ? "—" : currency.format(0)) : signedCurrency(lastRunningPnl)}</span>
-      <span class="metric-sub">unrealized, all open positions</span>
+      <span class="metric-sub">${target ? `closes all at ${closeAllTargetText(target)}` : "unrealized, all open positions"}</span>
     </div>`;
+}
+
+// "+$50.00 or −$20.00" - whichever sides of the close-all target are set.
+function closeAllTargetText(target) {
+  return [
+    target.take_profit != null ? `+${currency.format(target.take_profit)}` : null,
+    target.stop_loss   != null ? `−${currency.format(target.stop_loss)}`   : null,
+  ].filter(Boolean).join(" or ");
 }
 
 function signedCurrency(v) { return (v >= 0 ? "+" : "") + currency.format(v); }
@@ -894,6 +904,43 @@ document.querySelector("#closeAllPositions")?.addEventListener("click", () => {
     confirmLabel: "Close all",
     tone: "danger",
     onSubmit: closeAllPositions,
+  });
+});
+
+// Close-all target: the server closes every open position once their summed
+// unrealized P/L reaches it. Both fields blank removes it.
+document.querySelector("#closeAllTarget")?.addEventListener("click", () => {
+  const { risk, positions = [] } = latestState;
+  const current = risk?.close_all_target || {};
+  const mode = (risk?.execution_mode || "").toUpperCase();
+  openDialog({
+    title: "Close-all target",
+    message: `Closes every ${mode} position at market once the running P/L of all of them together reaches either level. It fires once, then clears.`,
+    details: [
+      ["Open positions", String(positions.length)],
+      ["Running P/L now", lastRunningPnl === null ? "—" : signedCurrency(lastRunningPnl), lastRunningPnl === null ? "" : pnlClass(lastRunningPnl)],
+    ],
+    fields: [
+      { name: "take_profit", label: "Close all when profit reaches", prefix: "$", value: current.take_profit, placeholder: "None" },
+      { name: "stop_loss",   label: "Close all when loss reaches",   prefix: "$", value: current.stop_loss,   placeholder: "None" },
+    ],
+    note: "Leave both blank to remove the target. The platform watches it, so it only fires while the server is running.",
+    confirmLabel: "Save target",
+    onSubmit: async ({ take_profit, stop_loss }) => {
+      const body = {
+        take_profit: take_profit === "" ? null : parsePositive(take_profit, "Profit target must be a positive dollar amount."),
+        stop_loss:   stop_loss   === "" ? null : parsePositive(stop_loss, "Loss limit must be a positive dollar amount."),
+      };
+      const cleared = body.take_profit === null && body.stop_loss === null;
+      const r = await fetch("/api/open-positions/close-all-target", cleared
+        ? { method: "DELETE" }
+        : { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (!r.ok) {
+        const detail = (await r.json().catch(() => ({}))).detail;
+        throw new Error(typeof detail === "string" ? detail : `Couldn't save the target (server error ${r.status}).`);
+      }
+      refresh();
+    },
   });
 });
 
@@ -1275,6 +1322,10 @@ function renderAll() {
   if (el("#positionCount"))  el("#positionCount").textContent  = `${positions.length} open`;
   // visibility, not display, so the header keeps its height and the page doesn't jump.
   if (el("#closeAllPositions")) el("#closeAllPositions").style.visibility = positions.length ? "visible" : "hidden";
+  if (el("#closeAllTarget")) {
+    const target = risk?.close_all_target;
+    el("#closeAllTarget").textContent = target ? `Target: ${closeAllTargetText(target)}` : "Close-all target";
+  }
   if (el("#historyCount"))   el("#historyCount").textContent   = `${history.length} trades`;
 
   const fl = document.querySelector("#focusLabel");

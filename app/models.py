@@ -41,6 +41,12 @@ class RiskSettings(Base):
     execution_mode_override: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     max_account_exposure: Mapped[float] = mapped_column(Float, default=0.0)
     account_daily_loss_limit: Mapped[float] = mapped_column(Float, default=0.0)
+    # Open Positions' close-all target: once the summed unrealized P/L of every
+    # open position reaches +take_profit or -stop_loss, all of them are closed
+    # and the target clears. It only applies in the mode it was set in.
+    close_all_take_profit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    close_all_stop_loss: Mapped[float | None] = mapped_column(Float, nullable=True)
+    close_all_mode: Mapped[str | None] = mapped_column(String(10), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
@@ -91,7 +97,7 @@ class Signal(Base):
     # manual exit webhook, a dashboard manual close with or without a chosen
     # price, the trailing stop, or Deriv closing the contract itself). One of:
     # strategy_entry, strategy_exit, reversal, webhook_exit, manual_close,
-    # price_exit, trailing_stop, deriv_close.
+    # price_exit, trailing_stop, close_all_target, deriv_close.
     source: Mapped[str | None] = mapped_column(String(30), nullable=True)
     raw_payload: Mapped[str] = mapped_column(Text)
     # "demo" or "live" - whichever execution mode was active when this signal
@@ -139,7 +145,7 @@ class Trade(Base):
     manual_tpsl: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # How the position closed, using the same values as Signal.source for
     # exits (strategy_exit, reversal, webhook_exit, manual_close, price_exit,
-    # trailing_stop, deriv_close). Shown as Trade History's reason.
+    # trailing_stop, close_all_target, deriv_close). Shown as Trade History's reason.
     close_reason: Mapped[str | None] = mapped_column(String(30), nullable=True)
 
     strategy: Mapped[Strategy] = relationship(back_populates="trades")

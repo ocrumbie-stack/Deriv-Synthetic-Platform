@@ -66,6 +66,14 @@ class PositionTpSl(BaseModel):
     stop_loss: float | None = Field(default=None, gt=0)
 
 
+class CloseAllTarget(BaseModel):
+    """Dollar levels for the summed unrealized P/L of all open positions.
+    None leaves that side unset."""
+
+    take_profit: float | None = Field(default=None, gt=0)
+    stop_loss: float | None = Field(default=None, gt=0)
+
+
 class SignalBotCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     symbol: str | None = Field(default=None, max_length=200)

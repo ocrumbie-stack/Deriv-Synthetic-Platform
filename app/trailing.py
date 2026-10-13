@@ -10,6 +10,10 @@ the backstop for any time this connection is down.
 The same stream also carries the spot price, so it drives the dashboard's
 "close at price" too: any open trade with a close_at_price is subscribed and
 sold once the spot reaches it.
+
+And while Open Positions' close-all target is armed, every open trade is
+subscribed so their live profits can be summed: once the total reaches the
+target's take profit or stop loss, everything is closed and the target clears.
 """
 
 import asyncio
@@ -25,8 +29,15 @@ from sqlalchemy import or_, select, update
 from app.config import settings
 from app.database import SessionLocal
 from app.deriv import DerivClient, DerivExecutionError
-from app.models import PositionStatus, SignalBot, Trade
-from app.services import IMPLAUSIBLE_PROFIT_STAKE_MULTIPLE, close_position_with_signal, reconcile_open_trade, trade_execution_lock
+from app.models import PositionStatus, RiskSettings, SignalBot, Trade
+from app.services import (
+    IMPLAUSIBLE_PROFIT_STAKE_MULTIPLE,
+    close_all_open_trades,
+    close_all_target,
+    close_position_with_signal,
+    reconcile_open_trade,
+    trade_execution_lock,
+)
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -50,6 +61,8 @@ class _Tracked:
     target: float | None = None
     target_above: bool = True
     subscription_id: str | None = None
+    # Latest live profit, summed for the close-all target.
+    profit: float | None = None
 
 
 class TrailingStopMonitor:
@@ -57,6 +70,11 @@ class TrailingStopMonitor:
         self._tracked: dict[str, _Tracked] = {}  # keyed by Deriv contract_id
         self._closing: set[str] = set()
         self._subscribe_failed_at: dict[str, float] = {}
+        # The close-all target ({"take_profit", "stop_loss"}) and the open
+        # contracts its total covers; a sold one drops out of the total.
+        self._basket_target: dict | None = None
+        self._basket: set[str] = set()
+        self._basket_closing = False
         self._task: asyncio.Task | None = None
         # The event loop only holds weak references to tasks.
         self._background: set[asyncio.Task] = set()
@@ -115,10 +133,11 @@ class TrailingStopMonitor:
                     continue
                 self._handle(json.loads(raw))
 
-    @staticmethod
-    def _load_trailed(mode: str) -> dict[str, _Tracked]:
+    def _load_trailed(self, mode: str) -> dict[str, _Tracked]:
         with SessionLocal() as db:
-            rows = db.execute(
+            risk = db.get(RiskSettings, 1)
+            basket_target = close_all_target(risk, mode) if risk else None
+            query = (
                 select(Trade, SignalBot)
                 .outerjoin(SignalBot, SignalBot.name == Trade.strategy_name)
                 .where(
@@ -126,9 +145,12 @@ class TrailingStopMonitor:
                     Trade.execution_mode == mode,
                     Trade.exchange_order_id.is_not(None),
                     Trade.exchange_order_id != "",
-                    or_(SignalBot.trail_distance_pct > 0, Trade.close_at_price.is_not(None)),
                 )
-            ).all()
+            )
+            # The close-all target needs every open trade's profit.
+            if not basket_target:
+                query = query.where(or_(SignalBot.trail_distance_pct > 0, Trade.close_at_price.is_not(None)))
+            rows = db.execute(query).all()
         trailed = {}
         for trade, bot in rows:
             start = distance = None
@@ -145,6 +167,8 @@ class TrailingStopMonitor:
                 target=trade.close_at_price,
                 target_above=bool(trade.close_at_above),
             )
+        self._basket_target = basket_target
+        self._basket = set(trailed) if basket_target else set()
         return trailed
 
     async def _sync(self, ws, wanted: dict[str, _Tracked]) -> None:
@@ -158,7 +182,7 @@ class TrailingStopMonitor:
             tracked = self._tracked.get(contract_id)
             if tracked:
                 # Pick up edited bot trail settings and close-at prices; keep
-                # the live peak.
+                # the live peak and profit.
                 tracked.start, tracked.distance = info.start, info.distance
                 tracked.target, tracked.target_above = info.target, info.target_above
                 continue
@@ -195,9 +219,23 @@ class TrailingStopMonitor:
             # Deriv closed it itself (TP/SL hit, stop-out) - record it now
             # rather than waiting for the next exit webhook or dashboard poll.
             self._tracked.pop(contract_id)
+            self._basket.discard(contract_id)
             if contract_id not in self._closing:
                 self._spawn(self._reconcile(tracked.trade_id))
             return
+
+        try:
+            profit = float(poc.get("profit"))
+        except (TypeError, ValueError):
+            profit = math.nan
+        # A bogus spike would otherwise set an unreachable peak and trigger
+        # an immediate close (see IMPLAUSIBLE_PROFIT_STAKE_MULTIPLE).
+        if not math.isfinite(profit) or abs(profit) > max(tracked.stake, 1.0) * IMPLAUSIBLE_PROFIT_STAKE_MULTIPLE:
+            profit = None
+        else:
+            tracked.profit = profit
+            if self._check_basket():
+                return
 
         if tracked.target is not None and contract_id not in self._closing:
             try:
@@ -212,15 +250,7 @@ class TrailingStopMonitor:
                 ))
                 return
 
-        if tracked.distance is None:
-            return
-        try:
-            profit = float(poc.get("profit"))
-        except (TypeError, ValueError):
-            return
-        # A bogus spike would otherwise set an unreachable peak and trigger
-        # an immediate close (see IMPLAUSIBLE_PROFIT_STAKE_MULTIPLE).
-        if not math.isfinite(profit) or abs(profit) > max(tracked.stake, 1.0) * IMPLAUSIBLE_PROFIT_STAKE_MULTIPLE:
+        if tracked.distance is None or profit is None:
             return
         if tracked.peak is None or profit > tracked.peak:
             tracked.peak = profit
@@ -240,6 +270,45 @@ class TrailingStopMonitor:
                     "trail_distance": tracked.distance,
                 },
             ))
+
+    def _check_basket(self) -> bool:
+        """Start closing everything if the summed profit has hit the
+        close-all target. Waits until every open contract has reported."""
+        target = self._basket_target
+        if not target or not self._basket or self._basket_closing:
+            return False
+        profits = [self._tracked[c].profit if c in self._tracked else None for c in self._basket]
+        if None in profits:
+            return False
+        total = sum(profits)
+        take_profit, stop_loss = target["take_profit"], target["stop_loss"]
+        if not ((take_profit is not None and total >= take_profit) or (stop_loss is not None and total <= -stop_loss)):
+            return False
+        self._basket_closing = True
+        # One-shot: don't fire again before the next sync sees it cleared.
+        self._basket_target = None
+        self._spawn(self._close_all(total, target))
+        return True
+
+    async def _close_all(self, total: float, target: dict) -> None:
+        mode = settings.execution_mode.lower()
+        try:
+            async with trade_execution_lock:
+                with SessionLocal() as db:
+                    risk = db.get(RiskSettings, 1)
+                    # Cancelled, changed, or the mode switched since the tick.
+                    if not risk or close_all_target(risk, mode) != target:
+                        return
+                    risk.close_all_take_profit = risk.close_all_stop_loss = risk.close_all_mode = None
+                    db.commit()
+                    closed, failed = await close_all_open_trades(
+                        db, mode, "close_all_target", {"trigger_total": round(total, 2), **target},
+                    )
+            logger.info("Close-all target hit at %.2f (%s): closed %s, failed %s", total, target, closed, failed)
+        except Exception:
+            logger.exception("Close-all target failed to close the open positions")
+        finally:
+            self._basket_closing = False
 
     async def _close(self, contract_id: str, tracked: _Tracked, price: float | None, source: str, payload: dict) -> None:
         try:

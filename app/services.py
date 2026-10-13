@@ -461,6 +461,34 @@ async def close_position_with_signal(
     return signal
 
 
+async def close_all_open_trades(db: Session, mode: str, source: str, raw_payload: dict) -> tuple[int, list[dict]]:
+    """Flatten every open trade in `mode` (dashboard Close all, close-all
+    target). One failure doesn't stop the rest - each is returned so the
+    caller can report it. Call while holding trade_execution_lock."""
+    trades = list(db.scalars(
+        select(Trade).where(Trade.status == PositionStatus.open, Trade.execution_mode == mode)
+    ))
+    closed, failed = 0, []
+    for trade in trades:
+        try:
+            # Already sold on Deriv (stop-out, TP/SL) - just record it.
+            if await reconcile_open_trade(db, trade):
+                db.commit()
+            else:
+                await close_position_with_signal(db, trade, None, source, {"trade_id": trade.id, **raw_payload})
+            closed += 1
+        except DerivExecutionError as exc:
+            failed.append({"trade_id": trade.id, "symbol": trade.symbol, "error": str(exc)})
+    return closed, failed
+
+
+def close_all_target(risk: RiskSettings, mode: str) -> dict | None:
+    """The close-all target armed for `mode`, or None."""
+    if risk.close_all_mode != mode or (risk.close_all_take_profit is None and risk.close_all_stop_loss is None):
+        return None
+    return {"take_profit": risk.close_all_take_profit, "stop_loss": risk.close_all_stop_loss}
+
+
 async def close_reversed_position(
     db: Session, strategy: Strategy, payload: WebhookSignal, trade: Trade, bot: SignalBot | None
 ) -> None:
