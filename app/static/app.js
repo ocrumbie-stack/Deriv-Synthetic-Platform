@@ -2077,6 +2077,15 @@ document.querySelector("#useDeviceZone")?.addEventListener("click", e => {
     });
   });
 
+  const priceAlertPayloadEl  = document.querySelector("#priceAlertPayloadDisplay");
+  const priceAlertPayloadBtn = document.querySelector("#copyPriceAlertPayload");
+  if (priceAlertPayloadBtn && priceAlertPayloadEl) priceAlertPayloadBtn.addEventListener("click", () => {
+    navigator.clipboard.writeText(withRealSecret(priceAlertPayloadEl.textContent)).then(() => {
+      priceAlertPayloadBtn.textContent = "Copied!";
+      setTimeout(() => { priceAlertPayloadBtn.textContent = "Copy"; }, 2000);
+    });
+  });
+
   const exitUrl = window.location.origin + "/webhook/exit";
   const exitUrlEl = document.querySelector("#exitWebhookUrl");
   const exitBtnEl = document.querySelector("#copyExitWebhook");

@@ -36,6 +36,7 @@ This file and that page list the same items - when adding a fix, update both.
 | A13 | Reversals fit within max account exposure | Set max account exposure to one bot stake. With a position open, send an opposite entry. | Old position closes and the new one opens. No "Signal would exceed max account exposure." | 4582910 (28 Sep) |
 | A14 | A blocked reversal still closes the old position | With a position open, pause its bot (or hit a daily loss limit), then send an opposite entry. Repeat with a wrong secret. | Entry is rejected with "…The opposite position was still closed." and a reversal row follows. With the wrong secret nothing closes. | 4582910 (28 Sep) |
 | A15 | Symbol case and spaces never break an exit | With a position open, send an exit (and separately a /webhook/exit) with the same symbol in mixed case or with a trailing space, e.g. "Volatility_25_Index ". | Position closes. No "No open position exists for this strategy and symbol." | e2199ce (28 Sep) |
+| A17 | Price alert entry payload on Overview | On Overview, click Copy on Price Alert Entry Payload. Paste it into a plain TradingView price alert's message, replace YOUR_BOT_NAME with a real bot name and set long or short, then let it fire. | The pasted secret is the real one. The alert opens a trade on that bot (journal: strategy_entry) instead of being dropped as a 422 with nothing in the journal. A wrong bot name shows up as rejected in the journal. | not yet committed (12 Oct) |
 
 ## B. Opening trades on Deriv
 

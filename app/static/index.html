@@ -178,6 +178,13 @@
                 </div>
               </div>
               <div class="webhook-section" style="border-right:0;border-bottom:1px solid var(--border)">
+                <span class="webhook-label">PRICE ALERT ENTRY PAYLOAD <span class="dim">(plain price / trendline alerts on the webhook URL above - set your bot name and long or short)</span></span>
+                <div class="url-row">
+                  <code id="priceAlertPayloadDisplay" class="url-display dim">{"secret":"YOUR_SECRET","strategy":"YOUR_BOT_NAME","symbol":"{{ticker}}","action":"entry","direction":"long","price":{{close}}}</code>
+                  <button id="copyPriceAlertPayload" class="copy-btn">Copy</button>
+                </div>
+              </div>
+              <div class="webhook-section" style="border-right:0;border-bottom:1px solid var(--border)">
                 <span class="webhook-label">MANUAL EXIT WEBHOOK URL <span class="dim">(trendline / price alerts, independent of the strategy's own exit)</span></span>
                 <div class="url-row">
                   <code id="exitWebhookUrl" class="url-display"></code>
