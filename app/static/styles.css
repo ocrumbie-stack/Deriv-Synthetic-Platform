@@ -637,6 +637,7 @@ canvas { display: block; width: 100%; }
 .switch.on         { background: var(--red); }
 .switch.on span    { background: #fff; transform: translateX(20px); }
 #duplicateBlocking.switch.on { background: var(--green); }
+.telegram-switch.switch.on { background: var(--green); }
 
 input {
   background: var(--panel-2, #16161e);
@@ -819,6 +820,8 @@ tr.clickable:hover td, tr.selected td { background: var(--panel-2, #16161e); }
 }
 
 .copy-btn:hover { background: rgba(68, 136, 255, 0.18); }
+.copy-btn:disabled { cursor: not-allowed; opacity: 0.45; }
+.copy-btn:disabled:hover { background: none; }
 
 /* ── Modal (e.g. manual exit webhook payload) ──────────────────── */
 

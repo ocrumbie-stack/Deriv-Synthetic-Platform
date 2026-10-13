@@ -27,6 +27,7 @@ from dataclasses import dataclass
 import websockets
 from sqlalchemy import or_, select, update
 
+from app import notify
 from app.config import settings
 from app.database import SessionLocal
 from app.deriv import DerivClient, DerivExecutionError
@@ -307,6 +308,7 @@ class TrailingStopMonitor:
                         db, mode, "close_all_target", {"trigger_total": round(total, 2), **target},
                     )
             logger.info("Close-all target hit at %.2f (%s): closed %s, failed %s", total, target, closed, failed)
+            notify.close_all_hit(mode, total, closed, failed)
         except Exception:
             logger.exception("Close-all target failed to close the open positions")
         finally:

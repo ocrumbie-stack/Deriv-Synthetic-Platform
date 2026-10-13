@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     # here. The Settings page can override it (see get_app_settings).
     timezone: str = "UTC"
 
+    # Telegram alerts (see app/notify.py) - off until both are set. Get the
+    # token from @BotFather and the chat id from the bot's getUpdates.
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 

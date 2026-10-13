@@ -21,7 +21,7 @@ from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
 from app.schemas import BotPairOut, BotPairUpdate, CloseAllTarget, ManualExitSignal, PositionTpSl, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
 from app.services import PAIR_DEFAULT_FIELDS, account_exposure, close_all_open_trades, close_all_target, get_app_settings, local_period_start, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal, trade_execution_lock
-from app import auth, trade_audit
+from app import auth, notify, trade_audit
 from app.trade_audit import trade_audit_scheduler
 from app.trailing import trailing_monitor
 
@@ -151,6 +151,7 @@ with SessionLocal() as startup_db:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    notify.start()
     trailing_monitor.start()
     trade_audit_scheduler.start()
     yield
@@ -585,6 +586,7 @@ def risk_settings(db: Session = Depends(get_db)) -> dict:
 @app.patch("/api/risk")
 def update_risk_settings(updates: dict, db: Session = Depends(get_db)) -> dict:
     risk = get_risk_settings(db)
+    was_stopped = risk.emergency_stop
     for field in ("emergency_stop", "duplicate_blocking", "max_account_exposure", "account_daily_loss_limit"):
         if field in updates:
             setattr(risk, field, updates[field])
@@ -600,6 +602,8 @@ def update_risk_settings(updates: dict, db: Session = Depends(get_db)) -> dict:
             )
         risk.execution_mode_override = mode
     db.commit()
+    if bool(risk.emergency_stop) != bool(was_stopped):
+        notify.emergency_stop(bool(risk.emergency_stop))
     return risk_settings(db)
 
 
@@ -628,6 +632,17 @@ def app_settings(db: Session = Depends(get_db)) -> dict:
         "webhook_secret_set": settings.webhook_secret.strip() not in ("", "change-me"),
         "sign_in_enabled": auth.auth_enabled(),
         "allowed_email_count": len(auth.allowed_emails()),
+        "telegram": {
+            "configured": notify.configured(),
+            "missing": [name for name, value in (
+                ("TELEGRAM_BOT_TOKEN", settings.telegram_bot_token),
+                ("TELEGRAM_CHAT_ID", settings.telegram_chat_id),
+            ) if not value.strip()],
+            "events": [
+                {"key": key, "label": label, "enabled": key in notify.enabled_events}
+                for key, label in notify.EVENTS.items()
+            ],
+        },
     }
 
 
@@ -656,10 +671,31 @@ def update_app_settings(updates: dict, db: Session = Depends(get_db)) -> dict:
             except Exception:
                 raise HTTPException(status_code=400, detail=f"Unknown time zone: {value}.")
         row.timezone = value or None
+    if "telegram_events" in updates:
+        # {event key: on/off} - only the events sent change.
+        changes = updates["telegram_events"]
+        if not isinstance(changes, dict) or not set(changes) <= set(notify.EVENTS):
+            raise HTTPException(status_code=400, detail="Unknown Telegram alert event.")
+        muted = set(notify.EVENTS) - notify.enabled_events
+        for key, enabled in changes.items():
+            (muted.discard if enabled else muted.add)(key)
+        row.telegram_muted = ",".join(sorted(muted)) or None
     db.flush()
     get_app_settings(db)
     db.commit()
     return app_settings(db)
+
+
+@app.post("/api/app-settings/telegram-test")
+async def telegram_test() -> dict:
+    """Send a test message straight away, reporting Telegram's own error."""
+    if not notify.configured():
+        raise HTTPException(status_code=400, detail="Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in Railway first.")
+    try:
+        await notify.send_message(f"✅ {notify.mode_tag(settings.execution_mode)} Test alert from {settings.app_name}. Telegram alerts are working.")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {"status": "sent"}
 
 
 @app.get("/api/signals", response_model=list[SignalOut])

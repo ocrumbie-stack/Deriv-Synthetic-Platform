@@ -604,6 +604,18 @@
                 <div id="connectionRows" class="settings-rows"></div>
                 <p class="subtle settings-hint">Tokens and secrets live in Railway variables and are never shown here.</p>
               </div>
+              <div class="risk-panel" id="telegramPanel">
+                <div>
+                  <p class="panel-label">Alerts</p>
+                  <p class="panel-title">Telegram</p>
+                </div>
+                <div id="telegramStatus" class="settings-rows"></div>
+                <div id="telegramEvents" class="settings-rows"></div>
+                <button class="copy-btn" id="telegramTest" type="button">Send test message</button>
+                <p class="subtle settings-hint">Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in Railway to turn alerts on. Each message is tagged [DEMO] or [LIVE].</p>
+                <p class="settings-status" id="telegramTestStatus"></p>
+                <p class="settings-error" id="telegramError" role="alert"></p>
+              </div>
             </div>
           </div>
         </div>

@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
+from app import notify
 from app.config import ENV_EXECUTION_MODE, ENV_MAX_MULTIPLIER_FLOOR, ENV_TIMEZONE, settings
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import AppSettings, BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
@@ -69,6 +70,8 @@ def get_app_settings(db: Session) -> AppSettings:
         db.flush()
     settings.max_multiplier_floor = app_settings.max_multiplier_floor or ENV_MAX_MULTIPLIER_FLOOR
     settings.timezone = app_settings.timezone or ENV_TIMEZONE
+    muted = set(filter(None, (app_settings.telegram_muted or "").split(",")))
+    notify.enabled_events = set(notify.EVENTS) - muted
     return app_settings
 
 
@@ -384,6 +387,7 @@ async def reconcile_open_trade(db: Session, trade: Trade) -> bool:
         update_pair_session(db, pair, bot, trade.net_result)
         update_bot_session(db, bot, trade.net_result)
     db.flush()
+    notify.trade_closed(trade)
     return True
 
 
@@ -427,6 +431,7 @@ async def close_trade(
         pair = get_or_create_bot_pair(db, bot, trade.symbol)
         update_pair_session(db, pair, bot, trade.net_result)
         update_bot_session(db, bot, trade.net_result)
+    notify.trade_closed(trade)
     return result
 
 
@@ -456,6 +461,7 @@ async def close_position_with_signal(
         signal.status = ExecutionStatus.failed
         signal.rejection_reason = str(exc)
         db.commit()
+        notify.order_failed(trade.execution_mode, f"Closing {trade.symbol} ({trade.strategy_name})", exc)
         raise
     db.commit()
     return signal
@@ -584,6 +590,7 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
             except DerivExecutionError as exc:
                 signal.rejection_reason = f"{rejection} Closing the opposite position also failed: {exc}"
         db.commit()
+        notify.signal_rejected(signal)
         db.refresh(signal)
         return ProcessedSignal(signal=signal, trade=stranded)
 
@@ -601,6 +608,7 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
                 signal.status = ExecutionStatus.failed
                 signal.rejection_reason = f"Failed to close opposite position before reversing: {exc}"
                 db.commit()
+                notify.order_failed(signal.execution_mode, f"Reversing {signal.symbol} ({strategy.name})", exc)
                 db.refresh(signal)
                 return ProcessedSignal(signal=signal, trade=opposite)
 
@@ -632,12 +640,14 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
             trade.leverage = result.get("multiplier") or trade.leverage
             trade.execution_status = ExecutionStatus.executed
             signal.status = ExecutionStatus.executed
+            notify.trade_opened(trade)
         except DerivExecutionError as exc:
             trade.execution_status = ExecutionStatus.failed
             trade.status = PositionStatus.closed
             trade.closed_at = datetime.utcnow()
             signal.status = ExecutionStatus.failed
             signal.rejection_reason = str(exc)
+            notify.order_failed(trade.execution_mode, f"Opening {trade.direction.value} {trade.symbol} ({strategy.name})", exc)
 
     elif payload.action == SignalAction.exit:
         trade = find_open_trade(db, strategy.id, payload.symbol.upper())
@@ -649,6 +659,7 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
                 signal.status = ExecutionStatus.failed
                 signal.rejection_reason = str(exc)
                 db.commit()
+                notify.order_failed(trade.execution_mode, f"Closing {trade.symbol} ({strategy.name})", exc)
                 db.refresh(signal)
                 return ProcessedSignal(signal=signal, trade=trade)
 
@@ -707,6 +718,7 @@ async def process_manual_exit(db: Session, payload: ManualExitSignal) -> Process
 
     if rejection:
         db.commit()
+        notify.signal_rejected(signal)
         db.refresh(signal)
         return ProcessedSignal(signal=signal, trade=None)
 
@@ -717,6 +729,7 @@ async def process_manual_exit(db: Session, payload: ManualExitSignal) -> Process
     except DerivExecutionError as exc:
         signal.status = ExecutionStatus.failed
         signal.rejection_reason = str(exc)
+        notify.order_failed(mode, f"Closing {symbol} ({payload.strategy})", exc)
 
     db.commit()
     db.refresh(signal)

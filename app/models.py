@@ -61,6 +61,9 @@ class AppSettings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     max_multiplier_floor: Mapped[int | None] = mapped_column(Integer, nullable=True)
     timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Comma-separated Telegram alert events switched off (keys of
+    # app.notify.EVENTS) - NULL means every event is on.
+    telegram_muted: Mapped[str | None] = mapped_column(String(255), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

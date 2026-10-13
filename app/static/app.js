@@ -2031,6 +2031,19 @@ function renderAppSettings(s) {
   document.querySelector("#connectionRows").innerHTML = deriv + balanceRow +
     row("Webhook secret", s.webhook_secret_set ? "set in Railway" : "still the default — alerts can be forged", s.webhook_secret_set ? "Set" : "Default", s.webhook_secret_set ? "ok" : "bad") +
     row("Dashboard sign-in", s.sign_in_enabled ? `Google · ${s.allowed_email_count} allowed email${s.allowed_email_count === 1 ? "" : "s"}` : "anyone with the URL can open the dashboard", s.sign_in_enabled ? "On" : "Off", s.sign_in_enabled ? "ok" : "warn");
+
+  // Telegram alerts - status plus one switch per event.
+  const tg = s.telegram;
+  document.querySelector("#telegramStatus").innerHTML = tg.configured
+    ? row("Telegram bot", "token and chat id set in Railway", "Ready", "ok")
+    : row("Telegram bot", `Missing ${tg.missing.map(escapeAttr).join(", ")}`, "Off", "warn");
+  document.querySelector("#telegramEvents").innerHTML = tg.events.map(e => `
+    <div class="switch-row">
+      <span>${escapeAttr(e.label)}</span>
+      <button class="switch telegram-switch${e.enabled ? " on" : ""}" type="button" data-telegram-event="${escapeAttr(e.key)}"
+        aria-pressed="${e.enabled}" aria-label="${escapeAttr(e.label)} alerts"><span></span></button>
+    </div>`).join("");
+  document.querySelector("#telegramTest").disabled = !tg.configured;
 }
 
 async function saveAppSetting(body, errorSel) {
@@ -2053,6 +2066,30 @@ document.querySelector("#timezoneSelect")?.addEventListener("change", e => {
 });
 document.querySelector("#useDeviceZone")?.addEventListener("click", e => {
   saveAppSetting({ timezone: e.currentTarget.dataset.zone }, "#tzError");
+});
+
+document.querySelector("#telegramEvents")?.addEventListener("click", e => {
+  const btn = e.target.closest("[data-telegram-event]");
+  if (!btn) return;
+  const on = btn.getAttribute("aria-pressed") !== "true";
+  saveAppSetting({ telegram_events: { [btn.dataset.telegramEvent]: on } }, "#telegramError");
+});
+document.querySelector("#telegramTest")?.addEventListener("click", async e => {
+  const btn = e.currentTarget;
+  const statusEl = document.querySelector("#telegramTestStatus");
+  const errEl = document.querySelector("#telegramError");
+  statusEl.textContent = errEl.textContent = "";
+  btn.disabled = true;
+  try {
+    const r = await fetch("/api/app-settings/telegram-test", { method: "POST" });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.detail || "Couldn't send the test message.");
+    statusEl.textContent = "Sent - check Telegram.";
+  } catch (err) {
+    errEl.textContent = err.message;
+  } finally {
+    btn.disabled = !lastAppSettings?.telegram?.configured;
+  }
 });
 
 // Webhook URL display + copy (multiple instances)
