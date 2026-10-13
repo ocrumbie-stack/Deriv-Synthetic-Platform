@@ -73,6 +73,7 @@ This file and that page list the same items - when adding a fix, update both.
 | D3 | Set TP/SL in dollars | Exit → Set TP/SL ($). Enter values, then clear one. | Shows current values from Deriv; new values appear on the Deriv contract; a blank side is removed. | c1f53f9 (27 Sep) |
 | D4 | Exit webhook payload | Exit → Get exit webhook. | Modal with URL and payload, each with its own Copy button. No "Copy & close". | 8234b05 (25 Sep) |
 | D7 | Close all | Open Positions with two or more trades → Close all → confirm. Then look with no positions open. | Dialog lists every position and names the mode. All close at market (journal: manual_close); only the current mode's positions are touched. If one fails, the rest still close and a dialog names the ones still open. Button hidden when nothing is open, with no jump in the header. | be059a8 (28 Sep) |
+| D8 | Close-all target | Open Positions with two or more trades → Close-all target → enter a profit target a little above the current Running P/L (and separately a loss limit). Then switch mode, and finally clear both fields. | Header button and the Running P/L card show the target. Once the summed P/L reaches it, every position in the current mode closes (journal: close_all_target) and the target clears. The other mode's positions and target are untouched. Works with the dashboard closed. Blank fields remove it. | e1f0588 (12 Oct) |
 | D5 | In-app dialogs replace browser pop-ups | Trigger a close, delete a bot, switch to live. | Styled dialog with position details; errors show inline. No browser confirm/alert boxes. | fe93881 (27 Sep) |
 | D6 | Trailing stop | Run a bot with trail start/distance set and let a trade go into profit then pull back. | Closes once profit drops the trail distance below its peak; journal reason trailing_stop. Peak survives a redeploy. | 161cb0c (26 Sep) |
 
@@ -105,7 +106,7 @@ This file and that page list the same items - when adding a fix, update both.
 
 | ID | Check | How to test | Expect | Commit |
 |---|---|---|---|---|
-| G1 | Every row has a reason | Scroll the journal. | Each row shows one of: strategy_entry, strategy_exit, reversal, webhook_exit, manual_close, price_exit, trailing_stop, deriv_close — or the error for failed/rejected rows. | b7c685c (26 Sep) |
+| G1 | Every row has a reason | Scroll the journal. | Each row shows one of: strategy_entry, strategy_exit, reversal, webhook_exit, manual_close, price_exit, trailing_stop, close_all_target, deriv_close — or the error for failed/rejected rows. | b7c685c (26 Sep) |
 | G2 | Reversal and dashboard closes are logged | Do a reversal and a dashboard close. | Both appear in the journal with their reason. | 8dd0dac (25 Sep) |
 
 ## H. Demo and live
