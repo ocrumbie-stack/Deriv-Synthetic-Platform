@@ -158,3 +158,12 @@ This file and that page list the same items - when adding a fix, update both.
 | K1 | Google sign-in protects the dashboard | Open the dashboard in a private window. | Google sign-in required; only allowed emails get in. Webhooks still work without sign-in. | eea0300 (26 Sep) |
 | K2 | Data survives deploys | Check bots and history after a redeploy. | Nothing lost. | f79d4ac (13 Sep) |
 | K3 | Settings shows connections without secrets | Open Settings → Accounts & Access. Switch demo/live once. | Deriv demo and live show Ready (or name the missing variable), the account in use is marked, Balance check says OK (or the Deriv error), Webhook secret says Set, Sign-in says On with your email count. No token or secret value appears anywhere on the page or in /api/app-settings. | a24778d (30 Sep) |
+
+## L. Telegram alerts
+
+| ID | Check | How to test | Expect | Commit |
+|---|---|---|---|---|
+| L1 | Telegram connects | Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in Railway, open Settings → Telegram and click Send test message. Then set a wrong chat id and try again. | Telegram bot shows Ready and the test message arrives tagged [DEMO]/[LIVE]. With the wrong chat id the page shows Telegram's own error ("chat not found"). The token never appears on the page, in /api/app-settings or in Railway logs. | 6f51d36 (12 Oct) |
+| L2 | Trade alerts arrive | Open a trade with a webhook, then close it (exit signal, dashboard close, and once by a Deriv TP/SL). | One "Opened" message with bot, stake and multiplier; one "Closed" message per trade with P/L and how it closed (e.g. "closed on Deriv (TP/SL or stop-out)"). Each tagged with the right mode. | 6f51d36 (12 Oct) |
+| L3 | Failure, rejection, close-all and emergency stop alerts | Send an entry with no bot, force a failed order, let the close-all target fire, and turn the emergency stop on then off. | A "Rejected" message with the reason, an "Order failed" message with Deriv's error, a "Close-all target hit" message with the total and count, and an ON then OFF emergency stop message. Trading is never delayed when Telegram is down. | 6f51d36 (12 Oct) |
+| L4 | Alert switches and spam guards | Switch off Signal rejected on Settings, send a rejected signal, redeploy. Then fire more than 20 alerts in a minute. | No message for the switched-off event, and the switch stays off after the redeploy. The same message is not repeated within 5 minutes, and no more than 20 alerts go out per minute (the rest are logged as dropped). | 6f51d36 (12 Oct) |
