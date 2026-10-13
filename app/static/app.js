@@ -690,12 +690,14 @@ function renderPositionsSummary(rows) {
     </div>`;
 }
 
-// "+$50.00 or −$20.00" - whichever sides of the close-all target are set.
+// "+$50.00 or −$20.00" - whichever sides of the close-all target are set,
+// plus "· repeats" when it stays armed after firing.
 function closeAllTargetText(target) {
-  return [
+  const levels = [
     target.take_profit != null ? `+${currency.format(target.take_profit)}` : null,
     target.stop_loss   != null ? `−${currency.format(target.stop_loss)}`   : null,
   ].filter(Boolean).join(" or ");
+  return target.repeat ? `${levels} · repeats` : levels;
 }
 
 function signedCurrency(v) { return (v >= 0 ? "+" : "") + currency.format(v); }
@@ -915,7 +917,7 @@ document.querySelector("#closeAllTarget")?.addEventListener("click", () => {
   const mode = (risk?.execution_mode || "").toUpperCase();
   openDialog({
     title: "Close-all target",
-    message: `Closes every ${mode} position at market once the running P/L of all of them together reaches either level. It fires once, then clears.`,
+    message: `Closes every ${mode} position at market once the running P/L of all of them together reaches either level.`,
     details: [
       ["Open positions", String(positions.length)],
       ["Running P/L now", lastRunningPnl === null ? "—" : signedCurrency(lastRunningPnl), lastRunningPnl === null ? "" : pnlClass(lastRunningPnl)],
@@ -923,11 +925,14 @@ document.querySelector("#closeAllTarget")?.addEventListener("click", () => {
     fields: [
       { name: "take_profit", label: "Close all when profit reaches", prefix: "$", value: current.take_profit, placeholder: "None" },
       { name: "stop_loss",   label: "Close all when loss reaches",   prefix: "$", value: current.stop_loss,   placeholder: "None" },
+      { name: "repeat", type: "checkbox", label: "Run until changed", value: current.repeat,
+        hint: "Keeps the target after it fires, so it applies to every new set of positions. Unticked, it fires once and clears." },
     ],
     note: "Leave both blank to remove the target. The platform watches it, so it only fires while the server is running.",
     confirmLabel: "Save target",
-    onSubmit: async ({ take_profit, stop_loss }) => {
+    onSubmit: async ({ take_profit, stop_loss, repeat }) => {
       const body = {
+        repeat,
         take_profit: take_profit === "" ? null : parsePositive(take_profit, "Profit target must be a positive dollar amount."),
         stop_loss:   stop_loss   === "" ? null : parsePositive(stop_loss, "Loss limit must be a positive dollar amount."),
       };
@@ -979,7 +984,11 @@ function openDialog({ title, message, details = [], fields = [], note, confirmLa
         ${message ? `<p class="dialog-message">${escapeAttr(message)}</p>` : ""}
         ${details.length ? `<dl class="dialog-details">${details.map(([k, v, cls]) => `
           <div><dt>${escapeAttr(k)}</dt><dd class="${escapeAttr(cls || "")}">${escapeAttr(v)}</dd></div>`).join("")}</dl>` : ""}
-        ${fields.map(f => `
+        ${fields.map(f => f.type === "checkbox" ? `
+          <label class="dialog-check">
+            <input type="checkbox" name="${escapeAttr(f.name)}"${f.value ? " checked" : ""} />
+            <span>${escapeAttr(f.label)}${f.hint ? `<span class="dialog-hint">${escapeAttr(f.hint)}</span>` : ""}</span>
+          </label>` : `
           <label class="dialog-field">
             <span class="webhook-label">${escapeAttr(f.label)}</span>
             <span class="dialog-input${f.prefix ? " has-prefix" : ""}">
@@ -1014,7 +1023,10 @@ function openDialog({ title, message, details = [], fields = [], note, confirmLa
     form.addEventListener("submit", async e => {
       e.preventDefault();
       if (busy) return;
-      const values = Object.fromEntries(fields.map(f => [f.name, form.elements[f.name].value.trim()]));
+      const values = Object.fromEntries(fields.map(f => {
+        const input = form.elements[f.name];
+        return [f.name, f.type === "checkbox" ? input.checked : input.value.trim()];
+      }));
       busy = true;
       error.hidden = true;
       form.querySelectorAll("button, input").forEach(n => { n.disabled = true; });

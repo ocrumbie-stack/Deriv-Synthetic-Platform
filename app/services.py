@@ -486,7 +486,11 @@ def close_all_target(risk: RiskSettings, mode: str) -> dict | None:
     """The close-all target armed for `mode`, or None."""
     if risk.close_all_mode != mode or (risk.close_all_take_profit is None and risk.close_all_stop_loss is None):
         return None
-    return {"take_profit": risk.close_all_take_profit, "stop_loss": risk.close_all_stop_loss}
+    return {
+        "take_profit": risk.close_all_take_profit,
+        "stop_loss": risk.close_all_stop_loss,
+        "repeat": bool(risk.close_all_repeat),
+    }
 
 
 async def close_reversed_position(

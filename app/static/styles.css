@@ -903,6 +903,10 @@ tr.clickable:hover td, tr.selected td { background: var(--panel-2, #16161e); }
 
 .dialog-field { display: grid; gap: 6px; }
 
+.dialog-check { align-items: flex-start; cursor: pointer; display: flex; gap: 10px; }
+.dialog-check input { accent-color: var(--blue); flex: none; height: 16px; margin: 2px 0 0; width: 16px; }
+.dialog-check > span { display: grid; gap: 2px; }
+
 .dialog-input { display: block; position: relative; }
 .dialog-input input { font-family: 'JetBrains Mono', Consolas, monospace; min-height: 38px; width: 100%; }
 .dialog-input.has-prefix input { padding-left: 24px; }

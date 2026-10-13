@@ -68,10 +68,12 @@ class PositionTpSl(BaseModel):
 
 class CloseAllTarget(BaseModel):
     """Dollar levels for the summed unrealized P/L of all open positions.
-    None leaves that side unset."""
+    None leaves that side unset. `repeat` keeps the target armed after it
+    fires instead of clearing it."""
 
     take_profit: float | None = Field(default=None, gt=0)
     stop_loss: float | None = Field(default=None, gt=0)
+    repeat: bool = False
 
 
 class SignalBotCreate(BaseModel):

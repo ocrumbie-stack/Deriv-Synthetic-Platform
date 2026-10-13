@@ -49,9 +49,10 @@ class CloseAllTargetBase:
         self.db.commit()
         services.get_risk_settings(self.db)
 
-    def arm(self, take_profit=None, stop_loss=None, mode="live"):
+    def arm(self, take_profit=None, stop_loss=None, mode="live", repeat=False):
         risk = services.get_risk_settings(self.db)
         risk.close_all_take_profit, risk.close_all_stop_loss, risk.close_all_mode = take_profit, stop_loss, mode
+        risk.close_all_repeat = repeat
         self.db.commit()
 
 
@@ -70,7 +71,10 @@ class CloseAllTargetApiTests(CloseAllTargetBase, unittest.TestCase):
     def test_set_and_clear(self):
         r = self.client.put("/api/open-positions/close-all-target", json={"take_profit": 50, "stop_loss": None})
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(r.json()["close_all_target"], {"take_profit": 50, "stop_loss": None})
+        self.assertEqual(r.json()["close_all_target"], {"take_profit": 50, "stop_loss": None, "repeat": False})
+
+        r = self.client.put("/api/open-positions/close-all-target", json={"stop_loss": 20, "repeat": True})
+        self.assertEqual(r.json()["close_all_target"], {"take_profit": None, "stop_loss": 20, "repeat": True})
 
         r = self.client.delete("/api/open-positions/close-all-target")
         self.assertIsNone(r.json()["close_all_target"])
@@ -144,6 +148,34 @@ class CloseAllTargetMonitorTests(CloseAllTargetBase, unittest.IsolatedAsyncioTes
         self.assertEqual(self.statuses()["1"], PositionStatus.open)
         await self.tick("2", -3)
         self.assertEqual(self.statuses()["1"], PositionStatus.closed)
+
+    async def test_repeat_stays_armed_for_the_next_positions(self):
+        self.arm(take_profit=10, repeat=True)
+        self.load()
+        await self.tick("1", 6)
+        await self.tick("2", 6)
+        self.assertEqual(self.statuses()["1"], PositionStatus.closed)
+        risk = self.db.get(RiskSettings, 1)
+        self.db.refresh(risk)
+        self.assertEqual(risk.close_all_take_profit, 10)
+
+        # Stale profits from the closed set can't fire it before the next sync.
+        self.assertIsNone(self.monitor._basket_target)
+        await self.tick("2", 20)
+
+        strategy = self.trades["1"].strategy_id
+        new = Trade(strategy_id=strategy, strategy_name="v25", symbol="VOLATILITY_50_INDEX", direction="long",
+                    entry_price=1.0, size=5.0, leverage=1, execution_mode="live", exchange_order_id="4")
+        self.db.add(new)
+        self.db.commit()
+        self.load()
+        self.assertEqual(set(self.monitor._tracked), {"4"})
+        await self.tick("4", 4)
+        self.db.refresh(new)
+        self.assertEqual(new.status, PositionStatus.open)
+        await self.tick("4", 10.5)
+        self.db.refresh(new)
+        self.assertEqual(new.status, PositionStatus.closed)
 
     async def test_target_from_other_mode_is_ignored(self):
         self.arm(take_profit=1, mode="demo")

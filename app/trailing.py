@@ -13,7 +13,8 @@ sold once the spot reaches it.
 
 And while Open Positions' close-all target is armed, every open trade is
 subscribed so their live profits can be summed: once the total reaches the
-target's take profit or stop loss, everything is closed and the target clears.
+target's take profit or stop loss, everything is closed and the target clears
+(or, set to repeat, stays armed for the next set of positions).
 """
 
 import asyncio
@@ -285,7 +286,7 @@ class TrailingStopMonitor:
         if not ((take_profit is not None and total >= take_profit) or (stop_loss is not None and total <= -stop_loss)):
             return False
         self._basket_closing = True
-        # One-shot: don't fire again before the next sync sees it cleared.
+        # Don't fire again before the next sync re-reads the target.
         self._basket_target = None
         self._spawn(self._close_all(total, target))
         return True
@@ -299,8 +300,9 @@ class TrailingStopMonitor:
                     # Cancelled, changed, or the mode switched since the tick.
                     if not risk or close_all_target(risk, mode) != target:
                         return
-                    risk.close_all_take_profit = risk.close_all_stop_loss = risk.close_all_mode = None
-                    db.commit()
+                    if not target["repeat"]:
+                        risk.close_all_take_profit = risk.close_all_stop_loss = risk.close_all_mode = None
+                        db.commit()
                     closed, failed = await close_all_open_trades(
                         db, mode, "close_all_target", {"trigger_total": round(total, 2), **target},
                     )
@@ -308,6 +310,10 @@ class TrailingStopMonitor:
         except Exception:
             logger.exception("Close-all target failed to close the open positions")
         finally:
+            # Profits seen before the close are stale; a repeating target
+            # waits for the next sync's fresh set of open positions.
+            self._basket_target = None
+            self._basket = set()
             self._basket_closing = False
 
     async def _close(self, contract_id: str, tracked: _Tracked, price: float | None, source: str, payload: dict) -> None:

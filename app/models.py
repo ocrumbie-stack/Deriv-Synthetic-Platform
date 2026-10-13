@@ -43,10 +43,12 @@ class RiskSettings(Base):
     account_daily_loss_limit: Mapped[float] = mapped_column(Float, default=0.0)
     # Open Positions' close-all target: once the summed unrealized P/L of every
     # open position reaches +take_profit or -stop_loss, all of them are closed
-    # and the target clears. It only applies in the mode it was set in.
+    # and the target clears - unless close_all_repeat keeps it for the next
+    # set of positions. It only applies in the mode it was set in.
     close_all_take_profit: Mapped[float | None] = mapped_column(Float, nullable=True)
     close_all_stop_loss: Mapped[float | None] = mapped_column(Float, nullable=True)
     close_all_mode: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    close_all_repeat: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

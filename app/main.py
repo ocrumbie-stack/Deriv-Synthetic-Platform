@@ -738,13 +738,15 @@ async def close_all_positions(db: Session = Depends(get_db)) -> dict:
 def set_close_all_target(target: CloseAllTarget, db: Session = Depends(get_db)) -> dict:
     """Arm the close-all target for the current mode: every open position is
     closed once their summed unrealized P/L reaches +take_profit or
-    -stop_loss. The trailing monitor watches it, then clears it."""
+    -stop_loss. The trailing monitor watches it, then clears it unless
+    `repeat` is set."""
     if target.take_profit is None and target.stop_loss is None:
         raise HTTPException(status_code=422, detail="Enter a profit target, a loss limit, or both.")
     risk = get_risk_settings(db)
     risk.close_all_take_profit = target.take_profit
     risk.close_all_stop_loss = target.stop_loss
     risk.close_all_mode = settings.execution_mode.lower()
+    risk.close_all_repeat = target.repeat
     db.commit()
     return risk_settings(db)
 
@@ -753,6 +755,7 @@ def set_close_all_target(target: CloseAllTarget, db: Session = Depends(get_db)) 
 def clear_close_all_target(db: Session = Depends(get_db)) -> dict:
     risk = get_risk_settings(db)
     risk.close_all_take_profit = risk.close_all_stop_loss = risk.close_all_mode = None
+    risk.close_all_repeat = False
     db.commit()
     return risk_settings(db)
 
