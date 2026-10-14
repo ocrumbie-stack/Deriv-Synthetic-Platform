@@ -91,6 +91,7 @@ This file and that page list the same items - when adding a fix, update both.
 | E7 | Hedge checkbox layout | Open the bot form. | Hedge checkbox lines up with its label. | 41f52f8 (9 Sep) |
 | E8 | TP / SL column names manual exits | Set a bot's trail distance; on one of its open trades use Exit → Close at price, and on another Exit → Set TP/SL ($). Then cancel the close price and clear the TP/SL. | Bot's TP / SL column lists Trailing, Close at price, Manual TP/SL (words only, under any % values). Each disappears once removed; a bot with none still shows — / —. | 53ea4d2 (28 Sep) |
 | E9 | Bots sorted by Session P&L | Open Signal Bots with three or more bots, including one with an open position. | Rows run highest Session P&L (closed + unrealized) to lowest. Order only changes when you reopen the page or edit a bot, not on each refresh. | 6d7f429 (30 Sep) |
+| E10 | Price alert entry payload on each bot | Open Signal Bots, expand a bot and click Price Alert Entry. Click Copy on the Long row, paste it into a plain TradingView price alert's message and let it fire. Repeat with Short. | The bot's own name is already filled in and the pasted secret is the real one. Each alert opens a trade on that bot in the right direction (journal: strategy_entry). Same payload as Overview's (A17). | 71ba1fa (14 Oct) |
 
 ## F. Leverage page
 
