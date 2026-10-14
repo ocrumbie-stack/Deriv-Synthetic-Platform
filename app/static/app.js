@@ -2165,6 +2165,12 @@ function botTemplate(name) {
   }, null, 2);
 }
 
+// Same shape as the Overview's price alert entry payload. Built by hand so
+// {{close}} stays unquoted - TradingView substitutes a bare number.
+function priceAlertTemplate(name, direction) {
+  return `{"secret":${JSON.stringify(_webhookSecret)},"strategy":${JSON.stringify(name)},"symbol":"{{ticker}}","action":"entry","direction":"${direction}","price":{{close}}}`;
+}
+
 function loadBotTemplate(name) {
   const el = document.querySelector("#botTemplateDisplay");
   if (el) el.textContent = botTemplate(name);
@@ -2371,6 +2377,7 @@ async function refreshBots() {
             <div style="display:flex;align-items:center;gap:10px">
               <span style="font-weight:700;font-size:15px">${b.name}</span>
               <button class="nav-link-btn" data-toggle-tpl="${b.id}" style="font-size:10px;padding:2px 8px">TradingView Alert ▾</button>
+              <button class="nav-link-btn" data-toggle-price-alert="${b.id}" style="font-size:10px;padding:2px 8px">Price Alert Entry ▾</button>
             </div>
             <div style="display:flex;align-items:center;gap:20px">
               <div style="display:flex;align-items:center;gap:8px">
@@ -2393,6 +2400,15 @@ async function refreshBots() {
               <code class="url-display dim" style="font-size:10px;white-space:pre;overflow-x:auto;line-height:1.6">${escapeAttr(botTemplate(b.name))}</code>
               <button class="copy-btn" data-copy-tpl="${escapeAttr(b.name)}" style="align-self:stretch;font-size:11px">Copy</button>
             </div>
+          </div>
+          <div id="bot-price-alert-${b.id}" style="display:none;margin-bottom:18px">
+            <span class="webhook-label" style="display:block;margin-bottom:8px">Plain price / trendline alerts on the TradingView webhook URL</span>
+            ${["long", "short"].map(dir => `
+            <div class="url-row" style="margin-bottom:6px">
+              <span class="bot-field-label" style="margin-bottom:0;min-width:42px;align-self:center">${dir === "long" ? "Long" : "Short"}</span>
+              <code class="url-display dim" style="font-size:10px;white-space:pre;overflow-x:auto">${escapeAttr(priceAlertTemplate(b.name, dir))}</code>
+              <button class="copy-btn" data-copy-price-alert="${escapeAttr(b.name)}" data-direction="${dir}" style="align-self:stretch;font-size:11px">Copy</button>
+            </div>`).join("")}
           </div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:18px 28px">
             <div>
@@ -2479,6 +2495,26 @@ async function refreshBots() {
   el.querySelectorAll("[data-copy-tpl]").forEach(btn => {
     btn.addEventListener("click", () => {
       navigator.clipboard.writeText(withRealSecret(botTemplate(btn.dataset.copyTpl))).then(() => {
+        btn.textContent = "Copied!";
+        setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+      });
+    });
+  });
+
+  el.querySelectorAll("[data-toggle-price-alert]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const panel = document.querySelector(`#bot-price-alert-${btn.dataset.togglePriceAlert}`);
+      if (!panel) return;
+      const open = panel.style.display !== "none";
+      panel.style.display = open ? "none" : "block";
+      btn.textContent = open ? "Price Alert Entry ▾" : "Price Alert Entry ▲";
+    });
+  });
+
+  el.querySelectorAll("[data-copy-price-alert]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const text = priceAlertTemplate(btn.dataset.copyPriceAlert, btn.dataset.direction);
+      navigator.clipboard.writeText(withRealSecret(text)).then(() => {
         btn.textContent = "Copied!";
         setTimeout(() => { btn.textContent = "Copy"; }, 2000);
       });
