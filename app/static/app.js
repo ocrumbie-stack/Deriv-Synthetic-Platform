@@ -1239,6 +1239,16 @@ function historyStats(rows) {
   };
 }
 
+// The frozen Symbol column sits right after Strategy, whose width depends on
+// the bot names - re-measure whenever it changes, including when the page
+// first becomes visible (a hidden table measures 0).
+const historyFirstCol = document.querySelector("#historyTable th");
+if (historyFirstCol && window.ResizeObserver) {
+  new ResizeObserver(() => {
+    historyFirstCol.closest("table").style.setProperty("--frozen-left", `${historyFirstCol.offsetWidth}px`);
+  }).observe(historyFirstCol);
+}
+
 function renderHistory(rows) {
   const el = document.querySelector("#history");
   const filterEl = document.querySelector("#historySymbolFilter");
