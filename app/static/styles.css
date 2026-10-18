@@ -436,6 +436,7 @@ body {
 .chart-header {
   align-items: center;
   display: flex;
+  gap: 8px;
   justify-content: space-between;
   padding: 14px 18px 10px;
 }

@@ -40,12 +40,28 @@ const pnlChartState          = { data: null };
 const signalActivityState    = { data: null };
 const symbolPerfState        = { rows: null };
 
-function equityCurveToPnlSeries(curve, period) {
-  return (curve || []).map(p => ({
-    t: new Date(utc(p.time)).toLocaleString(undefined,
-      period === "today" ? { hour: "2-digit", minute: "2-digit" } : { month: "numeric", day: "numeric" }),
-    pnl: p.cumulative_net,
-  }));
+function equityCurveToPnlSeries(curve, period, history, balanceNow) {
+  // No balance history is stored, so walk back from Deriv's current balance:
+  // undo every buy (-stake) and close (+stake + net) that happened after each
+  // point. Deposits or withdrawals since then would shift the older points.
+  const moves = [];
+  (history || []).forEach(t => {
+    if (t.execution_status === "failed") return;
+    moves.push({ at: new Date(utc(t.opened_at)).getTime(), cash: -t.size });
+    if (t.closed_at) moves.push({ at: new Date(utc(t.closed_at)).getTime(), cash: t.size + t.net_result });
+  });
+  const balanceAt = at => balanceNow == null ? null
+    : moves.reduce((bal, m) => m.at > at ? bal - m.cash : bal, balanceNow);
+
+  return (curve || []).map(p => {
+    const at = new Date(utc(p.time)).getTime();
+    return {
+      t: new Date(at).toLocaleString(undefined,
+        period === "today" ? { hour: "2-digit", minute: "2-digit" } : { month: "numeric", day: "numeric" }),
+      pnl: p.cumulative_net,
+      balance: balanceAt(at),
+    };
+  });
 }
 
 function buildActivityBuckets(signals, period) {
@@ -1380,15 +1396,27 @@ function topRoundRect(ctx, x, y, w, h, r) {
 
 // ─── P&L Chart ───────────────────────────────────────────────────────────────
 
+// Axis label that stays readable at any scale: "$1.2k" for big ranges,
+// "$12" or "$1.5" for the small ones a $10-stake account actually has.
+function compactUsd(v, span) {
+  const sign = v < 0 ? "-" : "";
+  const a = Math.abs(v);
+  if (span >= 1000) return `${sign}$${(a / 1000).toFixed(span >= 10000 ? 0 : 1)}k`;
+  return `${sign}$${a.toFixed(span >= 20 ? 0 : 1)}`;
+}
+
 function renderPnlChart() {
-  const data = equityCurveToPnlSeries(latestState.analytics.equity_curve, activePeriod);
+  const balanceNow = latestState.balance?.equity ?? null;
+  const data = equityCurveToPnlSeries(latestState.analytics.equity_curve, activePeriod, latestState.history, balanceNow);
   const lastPnl = data.length ? data[data.length - 1].pnl : 0;
   const isPos = lastPnl >= 0;
   const pnlEl = document.querySelector("#pnlHeadline");
   if (pnlEl) {
-    pnlEl.textContent = (isPos ? "+" : "") + "$" + Math.abs(lastPnl).toLocaleString();
+    pnlEl.textContent = (isPos ? "+" : "-") + currency.format(Math.abs(lastPnl));
     pnlEl.style.color = isPos ? "#22c55e" : "#ef4444";
   }
+  const balEl = document.querySelector("#pnlBalance");
+  if (balEl) balEl.textContent = balanceNow == null ? "" : `Balance ${currency.format(balanceNow)}`;
   drawPnlChart(document.querySelector("#pnlChart"), data, null);
 }
 
@@ -1431,7 +1459,7 @@ function drawPnlChart(canvas, data, hoverX) {
   ctx.fillStyle = "#64748b"; ctx.font = "10px monospace"; ctx.textAlign = "right";
   for (let i = 0; i <= 4; i++) {
     const v = max - (span / 4) * i;
-    ctx.fillText(`$${(v / 1000).toFixed(0)}k`, pad.left - 4, pad.top + (cH / 4) * i + 4);
+    ctx.fillText(compactUsd(v, span), pad.left - 4, pad.top + (cH / 4) * i + 4);
   }
 
   // Zero reference line — white 15% opacity, dashed
@@ -1477,7 +1505,8 @@ function drawPnlChart(canvas, data, hoverX) {
     ctx.fillStyle = "#111116";
     ctx.beginPath(); ctx.arc(cx, cy, 1.5, 0, Math.PI * 2); ctx.fill();
 
-    const tW = 128, tH = 46;
+    const hasBal = pt.balance != null;
+    const tW = 140, tH = hasBal ? 62 : 46;
     const tx = cx + 10 + tW > width - 8 ? cx - tW - 10 : cx + 10;
     const ty = Math.max(pad.top, Math.min(cy - tH / 2, height - pad.bottom - tH));
     ctx.fillStyle = "#111318"; ctx.strokeStyle = "rgba(255,255,255,0.08)"; ctx.lineWidth = 1;
@@ -1486,7 +1515,11 @@ function drawPnlChart(canvas, data, hoverX) {
     ctx.fillStyle = "#94a3b8"; ctx.font = "10px monospace"; ctx.textAlign = "left";
     ctx.fillText(pt.t, tx + 10, ty + 16);
     ctx.fillStyle = lineClr; ctx.font = "700 12px monospace";
-    ctx.fillText("$" + pt.pnl.toLocaleString(), tx + 10, ty + 33);
+    ctx.fillText((pt.pnl < 0 ? "-" : "+") + currency.format(Math.abs(pt.pnl)), tx + 10, ty + 33);
+    if (hasBal) {
+      ctx.fillStyle = "#94a3b8"; ctx.font = "10px monospace";
+      ctx.fillText(`Bal ${currency.format(pt.balance)}`, tx + 10, ty + 51);
+    }
   }
 }
 
