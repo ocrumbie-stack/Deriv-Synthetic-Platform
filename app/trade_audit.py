@@ -116,7 +116,8 @@ async def run_audit() -> AuditResult:
                     continue
                 claimed.add(tx.get("contract_id"))
                 result.matched += 1
-                real_net = round(float(tx["sell_price"]) - float(tx["buy_price"]) - trade.fees, 2)
+                # Deriv's sell - buy is already net of its commission (trade.fees).
+                real_net = round(float(tx["sell_price"]) - float(tx["buy_price"]), 2)
                 trade.exchange_order_id = str(tx["contract_id"])
                 if abs(real_net - trade.net_result) > TOLERANCE:
                     old_net = trade.net_result

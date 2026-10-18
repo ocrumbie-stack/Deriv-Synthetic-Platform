@@ -286,7 +286,7 @@ def validate_signal(db: Session, payload: WebhookSignal, strategy: Strategy, bot
     return None
 
 
-def deriv_trade_gross(trade: Trade, profit) -> float:
+def deriv_trade_profit(trade: Trade, profit) -> float:
     """A closed trade's P&L, taken only from Deriv's own reported profit.
 
     Never recomputed from underlying prices: (exit - entry) * stake ignores
@@ -312,6 +312,38 @@ def deriv_trade_gross(trade: Trade, profit) -> float:
         profit, trade.id, trade.exchange_order_id, trade.size, IMPLAUSIBLE_PROFIT_STAKE_MULTIPLE, stake_bound,
     )
     return stake_bound if profit > 0 else -stake_bound
+
+
+def _as_float(value) -> float | None:
+    try:
+        return float(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def apply_contract_details(trade: Trade, contract: dict | None) -> None:
+    """Take a trade's entry price and fees from Deriv's own contract record.
+
+    The webhook's price is TradingView's alert price, which can sit hundreds
+    of points from where Deriv actually filled - so a short could show a
+    lower exit than entry and still have lost. Commission on a Multiplier
+    is already taken out of Deriv's reported profit, so it is recorded as
+    fees to make gross (before commission) and net P/L genuinely differ.
+    """
+    if not contract:
+        return
+    entry_spot = _as_float(contract.get("entry_spot"))
+    if entry_spot:
+        trade.entry_price = entry_spot
+    commission = _as_float(contract.get("commission"))
+    if commission is not None:
+        trade.fees = round(commission, 8)
+
+
+def record_close_pnl(trade: Trade, profit) -> None:
+    """Deriv's profit is already net of commission - gross adds it back."""
+    trade.net_result = deriv_trade_profit(trade, profit)
+    trade.profit_loss = round(trade.net_result + trade.fees, 8)
 
 
 async def get_live_unrealized_pnl(db: Session) -> dict[str, float]:
@@ -354,11 +386,10 @@ async def reconcile_open_trade(db: Session, trade: Trade) -> bool:
         profit = float(poc.get("profit"))
     except (TypeError, ValueError):
         profit = None
-    gross = deriv_trade_gross(trade, profit)
+    apply_contract_details(trade, poc)
+    record_close_pnl(trade, profit)
     sell_time = poc.get("sell_time")
     trade.exit_price = float(poc.get("sell_spot") or poc.get("current_spot") or trade.entry_price)
-    trade.profit_loss = gross
-    trade.net_result = gross - trade.fees
     trade.status = PositionStatus.closed
     trade.execution_status = ExecutionStatus.closed
     trade.closed_at = datetime.utcfromtimestamp(float(sell_time)) if sell_time else datetime.utcnow()
@@ -418,11 +449,13 @@ async def close_trade(
     # transaction id) so the closed contract can still be looked up later.
     result = await DerivClient().close_order(trade.exchange_order_id)
 
-    exit_price = exit_price_hint or trade.entry_price
-    gross = deriv_trade_gross(trade, result.get("profit"))
-    trade.exit_price = exit_price
-    trade.profit_loss = gross
-    trade.net_result = gross - trade.fees
+    contract = result.get("contract")
+    apply_contract_details(trade, contract)
+    record_close_pnl(trade, result.get("profit"))
+    # Deriv's own exit spot when it reports one, so entry and exit come from
+    # the same price feed rather than mixing in TradingView's alert price.
+    sell_spot = _as_float((contract or {}).get("sell_spot"))
+    trade.exit_price = sell_spot or exit_price_hint or trade.entry_price
     trade.status = PositionStatus.closed
     trade.execution_status = ExecutionStatus.closed
     trade.closed_at = datetime.utcnow()
@@ -638,6 +671,7 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
             # Record the multiplier the contract actually runs at, not the one
             # requested - otherwise Open Positions shows e.g. 1x for a 50x trade.
             trade.leverage = result.get("multiplier") or trade.leverage
+            apply_contract_details(trade, {"entry_spot": result.get("entry_spot"), "commission": result.get("commission")})
             trade.execution_status = ExecutionStatus.executed
             signal.status = ExecutionStatus.executed
             notify.trade_opened(trade)

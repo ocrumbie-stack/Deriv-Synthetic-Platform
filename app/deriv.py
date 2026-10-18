@@ -529,12 +529,15 @@ class DerivClient:
             else requested_multiplier
         )
 
+        quoted: dict[str, Any] = {}
+
         def _build_buy(proposal_response: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             proposal_data = proposal_response.get("proposal", proposal_response)
             proposal_id = proposal_data.get("id") if isinstance(proposal_data, dict) else None
             ask_price = proposal_data.get("ask_price") if isinstance(proposal_data, dict) else None
             if not proposal_id or ask_price is None:
                 raise DerivExecutionError("Deriv returned an incomplete contract proposal.")
+            quoted["commission"] = proposal_data.get("commission")
             return "buy", {"buy": proposal_id, "price": float(ask_price)}
 
         proposal = {
@@ -559,12 +562,20 @@ class DerivClient:
         _, result = await self._rpc_chain("proposal", proposal, _build_buy)
         buy_data = result.get("buy", result)
         order_id = buy_data.get("contract_id") if isinstance(buy_data, dict) else None
+        # The buy response carries no entry price - Deriv fills on the next
+        # tick, so it is often already known a moment later. If not, the
+        # close records it from the contract's final state instead.
+        contract = await self.get_contract_status(str(order_id), use_cache=False) if order_id else None
         return {
             "order_id": str(order_id or self._timestamp()),
             "mode": settings.execution_mode.lower(),
             # Snapped to Deriv's allowed set, so it can differ from the
             # requested leverage (e.g. "Auto" requests 1x).
             "multiplier": multiplier,
+            # Deriv's commission on a Multiplier, already taken out of its
+            # reported profit - recorded as the trade's fees.
+            "commission": (contract or {}).get("commission", quoted.get("commission")),
+            "entry_spot": (contract or {}).get("entry_spot"),
             "result": result,
         }
 
@@ -586,6 +597,7 @@ class DerivClient:
                 "message": "already_sold",
                 "order_id": contract_id,
                 "profit": float(poc.get("profit") or 0),
+                "contract": poc,
             }
 
         result = await self._rpc("sell", {"sell": contract_id, "price": 0})
@@ -600,6 +612,7 @@ class DerivClient:
         # separate request that can fail or come back empty, so retry once,
         # then fall back to the sale proceeds minus what the contract cost.
         profit = None
+        final = None
         for attempt in range(2):
             if attempt:
                 await asyncio.sleep(1.0)
@@ -615,6 +628,9 @@ class DerivClient:
             "order_id": str(order_id or contract_id),
             "result": result,
             "profit": profit,
+            # Deriv's own record of the contract (entry/exit spot, commission),
+            # falling back to the pre-sale snapshot if the post-sale lookup failed.
+            "contract": final or poc,
         }
 
     async def get_profit_table(self, date_from: float) -> list[dict[str, Any]]:

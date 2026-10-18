@@ -1283,13 +1283,14 @@ function renderHistory(rows) {
       </div>`;
   }
 
-  if (!filtered.length) { el.innerHTML = emptyRow(13, "No trades recorded."); return; }
+  if (!filtered.length) { el.innerHTML = emptyRow(14, "No trades recorded."); return; }
   el.innerHTML = filtered.map(t => `
     <tr>
       <td>${t.strategy_name}</td><td>${t.symbol}</td><td>${t.direction}</td>
       <td>${number.format(t.entry_price)}</td>
       <td>${t.exit_price == null ? "—" : number.format(t.exit_price)}</td>
       <td>${number.format(t.size)}</td>
+      <td>${number.format(t.leverage)}x</td>
       <td class="${pnlClass(t.profit_loss)}">${currency.format(t.profit_loss)}</td>
       <td class="${pnlClass(t.net_result)}">${currency.format(t.net_result)}</td>
       <td>${tradeReason(t)}</td>
