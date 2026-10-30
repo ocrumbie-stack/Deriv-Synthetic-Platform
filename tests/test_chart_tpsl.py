@@ -88,7 +88,9 @@ class ContractIdIsSentAsNumberTests(unittest.TestCase):
         self.assertIn(("sell", {"sell": 18877955999, "price": 0}), calls)
 
 
-class ChartTpSlValidationTests(unittest.TestCase):
+class _ChartDbCase(unittest.TestCase):
+    """In-memory DB with a Chart Trades bot - setup only, no tests."""
+
     def setUp(self):
         # One shared connection, usable from TestClient's request thread too.
         engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -114,6 +116,7 @@ class ChartTpSlValidationTests(unittest.TestCase):
                 patch.object(services, "get_symbol_leverage", AsyncMock(return_value=50)):
             return asyncio.run(services.process_webhook_signal(self.db, payload)), client
 
+class ChartTpSlValidationTests(_ChartDbCase):
     def test_wrong_side_take_profit_is_rejected(self):
         result, client = self._process(_signal(take_profit=990.0))
         self.assertEqual(result.signal.status, ExecutionStatus.rejected)
@@ -132,7 +135,7 @@ class ChartTpSlValidationTests(unittest.TestCase):
         self.assertEqual((sent.take_profit, sent.stop_loss), (1010.0, 995.0))
 
 
-class ChartTradePreviewTests(ChartTpSlValidationTests):
+class ChartTradePreviewTests(_ChartDbCase):
     """The panel's before-Send preview: the bot's stake, the multiplier
     Deriv will run and the dollar TP/SL, with a warning when the stop can't
     be set because Deriv would stop the trade out first."""
@@ -168,8 +171,8 @@ class ChartTradePreviewTests(ChartTpSlValidationTests):
         self.assertIn("No signal bot", self._preview(_signal(strategy="Nope"), 50)["error"])
 
 
-class SignalStatusEndpointTests(ChartTpSlValidationTests):
-    """The extension's "was it placed?" check after Send."""
+class _ChartApiCase(_ChartDbCase):
+    """Adds a TestClient on the same DB - setup only, no tests."""
 
     def setUp(self):
         super().setUp()
@@ -187,6 +190,10 @@ class SignalStatusEndpointTests(ChartTpSlValidationTests):
         }
         with patch("app.main.DerivClient", return_value=client):
             return self.client.post("/webhook/status", json={"secret": secret, "signal_id": signal_id})
+
+
+class SignalStatusEndpointTests(_ChartApiCase):
+    """The extension's "was it placed?" check after Send."""
 
     def test_pending_until_the_journal_row_exists(self):
         self.assertEqual(self._status().json(), {"status": "pending"})
@@ -230,6 +237,61 @@ class SignalStatusEndpointTests(ChartTpSlValidationTests):
             (body["entry_spot"], body["stake"], body["multiplier"], body["commission"], body["direction"]),
             (7342.1, 100.0, 750.0, 1.23, "long"),
         )
+
+
+class ExtensionPositionEndpointTests(_ChartApiCase):
+    """The extension's Open tab: list, TP/SL and close by webhook secret."""
+
+    POC = {
+        "contract_type": "MULTUP", "entry_spot": "1000", "buy_price": "10.00", "multiplier": 50,
+        "commission": "0.1", "profit": "1.5", "current_spot": "1003", "is_sold": 0,
+        "limit_order": {"take_profit": {"order_amount": 5.0, "value": "1010.2"}},
+    }
+
+    def _open(self):
+        result, _ = self._process(_signal())
+        result.trade.exchange_order_id = "9"
+        self.db.commit()
+        return result.trade
+
+    def _client(self):
+        client = AsyncMock()
+        client.get_contract_status.return_value = dict(self.POC)
+        return client
+
+    def test_lists_open_positions_with_live_pnl_and_tpsl(self):
+        trade = self._open()
+        client = self._client()
+        with patch("app.main.DerivClient", return_value=client), \
+                patch.object(services, "DerivClient", return_value=client):
+            body = self.client.post("/webhook/positions", json={"secret": "s"}).json()
+        self.assertEqual(body["mode"], "demo")
+        (p,) = body["positions"]
+        self.assertEqual((p["trade_id"], p["symbol"], p["direction"]), (trade.id, "R_75", "long"))
+        self.assertEqual((p["profit"], p["current_spot"]), (1.5, 1003.0))
+        self.assertEqual((p["take_profit"], p["take_profit_price"], p["stop_loss"]), (5.0, 1010.2, None))
+
+    def test_sets_tpsl_on_the_contract(self):
+        trade = self._open()
+        client = self._client()
+        with patch("app.main.DerivClient", return_value=client):
+            r = self.client.post("/webhook/positions/tpsl", json={"secret": "s", "trade_id": trade.id, "take_profit": 7.0})
+        self.assertEqual(r.status_code, 200)
+        client.update_contract_tpsl.assert_awaited_once_with("9", 7.0, None)
+
+    def test_closes_the_position(self):
+        trade = self._open()
+        with patch("app.main.close_position_with_signal", AsyncMock()) as close, \
+                patch("app.main.reconcile_open_trade", AsyncMock(return_value=False)):
+            r = self.client.post("/webhook/positions/close", json={"secret": "s", "trade_id": trade.id})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(close.await_args.args[3], "manual_close")
+
+    def test_wrong_secret_is_refused_everywhere(self):
+        trade = self._open()
+        for path, extra in (("/webhook/positions", {}), ("/webhook/positions/tpsl", {"trade_id": trade.id}),
+                            ("/webhook/positions/close", {"trade_id": trade.id})):
+            self.assertEqual(self.client.post(path, json={"secret": "x", **extra}).status_code, 403, path)
 
 
 if __name__ == "__main__":

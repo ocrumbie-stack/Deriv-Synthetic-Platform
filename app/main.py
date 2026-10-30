@@ -19,7 +19,7 @@ from app.config import ENV_EXECUTION_MODE, ENV_MAX_MULTIPLIER_FLOOR, ENV_TIMEZON
 from app.database import Base, SessionLocal, engine, get_db, sync_schema
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
-from app.schemas import BotPairOut, BotPairUpdate, CloseAllTarget, ManualExitSignal, PositionTpSl, PositionTpSlDetail, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, SignalStatusQuery, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
+from app.schemas import BotPairOut, BotPairUpdate, CloseAllTarget, ManualExitSignal, PositionAction, PositionTpSl, PositionTpSlAction, PositionTpSlDetail, SecretQuery, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, SignalStatusQuery, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
 from app.services import PAIR_DEFAULT_FIELDS, account_exposure, close_all_open_trades, close_all_target, get_app_settings, local_period_start, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, preview_chart_trade, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal, trade_execution_lock
 from app import auth, notify, trade_audit
 from app.trade_audit import trade_audit_scheduler
@@ -915,7 +915,11 @@ async def get_position_tpsl(trade_id: int, db: Session = Depends(get_db)) -> Pos
     trade = _get_open_trade(db, trade_id)
     if not trade.exchange_order_id:
         return PositionTpSlDetail()
-    poc = await DerivClient().get_contract_status(trade.exchange_order_id, use_cache=False) or {}
+    return _tpsl_detail(await DerivClient().get_contract_status(trade.exchange_order_id, use_cache=False))
+
+
+def _tpsl_detail(poc: dict | None) -> PositionTpSlDetail:
+    poc = poc or {}
     contract_type = str(poc.get("contract_type") or "")
     return PositionTpSlDetail(
         take_profit=_limit_amount(poc, "take_profit"),
@@ -944,6 +948,55 @@ async def set_position_tpsl(trade_id: int, data: PositionTpSl, db: Session = Dep
     trade.manual_tpsl = (data.take_profit is not None or data.stop_loss is not None) or None
     db.commit()
     return data
+
+
+# The chart extension's Open tab: the same list, close and TP/SL as Open
+# Positions, authorised by the webhook secret instead of Google sign-in.
+def _require_secret(secret: str | None) -> None:
+    if secret != settings.webhook_secret:
+        raise HTTPException(status_code=403, detail="Invalid webhook secret.")
+
+
+@app.post("/webhook/positions")
+async def webhook_positions(query: SecretQuery, db: Session = Depends(get_db)) -> dict:
+    """Open positions in the current mode, each with its live P/L and the
+    TP/SL on its Deriv contract (dollars and prices)."""
+    _require_secret(query.secret)
+    client = DerivClient()
+    positions = []
+    for trade in await open_positions(db):
+        # open_positions just looked each contract up (reconcile), so this
+        # is served from the short-lived cache rather than a second call.
+        poc = await client.get_contract_status(trade.exchange_order_id) if trade.exchange_order_id else None
+        positions.append({
+            **_tpsl_detail(poc).model_dump(),
+            "trade_id": trade.id,
+            "strategy": trade.strategy_name,
+            "symbol": trade.symbol,
+            "direction": trade.direction.value,
+            "entry_price": trade.entry_price,
+            "stake": trade.size,
+            "multiplier": trade.leverage,
+            "opened_at": trade.opened_at.isoformat(),
+            "profit": _as_float((poc or {}).get("profit")),
+            "current_spot": _as_float((poc or {}).get("current_spot")),
+        })
+    return {"mode": settings.execution_mode.lower(), "positions": positions}
+
+
+@app.post("/webhook/positions/tpsl")
+async def webhook_position_tpsl(action: PositionTpSlAction, db: Session = Depends(get_db)) -> PositionTpSl:
+    _require_secret(action.secret)
+    return await set_position_tpsl(
+        action.trade_id, PositionTpSl(take_profit=action.take_profit, stop_loss=action.stop_loss), db
+    )
+
+
+@app.post("/webhook/positions/close")
+async def webhook_position_close(action: PositionAction, db: Session = Depends(get_db)) -> dict:
+    _require_secret(action.secret)
+    trade = await close_position(action.trade_id, None, db)
+    return {"trade_id": trade.id, "symbol": trade.symbol, "net_result": trade.net_result, "close_reason": trade.close_reason}
 
 
 @app.get("/api/trade-audit")

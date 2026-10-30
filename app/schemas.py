@@ -66,6 +66,22 @@ class SignalStatusQuery(BaseModel):
     signal_id: str = Field(..., min_length=1, max_length=160)
 
 
+class SecretQuery(BaseModel):
+    """Webhook-secret auth for the chart extension's position calls, which
+    can't use the dashboard's Google sign-in."""
+
+    secret: str | None = None
+
+
+class PositionAction(SecretQuery):
+    trade_id: int
+
+
+class PositionTpSlAction(PositionAction):
+    take_profit: float | None = Field(default=None, gt=0)
+    stop_loss: float | None = Field(default=None, gt=0)
+
+
 class PositionTpSl(BaseModel):
     """Dollar TP/SL for one open contract - profit/loss amounts, the unit
     Deriv's limit_order takes. None removes that side."""
