@@ -258,6 +258,14 @@ def validate_signal(db: Session, payload: WebhookSignal, strategy: Strategy, bot
     if payload.action == SignalAction.entry:
         if payload.direction is None:
             return "Entry signals require direction."
+        # A drawn trade's TP/SL must sit on the right side of its entry, or
+        # Deriv would get a nonsense limit order.
+        if payload.price:
+            above = 1 if payload.direction.value == "long" else -1
+            if payload.take_profit and (payload.take_profit - payload.price) * above <= 0:
+                return f"Take profit {payload.take_profit} is on the wrong side of the {payload.direction.value} entry at {payload.price}."
+            if payload.stop_loss and (payload.price - payload.stop_loss) * above <= 0:
+                return f"Stop loss {payload.stop_loss} is on the wrong side of the {payload.direction.value} entry at {payload.price}."
         if payload.size <= 0:
             return "Entry signals require size greater than zero."
         if strategy.max_position_size and payload.size > strategy.max_position_size:

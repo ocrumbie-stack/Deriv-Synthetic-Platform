@@ -18,6 +18,36 @@ class DerivExecutionError(RuntimeError):
     pass
 
 
+def chart_tpsl_amounts(
+    signal: WebhookSignal,
+    entry: float | None,
+    multiplier: float,
+    commission: float = 0.0,
+) -> tuple[float | None, float | None]:
+    """Convert the TP/SL price levels a drawn trade sends (e.g. TradingView's
+    Long/Short Position tool) into the dollar profit/loss amounts Deriv's
+    multiplier limit_order takes. A multiplier's P/L at a price is
+    stake * multiplier * move / entry, less the commission Deriv already
+    took - so TP pays the commission out of its gain and SL adds it to its
+    loss. A side that wasn't sent, or can't be set (a stop at the full stake
+    or more, or a target too close to clear the commission), comes back None."""
+    if not entry or entry <= 0 or signal.direction is None:
+        return None, None
+    sign = 1 if signal.direction.value == "long" else -1
+
+    def gross(level: float) -> float:
+        return float(signal.size) * multiplier * sign * (level - entry) / entry
+
+    take_profit = stop_loss = None
+    if signal.take_profit:
+        take_profit = round(gross(signal.take_profit) - commission, 2)
+        take_profit = take_profit if take_profit > 0 else None
+    if signal.stop_loss:
+        stop_loss = round(-gross(signal.stop_loss) + commission, 2)
+        stop_loss = stop_loss if 0 < stop_loss < float(signal.size) else None
+    return take_profit, stop_loss
+
+
 def _normalize_symbol_key(value: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "_", value.upper()).strip("_")
 
@@ -549,6 +579,11 @@ class DerivClient:
             "basis": "stake",
             "multiplier": multiplier,
         }
+        # A drawn trade's own TP/SL levels come first; the bot's % TP/SL only
+        # fills a side the drawing didn't set. Measured from the drawn entry
+        # here - corrected to Deriv's actual fill once the contract is open.
+        drawn_tp, drawn_sl = chart_tpsl_amounts(signal, signal.price, multiplier)
+        take_profit, stop_loss = drawn_tp or take_profit, drawn_sl or stop_loss
         # Per-trade TP/SL lives on the contract itself, so Deriv closes it
         # even if the platform or the strategy's exit signal never arrives.
         limit_order = {
@@ -566,6 +601,8 @@ class DerivClient:
         # tick, so it is often already known a moment later. If not, the
         # close records it from the contract's final state instead.
         contract = await self.get_contract_status(str(order_id), use_cache=False) if order_id else None
+        if order_id and (signal.take_profit or signal.stop_loss) and (contract or {}).get("entry_spot"):
+            await self._correct_chart_tpsl(str(order_id), signal, contract, multiplier, take_profit, stop_loss)
         return {
             "order_id": str(order_id or self._timestamp()),
             "mode": settings.execution_mode.lower(),
@@ -578,6 +615,36 @@ class DerivClient:
             "entry_spot": (contract or {}).get("entry_spot"),
             "result": result,
         }
+
+    async def _correct_chart_tpsl(
+        self,
+        contract_id: str,
+        signal: WebhookSignal,
+        contract: dict[str, Any],
+        multiplier: float,
+        take_profit: float | None,
+        stop_loss: float | None,
+    ) -> None:
+        """Re-measure a drawn trade's TP/SL from Deriv's actual fill and
+        commission, so the contract closes at the drawn price levels rather
+        than wherever the market had moved by the time it filled. Best
+        effort - if Deriv refuses, the amounts set at open stay in place."""
+        try:
+            entry = float(contract["entry_spot"])
+            commission = float(contract.get("commission") or 0)
+        except (TypeError, ValueError):
+            return
+        drawn_tp, drawn_sl = chart_tpsl_amounts(signal, entry, multiplier, commission)
+        # contract_update cancels any side sent as None, so a side the drawing
+        # didn't set (or can't set) keeps whatever the order opened with.
+        new_tp = drawn_tp or take_profit
+        new_sl = drawn_sl or stop_loss
+        if (new_tp, new_sl) == (take_profit, stop_loss):
+            return
+        try:
+            await self.update_contract_tpsl(contract_id, new_tp, new_sl)
+        except DerivExecutionError:
+            pass
 
     async def close_order(self, contract_id: str) -> dict[str, Any]:
         mode = settings.execution_mode.lower()
