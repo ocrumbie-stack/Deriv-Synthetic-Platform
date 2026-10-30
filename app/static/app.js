@@ -738,7 +738,7 @@ function renderPositions(rows) {
           <option value="instant">Close instantly</option>
           <option value="price">${t.close_at_price != null ? "Change close price…" : "Close at price…"}</option>
           ${t.close_at_price != null ? `<option value="cancel-price">Cancel close at ${number.format(t.close_at_price)}</option>` : ""}
-          <option value="tpsl">Set TP/SL ($)…</option>
+          <option value="tpsl">Set TP/SL…</option>
           <option value="webhook">Get webhook payload</option>
         </select>
       </td>
@@ -801,18 +801,27 @@ function renderPositions(rows) {
       } else if (action === "tpsl") {
         let current = {};
         try { current = await getJson(`/api/open-positions/${tradeId}/tpsl`); } catch { /* fields just start empty */ }
+        const convert = tpslPriceConverter(current);
+        const pricePlaceholder = convert ? "None" : "Unavailable";
         await openDialog({
           title: `TP/SL for ${label}`,
           details,
           fields: [
-            { name: "take_profit", label: "Take profit", prefix: "$", value: current.take_profit, placeholder: "None" },
-            { name: "stop_loss",   label: "Stop loss",   prefix: "$", value: current.stop_loss,   placeholder: "None" },
+            [
+              { name: "take_profit",       label: "Take profit", prefix: "$", value: current.take_profit,       placeholder: "None" },
+              { name: "take_profit_price", label: "at price",                  value: current.take_profit_price, placeholder: pricePlaceholder },
+            ],
+            [
+              { name: "stop_loss",       label: "Stop loss", prefix: "$", value: current.stop_loss,       placeholder: "None" },
+              { name: "stop_loss_price", label: "at price",                value: current.stop_loss_price, placeholder: pricePlaceholder },
+            ],
           ],
-          note: "Profit or loss amounts in dollars. Leave a field blank to remove it. Deriv enforces these, even if the server is down.",
+          note: "Type a dollar amount or a price - the other fills in. Deriv stores the dollar amount. Leave a side blank to remove it. Deriv enforces these, even if the server is down.",
           confirmLabel: "Save TP/SL",
+          onReady: form => wireTpslPrices(form, convert),
           onSubmit: ({ take_profit, stop_loss }) => setPositionTpSl(tradeId, {
-            take_profit: take_profit === "" ? null : parsePositive(take_profit, "Take profit must be a positive dollar amount."),
-            stop_loss:   stop_loss   === "" ? null : parsePositive(stop_loss, "Stop loss must be a positive dollar amount."),
+            take_profit: take_profit === "" ? null : parsePositive(take_profit, `Take profit must be a positive dollar amount (a price ${current.direction === "short" ? "below" : "above"} the entry).`),
+            stop_loss:   stop_loss   === "" ? null : parsePositive(stop_loss, `Stop loss must be a positive dollar amount (a price ${current.direction === "short" ? "above" : "below"} the entry).`),
           }),
         });
       } else if (action === "webhook") {
@@ -875,6 +884,48 @@ function setCloseAtPrice(tradeId, price) {
   return price == null
     ? sendPositionAction(`/api/open-positions/${tradeId}/close-at`, { method: "DELETE" }, "Couldn't cancel the close price")
     : sendPositionAction(`/api/open-positions/${tradeId}/close-at?price=${encodeURIComponent(price)}`, { method: "POST" }, "Couldn't set the close price");
+}
+
+// Converts a contract's TP/SL between Deriv's dollar amounts and prices -
+// the same sum chart_tpsl_amounts does in deriv.py: P/L at a price is
+// stake × multiplier × move ÷ entry, less Deriv's commission (so TP pays it
+// out of its gain and SL adds it to its loss). null when Deriv didn't report
+// the figures, e.g. before the contract has filled.
+function tpslPriceConverter(c) {
+  if (!(c.entry_spot > 0 && c.stake > 0 && c.multiplier > 0 && c.direction)) return null;
+  const perPoint = c.stake * c.multiplier / c.entry_spot;
+  const sign = c.direction === "long" ? 1 : -1;
+  const fee = c.commission || 0;
+  // Show prices to the same decimals Deriv quotes this market in.
+  const decimals = Math.max(1, ...[c.entry_spot, c.take_profit_price, c.stop_loss_price]
+    .filter(v => v != null).map(v => (String(v).split(".")[1] || "").length));
+  // Deriv quotes a level rounded to the next tick away from the entry
+  // (TP 7377.63 shows as 7377.7, SL 7335.12 as 7335.1) - match it.
+  const scale = 10 ** decimals;
+  const awayFromEntry = (level, up) => (up ? Math.ceil(level * scale - 1e-6) : Math.floor(level * scale + 1e-6)) / scale;
+  return {
+    amount: (side, price) => (side === "take_profit"
+      ? sign * (price - c.entry_spot) * perPoint - fee
+      : sign * (c.entry_spot - price) * perPoint + fee).toFixed(2),
+    price: (side, amount) => (side === "take_profit"
+      ? awayFromEntry(c.entry_spot + sign * (amount + fee) / perPoint, sign > 0)
+      : awayFromEntry(c.entry_spot - sign * (amount - fee) / perPoint, sign < 0)).toFixed(decimals),
+  };
+}
+
+// Typing in a TP/SL dollar box fills its price box, and the other way round.
+function wireTpslPrices(form, convert) {
+  for (const side of ["take_profit", "stop_loss"]) {
+    const amount = form.elements[side];
+    const price = form.elements[`${side}_price`];
+    if (!convert) { price.readOnly = true; continue; }
+    const fill = (from, to, fn) => from.addEventListener("input", () => {
+      const n = parseFloat(from.value);
+      to.value = from.value.trim() === "" || !Number.isFinite(n) ? "" : fn(side, n);
+    });
+    fill(amount, price, convert.price);
+    fill(price, amount, convert.amount);
+  }
 }
 
 // Dollar TP/SL on one open contract, set on Deriv itself. null removes that side.
@@ -987,20 +1038,14 @@ function positionDetails(trade, row) {
 // Resolves true once onSubmit succeeds, false if dismissed. onSubmit receives
 // the trimmed field values by name; if it throws, the message is shown inside
 // the dialog and it stays open so the input can be corrected.
-function openDialog({ title, message, details = [], fields = [], note, confirmLabel = "Confirm", tone = "primary", cancelLabel = "Cancel", onSubmit }) {
+// `fields` entries can also be arrays of fields, shown side by side on one
+// row. `onReady(form)` runs once the dialog is on screen, for wiring fields
+// that update each other.
+function openDialog({ title, message, details = [], fields = [], note, confirmLabel = "Confirm", tone = "primary", cancelLabel = "Cancel", onSubmit, onReady }) {
   return new Promise(resolve => {
     const overlay = document.createElement("div");
     overlay.className = "modal-overlay";
-    overlay.innerHTML = `
-      <form class="modal-box dialog-box" role="dialog" aria-modal="true" novalidate>
-        <div class="modal-header">
-          <span class="modal-title">${escapeAttr(title)}</span>
-          <button type="button" class="modal-close-x" data-cancel aria-label="Close">&times;</button>
-        </div>
-        ${message ? `<p class="dialog-message">${escapeAttr(message)}</p>` : ""}
-        ${details.length ? `<dl class="dialog-details">${details.map(([k, v, cls]) => `
-          <div><dt>${escapeAttr(k)}</dt><dd class="${escapeAttr(cls || "")}">${escapeAttr(v)}</dd></div>`).join("")}</dl>` : ""}
-        ${fields.map(f => f.type === "checkbox" ? `
+    const fieldHtml = f => f.type === "checkbox" ? `
           <label class="dialog-check">
             <input type="checkbox" name="${escapeAttr(f.name)}"${f.value ? " checked" : ""} />
             <span>${escapeAttr(f.label)}${f.hint ? `<span class="dialog-hint">${escapeAttr(f.hint)}</span>` : ""}</span>
@@ -1013,7 +1058,17 @@ function openDialog({ title, message, details = [], fields = [], note, confirmLa
                 value="${f.value != null ? escapeAttr(f.value) : ""}" placeholder="${escapeAttr(f.placeholder || "")}" />
             </span>
             ${f.hint ? `<span class="dialog-hint">${escapeAttr(f.hint)}</span>` : ""}
-          </label>`).join("")}
+          </label>`;
+    overlay.innerHTML = `
+      <form class="modal-box dialog-box" role="dialog" aria-modal="true" novalidate>
+        <div class="modal-header">
+          <span class="modal-title">${escapeAttr(title)}</span>
+          <button type="button" class="modal-close-x" data-cancel aria-label="Close">&times;</button>
+        </div>
+        ${message ? `<p class="dialog-message">${escapeAttr(message)}</p>` : ""}
+        ${details.length ? `<dl class="dialog-details">${details.map(([k, v, cls]) => `
+          <div><dt>${escapeAttr(k)}</dt><dd class="${escapeAttr(cls || "")}">${escapeAttr(v)}</dd></div>`).join("")}</dl>` : ""}
+        ${fields.map(f => Array.isArray(f) ? `<div class="dialog-row">${f.map(fieldHtml).join("")}</div>` : fieldHtml(f)).join("")}
         ${note ? `<p class="dialog-hint">${escapeAttr(note)}</p>` : ""}
         <p class="dialog-error" role="alert" hidden></p>
         <div class="modal-footer">
@@ -1039,7 +1094,7 @@ function openDialog({ title, message, details = [], fields = [], note, confirmLa
     form.addEventListener("submit", async e => {
       e.preventDefault();
       if (busy) return;
-      const values = Object.fromEntries(fields.map(f => {
+      const values = Object.fromEntries(fields.flat().map(f => {
         const input = form.elements[f.name];
         return [f.name, f.type === "checkbox" ? input.checked : input.value.trim()];
       }));
@@ -1060,6 +1115,7 @@ function openDialog({ title, message, details = [], fields = [], note, confirmLa
       }
     });
 
+    onReady?.(form);
     const firstInput = form.querySelector("input");
     (firstInput || submit).focus();
     firstInput?.select();

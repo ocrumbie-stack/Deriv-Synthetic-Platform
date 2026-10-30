@@ -919,6 +919,7 @@ tr.clickable:hover td, tr.selected td { background: var(--panel-2, #16161e); }
 .dialog-details dd.neutral { color: var(--text); font-weight: 600; }
 
 .dialog-field { display: grid; gap: 6px; }
+.dialog-row { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
 
 .dialog-check { align-items: flex-start; cursor: pointer; display: flex; gap: 10px; }
 .dialog-check input { accent-color: var(--blue); flex: none; height: 16px; margin: 2px 0 0; width: 16px; }

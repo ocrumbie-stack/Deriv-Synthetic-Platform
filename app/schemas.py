@@ -74,6 +74,20 @@ class PositionTpSl(BaseModel):
     stop_loss: float | None = Field(default=None, gt=0)
 
 
+class PositionTpSlDetail(PositionTpSl):
+    """PositionTpSl plus what the dialog needs to show and convert prices:
+    the price Deriv says each side sits at, and the contract figures that
+    turn a typed price into a dollar amount (and back)."""
+
+    take_profit_price: float | None = None
+    stop_loss_price: float | None = None
+    entry_spot: float | None = None
+    stake: float | None = None
+    multiplier: float | None = None
+    commission: float | None = None
+    direction: str | None = None
+
+
 class CloseAllTarget(BaseModel):
     """Dollar levels for the summed unrealized P/L of all open positions.
     None leaves that side unset. `repeat` keeps the target armed after it

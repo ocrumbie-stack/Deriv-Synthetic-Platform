@@ -19,7 +19,7 @@ from app.config import ENV_EXECUTION_MODE, ENV_MAX_MULTIPLIER_FLOOR, ENV_TIMEZON
 from app.database import Base, SessionLocal, engine, get_db, sync_schema
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
-from app.schemas import BotPairOut, BotPairUpdate, CloseAllTarget, ManualExitSignal, PositionTpSl, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, SignalStatusQuery, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
+from app.schemas import BotPairOut, BotPairUpdate, CloseAllTarget, ManualExitSignal, PositionTpSl, PositionTpSlDetail, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, SignalStatusQuery, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
 from app.services import PAIR_DEFAULT_FIELDS, account_exposure, close_all_open_trades, close_all_target, get_app_settings, local_period_start, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, preview_chart_trade, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal, trade_execution_lock
 from app import auth, notify, trade_audit
 from app.trade_audit import trade_audit_scheduler
@@ -893,14 +893,41 @@ def _limit_amount(poc: dict | None, side: str) -> float | None:
         return None
 
 
-@app.get("/api/open-positions/{trade_id}/tpsl", response_model=PositionTpSl)
-async def get_position_tpsl(trade_id: int, db: Session = Depends(get_db)) -> PositionTpSl:
-    """The contract's live TP/SL on Deriv, in dollars."""
+def _limit_price(poc: dict | None, side: str) -> float | None:
+    order = ((poc or {}).get("limit_order") or {}).get(side)
+    try:
+        return float(order["value"]) if isinstance(order, dict) else None
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _as_float(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+@app.get("/api/open-positions/{trade_id}/tpsl", response_model=PositionTpSlDetail)
+async def get_position_tpsl(trade_id: int, db: Session = Depends(get_db)) -> PositionTpSlDetail:
+    """The contract's live TP/SL on Deriv, in dollars and as the prices
+    Deriv says they sit at, with the figures to convert between the two."""
     trade = _get_open_trade(db, trade_id)
     if not trade.exchange_order_id:
-        return PositionTpSl()
-    poc = await DerivClient().get_contract_status(trade.exchange_order_id, use_cache=False)
-    return PositionTpSl(take_profit=_limit_amount(poc, "take_profit"), stop_loss=_limit_amount(poc, "stop_loss"))
+        return PositionTpSlDetail()
+    poc = await DerivClient().get_contract_status(trade.exchange_order_id, use_cache=False) or {}
+    contract_type = str(poc.get("contract_type") or "")
+    return PositionTpSlDetail(
+        take_profit=_limit_amount(poc, "take_profit"),
+        stop_loss=_limit_amount(poc, "stop_loss"),
+        take_profit_price=_limit_price(poc, "take_profit"),
+        stop_loss_price=_limit_price(poc, "stop_loss"),
+        entry_spot=_as_float(poc.get("entry_spot")),
+        stake=_as_float(poc.get("buy_price")),
+        multiplier=_as_float(poc.get("multiplier")),
+        commission=_as_float(poc.get("commission")),
+        direction="long" if contract_type == "MULTUP" else "short" if contract_type == "MULTDOWN" else None,
+    )
 
 
 @app.put("/api/open-positions/{trade_id}/tpsl", response_model=PositionTpSl)

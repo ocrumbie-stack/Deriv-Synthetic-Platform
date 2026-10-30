@@ -209,6 +209,28 @@ class SignalStatusEndpointTests(ChartTpSlValidationTests):
     def test_wrong_secret_is_refused(self):
         self.assertEqual(self._status(secret="x").status_code, 403)
 
+    def test_tpsl_dialog_gets_prices_and_contract_figures(self):
+        result, _ = self._process(_signal())
+        result.trade.exchange_order_id = "9"
+        self.db.commit()
+        client = AsyncMock()
+        client.get_contract_status.return_value = {
+            "contract_type": "MULTUP", "entry_spot": "7342.1", "buy_price": "100.00", "multiplier": 750,
+            "commission": "1.23",
+            "limit_order": {
+                "take_profit": {"order_amount": 361.68, "value": "7377.7"},
+                "stop_loss": {"order_amount": -72.54, "value": "7335.1"},
+            },
+        }
+        with patch("app.main.DerivClient", return_value=client):
+            body = self.client.get(f"/api/open-positions/{result.trade.id}/tpsl").json()
+        self.assertEqual((body["take_profit"], body["stop_loss"]), (361.68, 72.54))
+        self.assertEqual((body["take_profit_price"], body["stop_loss_price"]), (7377.7, 7335.1))
+        self.assertEqual(
+            (body["entry_spot"], body["stake"], body["multiplier"], body["commission"], body["direction"]),
+            (7342.1, 100.0, 750.0, 1.23, "long"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
