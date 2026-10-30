@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app import notify
 from app.config import ENV_EXECUTION_MODE, ENV_MAX_MULTIPLIER_FLOOR, ENV_TIMEZONE, settings
-from app.deriv import DerivClient, DerivExecutionError
+from app.deriv import DerivClient, DerivExecutionError, chart_tpsl_amounts
 from app.models import AppSettings, BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
 from app.schemas import ManualExitSignal, WebhookSignal
 
@@ -561,6 +561,63 @@ async def close_reversed_position(
             execution_mode=settings.execution_mode.lower(),
         )
     )
+
+
+async def preview_chart_trade(db: Session, payload: WebhookSignal) -> dict:
+    """What a drawn trade would open with, worked out the same way
+    process_webhook_signal and place_order will - the bot's stake, the
+    multiplier Deriv will actually run, and the dollar TP/SL its price levels
+    become - so the chart panel can show it before anything is sent. Places
+    nothing and writes nothing."""
+    if payload.secret != settings.webhook_secret:
+        return {"error": "Invalid webhook secret."}
+    bot = get_signal_bot(db, payload.strategy)
+    if bot is None:
+        return {"error": f"No signal bot named {payload.strategy} - create one on the Signal Bots page."}
+    if payload.direction is None or not payload.price:
+        return {"error": "Pick Long or Short and an entry price."}
+
+    leverage = bot.leverage if bot.leverage > 0 else (await get_symbol_leverage(db, payload.symbol) or 1)
+    client = DerivClient()
+    contract_type = "MULTUP" if payload.direction.value == "long" else "MULTDOWN"
+    try:
+        code = await client.resolve_symbol(payload.symbol)
+        multiplier = await client.order_multiplier(code, contract_type, leverage)
+    except DerivExecutionError as exc:
+        return {"error": str(exc)}
+
+    signal = payload.model_copy(update={"size": bot.size})
+    take_profit, stop_loss = chart_tpsl_amounts(signal, payload.price, multiplier)
+    # A side the drawing leaves blank falls back to the bot's % TP/SL, as it
+    # will on the real order (the coin's own % once it has traded before).
+    pair = db.scalar(select(BotPair).where(BotPair.bot_id == bot.id, BotPair.symbol == payload.symbol.upper()))
+    pct_tp, pct_sl = trade_tpsl_amounts(
+        bot.size,
+        pair.tp_pct if pair else bot.default_pair_tp_pct,
+        pair.sl_pct if pair else bot.default_pair_sl_pct,
+    )
+    # A multiplier contract is stopped out once its loss reaches the stake,
+    # i.e. after a move of entry / multiplier against it.
+    sign = 1 if payload.direction.value == "long" else -1
+    stop_out_price = payload.price - sign * payload.price / multiplier
+
+    warnings = []
+    if payload.stop_loss and stop_loss is None:
+        warnings.append(
+            f"Stop loss is past Deriv's stop-out at about {stop_out_price:.6g}: the trade would be "
+            f"closed there with the whole ${bot.size:g} stake lost. Lower the multiplier or move the stop closer."
+        )
+    if payload.take_profit and take_profit is None:
+        warnings.append("Take profit is too close to the entry to be set.")
+    return {
+        "symbol": code,
+        "stake": bot.size,
+        "multiplier": multiplier,
+        "take_profit": take_profit or (None if payload.take_profit else pct_tp),
+        "stop_loss": stop_loss or (None if payload.stop_loss else pct_sl),
+        "stop_out_price": stop_out_price,
+        "warnings": warnings,
+    }
 
 
 async def process_webhook_signal(db: Session, payload: WebhookSignal) -> ProcessedSignal:

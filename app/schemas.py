@@ -58,6 +58,14 @@ class ManualExitSignal(BaseModel):
     _normalize_symbol = field_validator("symbol")(normalize_symbol)
 
 
+class SignalStatusQuery(BaseModel):
+    """Asks what became of a webhook sent with this signal_id, so a sender
+    (the chart extension) can confirm the trade without opening the dashboard."""
+
+    secret: str | None = None
+    signal_id: str = Field(..., min_length=1, max_length=160)
+
+
 class PositionTpSl(BaseModel):
     """Dollar TP/SL for one open contract - profit/loss amounts, the unit
     Deriv's limit_order takes. None removes that side."""

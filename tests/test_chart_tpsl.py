@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app import services
 from app.config import settings
@@ -66,9 +67,31 @@ class ChartTpSlFillCorrectionTests(unittest.TestCase):
         client.update_contract_tpsl.assert_not_awaited()
 
 
+class ContractIdIsSentAsNumberTests(unittest.TestCase):
+    """Deriv refuses a text contract_id ("must be an integer"), which blanked
+    live P/L and failed every dashboard close."""
+
+    def test_lookup_and_sell_send_integer_ids(self):
+        client = DerivClient.__new__(DerivClient)
+        calls = []
+
+        async def rpc(method, params=None):
+            calls.append((method, params))
+            if method == "proposal_open_contract":
+                return {"proposal_open_contract": {"is_sold": 0}}
+            return {"sell": {"transaction_id": 1}}
+
+        client._rpc = rpc
+        asyncio.run(client.get_contract_status("18877955999", use_cache=False))
+        asyncio.run(client.close_order("18877955999"))
+        self.assertEqual(calls[0], ("proposal_open_contract", {"contract_id": 18877955999}))
+        self.assertIn(("sell", {"sell": 18877955999, "price": 0}), calls)
+
+
 class ChartTpSlValidationTests(unittest.TestCase):
     def setUp(self):
-        engine = create_engine("sqlite://")
+        # One shared connection, usable from TestClient's request thread too.
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
         Base.metadata.create_all(engine)
         self.db = sessionmaker(bind=engine)()
         self.db.add_all([
@@ -107,6 +130,84 @@ class ChartTpSlValidationTests(unittest.TestCase):
         self.assertEqual(result.signal.status, ExecutionStatus.executed)
         sent = client.place_order.call_args.args[0]
         self.assertEqual((sent.take_profit, sent.stop_loss), (1010.0, 995.0))
+
+
+class ChartTradePreviewTests(ChartTpSlValidationTests):
+    """The panel's before-Send preview: the bot's stake, the multiplier
+    Deriv will run and the dollar TP/SL, with a warning when the stop can't
+    be set because Deriv would stop the trade out first."""
+
+    def _preview(self, payload, multiplier):
+        client = AsyncMock()
+        client.resolve_symbol.return_value = "R_75"
+        client.order_multiplier.return_value = multiplier
+        with patch.object(services, "DerivClient", return_value=client), \
+                patch.object(services, "get_symbol_leverage", AsyncMock(return_value=multiplier)):
+            return asyncio.run(services.preview_chart_trade(self.db, payload))
+
+    def test_shows_stake_multiplier_and_amounts(self):
+        preview = self._preview(_signal(), 50)
+        self.assertEqual((preview["stake"], preview["multiplier"]), (10.0, 50))
+        self.assertEqual((preview["take_profit"], preview["stop_loss"]), (5.0, 2.5))
+        self.assertEqual(preview["warnings"], [])
+
+    def test_warns_when_stop_is_past_stop_out(self):
+        # 750x on $10: stopped out 1000/750 = 1.33 points down, before 995.
+        preview = self._preview(_signal(), 750)
+        self.assertIsNone(preview["stop_loss"])
+        self.assertAlmostEqual(preview["stop_out_price"], 998.6667, places=3)
+        self.assertIn("stop-out", preview["warnings"][0])
+
+    def test_blank_side_uses_bot_percent(self):
+        self.db.query(SignalBot).update({"default_pair_sl_pct": 20.0})
+        preview = self._preview(_signal(stop_loss=None), 50)
+        self.assertEqual(preview["stop_loss"], 2.0)
+
+    def test_wrong_secret_and_missing_bot_are_errors(self):
+        self.assertIn("secret", self._preview(_signal(secret="x"), 50)["error"])
+        self.assertIn("No signal bot", self._preview(_signal(strategy="Nope"), 50)["error"])
+
+
+class SignalStatusEndpointTests(ChartTpSlValidationTests):
+    """The extension's "was it placed?" check after Send."""
+
+    def setUp(self):
+        super().setUp()
+        from fastapi.testclient import TestClient
+        from app.database import get_db
+        from app.main import app
+        app.dependency_overrides[get_db] = lambda: self.db
+        self.addCleanup(app.dependency_overrides.clear)
+        self.client = TestClient(app)
+
+    def _status(self, secret="s", signal_id="chart-1"):
+        client = AsyncMock()
+        client.get_contract_status.return_value = {
+            "limit_order": {"take_profit": {"order_amount": 5.0}, "stop_loss": {"order_amount": -2.5}},
+        }
+        with patch("app.main.DerivClient", return_value=client):
+            return self.client.post("/webhook/status", json={"secret": secret, "signal_id": signal_id})
+
+    def test_pending_until_the_journal_row_exists(self):
+        self.assertEqual(self._status().json(), {"status": "pending"})
+
+    def test_executed_entry_reports_trade_and_deriv_tpsl(self):
+        result, _ = self._process(_signal(signal_id="chart-1"))
+        result.trade.exchange_order_id = "9"
+        self.db.commit()
+        body = self._status().json()
+        self.assertEqual(body["status"], "executed")
+        self.assertEqual((body["take_profit"], body["stop_loss"]), (5.0, 2.5))
+        self.assertEqual(body["stake"], 10.0)
+
+    def test_rejected_entry_reports_reason(self):
+        self._process(_signal(signal_id="chart-1", take_profit=990.0))
+        body = self._status().json()
+        self.assertEqual(body["status"], "rejected")
+        self.assertIn("Take profit", body["reason"])
+
+    def test_wrong_secret_is_refused(self):
+        self.assertEqual(self._status(secret="x").status_code, 403)
 
 
 if __name__ == "__main__":

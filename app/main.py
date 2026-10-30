@@ -19,8 +19,8 @@ from app.config import ENV_EXECUTION_MODE, ENV_MAX_MULTIPLIER_FLOOR, ENV_TIMEZON
 from app.database import Base, SessionLocal, engine, get_db, sync_schema
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
-from app.schemas import BotPairOut, BotPairUpdate, CloseAllTarget, ManualExitSignal, PositionTpSl, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
-from app.services import PAIR_DEFAULT_FIELDS, account_exposure, close_all_open_trades, close_all_target, get_app_settings, local_period_start, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal, trade_execution_lock
+from app.schemas import BotPairOut, BotPairUpdate, CloseAllTarget, ManualExitSignal, PositionTpSl, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, SignalStatusQuery, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
+from app.services import PAIR_DEFAULT_FIELDS, account_exposure, close_all_open_trades, close_all_target, get_app_settings, local_period_start, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, preview_chart_trade, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal, trade_execution_lock
 from app import auth, notify, trade_audit
 from app.trade_audit import trade_audit_scheduler
 from app.trailing import trailing_monitor
@@ -273,6 +273,50 @@ async def receive_exit_webhook(payload: ManualExitSignal, background_tasks: Back
     payload.symbol = symbol
     background_tasks.add_task(_process_exit_in_background, payload)
     return {"status": "received"}
+
+
+@app.post("/webhook/preview")
+async def preview_webhook(payload: WebhookSignal, db: Session = Depends(get_db)) -> dict:
+    # The chart extension's "what would this open with" check - stake,
+    # multiplier and dollar TP/SL - before it sends the real entry.
+    preview = await preview_chart_trade(db, payload)
+    if "error" in preview:
+        raise HTTPException(status_code=400, detail=preview["error"])
+    return preview
+
+
+@app.post("/webhook/status")
+async def webhook_status(query: SignalStatusQuery, db: Session = Depends(get_db)) -> dict:
+    """What became of a webhook sent with this signal_id. The entry itself
+    is processed after /webhook answers, so until its journal row exists
+    this reports pending."""
+    if query.secret != settings.webhook_secret:
+        raise HTTPException(status_code=403, detail="Invalid webhook secret.")
+    signal = db.scalar(select(Signal).where(Signal.signal_id == query.signal_id).order_by(Signal.id.desc()))
+    if signal is None or signal.status in (ExecutionStatus.received, ExecutionStatus.accepted):
+        return {"status": "pending"}
+    result = {
+        "status": signal.status.value,
+        "reason": signal.rejection_reason,
+        "symbol": signal.symbol,
+        "direction": signal.direction.value if signal.direction else None,
+        "mode": signal.execution_mode,
+    }
+    trade = db.scalar(
+        select(Trade)
+        .where(Trade.strategy_id == signal.strategy_id, Trade.symbol == signal.symbol, Trade.opened_at >= signal.created_at)
+        .order_by(Trade.id)
+    )
+    if signal.status == ExecutionStatus.executed and trade:
+        poc = await DerivClient().get_contract_status(trade.exchange_order_id, use_cache=False) if trade.exchange_order_id else None
+        result.update(
+            entry_price=trade.entry_price,
+            stake=trade.size,
+            multiplier=trade.leverage,
+            take_profit=_limit_amount(poc, "take_profit"),
+            stop_loss=_limit_amount(poc, "stop_loss"),
+        )
+    return result
 
 
 @app.get("/api/unrealized-pnl")

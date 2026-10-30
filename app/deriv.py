@@ -48,6 +48,17 @@ def chart_tpsl_amounts(
     return take_profit, stop_loss
 
 
+def _contract_number(contract_id: str | int) -> int | str:
+    """Trades store Deriv's contract_id as text, but Deriv refuses it as a
+    string ("contract_id must be an integer") - which silently blanked live
+    P/L and made every dashboard close fail. Anything that isn't a number is
+    passed through for Deriv to reject with its own error."""
+    try:
+        return int(contract_id)
+    except (TypeError, ValueError):
+        return contract_id
+
+
 def _normalize_symbol_key(value: str) -> str:
     return re.sub(r"[^A-Z0-9]+", "_", value.upper()).strip("_")
 
@@ -429,7 +440,7 @@ class DerivClient:
             if cached and now - cached[0] < DerivClient._CONTRACT_STATUS_CACHE_TTL:
                 return cached[1]
         try:
-            result = await self._rpc("proposal_open_contract", {"contract_id": contract_id})
+            result = await self._rpc("proposal_open_contract", {"contract_id": _contract_number(contract_id)})
         except DerivExecutionError:
             return None
         poc = result.get("proposal_open_contract") if isinstance(result, dict) else None
@@ -531,6 +542,23 @@ class DerivClient:
                 found = parsed
         return found
 
+    async def order_multiplier(self, symbol: str, contract_type: str, leverage: float) -> int:
+        """The multiplier an order on `symbol` (a resolved Deriv code) will
+        actually run at: the requested leverage snapped to the nearest value
+        Deriv allows, refused if even the lowest is above the safety cap."""
+        requested_multiplier = max(1, round(leverage))
+        allowed_multipliers = await self.get_multiplier_range(symbol, contract_type)
+        if allowed_multipliers and min(allowed_multipliers) > settings.max_multiplier_floor:
+            raise DerivExecutionError(
+                f"{symbol} requires at least {min(allowed_multipliers)}x leverage, "
+                f"above the configured safety cap of {settings.max_multiplier_floor}x."
+            )
+        return (
+            min(allowed_multipliers, key=lambda value: abs(value - requested_multiplier))
+            if allowed_multipliers
+            else requested_multiplier
+        )
+
     async def place_order(
         self,
         signal: WebhookSignal,
@@ -545,19 +573,7 @@ class DerivClient:
         # Multipliers (not fixed-duration digital options) so the position
         # stays open with live-moving P&L until a matching exit signal sells it.
         contract_type = "MULTUP" if signal.direction.value == "long" else "MULTDOWN"
-
-        requested_multiplier = max(1, round(signal.leverage))
-        allowed_multipliers = await self.get_multiplier_range(symbol, contract_type)
-        if allowed_multipliers and min(allowed_multipliers) > settings.max_multiplier_floor:
-            raise DerivExecutionError(
-                f"{symbol} requires at least {min(allowed_multipliers)}x leverage, "
-                f"above the configured safety cap of {settings.max_multiplier_floor}x."
-            )
-        multiplier = (
-            min(allowed_multipliers, key=lambda value: abs(value - requested_multiplier))
-            if allowed_multipliers
-            else requested_multiplier
-        )
+        multiplier = await self.order_multiplier(symbol, contract_type, signal.leverage)
 
         quoted: dict[str, Any] = {}
 
@@ -667,7 +683,7 @@ class DerivClient:
                 "contract": poc,
             }
 
-        result = await self._rpc("sell", {"sell": contract_id, "price": 0})
+        result = await self._rpc("sell", {"sell": _contract_number(contract_id), "price": 0})
         sell_data = result.get("sell", result)
         sell_data = sell_data if isinstance(sell_data, dict) else {}
         order_id = sell_data.get("transaction_id")
