@@ -65,6 +65,10 @@ class _Tracked:
     subscription_id: str | None = None
     # Latest live profit, summed for the close-all target.
     profit: float | None = None
+    # The trade's own trailing stop, separate from the bot's above.
+    trail_distance: float | None = None
+    trail_peak: float | None = None
+    saved_trail_peak: float | None = None
 
 
 class TrailingStopMonitor:
@@ -151,7 +155,11 @@ class TrailingStopMonitor:
             )
             # The close-all target needs every open trade's profit.
             if not basket_target:
-                query = query.where(or_(SignalBot.trail_distance_pct > 0, Trade.close_at_price.is_not(None)))
+                query = query.where(or_(
+                    SignalBot.trail_distance_pct > 0,
+                    Trade.close_at_price.is_not(None),
+                    Trade.trail_distance.is_not(None),
+                ))
             rows = db.execute(query).all()
         trailed = {}
         for trade, bot in rows:
@@ -168,6 +176,9 @@ class TrailingStopMonitor:
                 saved_peak=trade.peak_profit,
                 target=trade.close_at_price,
                 target_above=bool(trade.close_at_above),
+                trail_distance=trade.trail_distance,
+                trail_peak=trade.trail_peak,
+                saved_trail_peak=trade.trail_peak,
             )
         self._basket_target = basket_target
         self._basket = set(trailed) if basket_target else set()
@@ -187,6 +198,10 @@ class TrailingStopMonitor:
                 # the live peak and profit.
                 tracked.start, tracked.distance = info.start, info.distance
                 tracked.target, tracked.target_above = info.target, info.target_above
+                tracked.trail_distance = info.trail_distance
+                # Only re-arming changes the saved peak; it starts over.
+                if info.trail_peak != tracked.saved_trail_peak:
+                    tracked.trail_peak = tracked.saved_trail_peak = info.trail_peak
                 continue
             if now - self._subscribe_failed_at.get(contract_id, -math.inf) < SUBSCRIBE_RETRY_DELAY:
                 continue
@@ -249,6 +264,22 @@ class TrailingStopMonitor:
                 self._spawn(self._close(
                     contract_id, tracked, spot, "price_exit",
                     {"trade_id": tracked.trade_id, "close_at_price": tracked.target, "trigger_spot": spot},
+                ))
+                return
+
+        if tracked.trail_distance is not None and profit is not None:
+            if tracked.trail_peak is None or profit > tracked.trail_peak:
+                tracked.trail_peak = profit
+            if profit <= tracked.trail_peak - tracked.trail_distance and contract_id not in self._closing:
+                self._closing.add(contract_id)
+                self._spawn(self._close(
+                    contract_id, tracked, None, "trailing_stop",
+                    {
+                        "trade_id": tracked.trade_id,
+                        "peak_profit": tracked.trail_peak,
+                        "trigger_profit": profit,
+                        "trail_distance": tracked.trail_distance,
+                    },
                 ))
                 return
 
@@ -347,16 +378,22 @@ class TrailingStopMonitor:
             logger.exception("Trailing stop failed to record Deriv-side close of trade %s", trade_id)
 
     def _save_peaks(self) -> None:
-        dirty = [t for t in self._tracked.values() if t.peak is not None and t.peak != t.saved_peak]
+        dirty = [
+            t for t in self._tracked.values()
+            if (t.peak is not None and t.peak != t.saved_peak) or t.trail_peak != t.saved_trail_peak
+        ]
         if not dirty:
             return
         try:
             with SessionLocal() as db:
                 for tracked in dirty:
-                    db.execute(update(Trade).where(Trade.id == tracked.trade_id).values(peak_profit=tracked.peak))
+                    db.execute(update(Trade).where(Trade.id == tracked.trade_id).values(
+                        peak_profit=tracked.peak, trail_peak=tracked.trail_peak,
+                    ))
                 db.commit()
             for tracked in dirty:
                 tracked.saved_peak = tracked.peak
+                tracked.saved_trail_peak = tracked.trail_peak
         except Exception:
             logger.exception("Trailing stop failed to save peak profits")
 

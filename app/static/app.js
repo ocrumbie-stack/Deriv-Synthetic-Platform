@@ -729,7 +729,7 @@ function renderPositions(rows) {
       <td>${number.format(t.entry_price)}</td><td>${number.format(t.size)}</td>
       <td>${number.format(t.leverage)}x</td>
       <td class="neutral" data-upl="${t.symbol}_${t.direction}">—</td>
-      <td>${statusBadge(t.status)}${t.close_at_price != null ? `<div style="color:var(--muted);font-size:12px;white-space:nowrap">Closes at ${number.format(t.close_at_price)}</div>` : ""}</td>
+      <td>${statusBadge(t.status)}${t.close_at_price != null ? `<div style="color:var(--muted);font-size:12px;white-space:nowrap">Closes at ${number.format(t.close_at_price)}</div>` : ""}${t.trail_distance != null ? `<div style="color:var(--muted);font-size:12px;white-space:nowrap">Trails $${number.format(t.trail_distance)}</div>` : ""}</td>
       <td>${modeBadge(t.execution_mode)}</td>
       <td>${fmtDate(t.opened_at)}</td>
       <td>
@@ -2422,7 +2422,7 @@ async function refreshBots() {
 
     // Name any manual exits in place alongside the bot's % TP/SL (no values).
     const exitLabels = [
-      b.trail_distance_pct > 0 && "Trailing",
+      (b.trail_distance_pct > 0 || openPairs.some(p => p.trail_distance != null)) && "Trailing",
       openPairs.some(p => p.close_at_price != null) && "Close at price",
       openPairs.some(p => p.manual_tpsl) && "Manual TP/SL",
     ].filter(Boolean);

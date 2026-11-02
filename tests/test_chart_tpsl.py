@@ -6,7 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app import services
+from app import services, trailing
 from app.config import settings
 from app.database import Base
 from app.deriv import DerivClient, chart_tpsl_amounts
@@ -287,11 +287,86 @@ class ExtensionPositionEndpointTests(_ChartApiCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(close.await_args.args[3], "manual_close")
 
+    def test_stop_price_can_sit_in_profit(self):
+        trade = self._open()
+        with patch("app.main.DerivClient", return_value=self._client()):
+            r = self.client.post("/webhook/positions/stop", json={"secret": "s", "trade_id": trade.id, "price": 1002})
+        self.assertEqual(r.status_code, 200)
+        self.db.refresh(trade)
+        self.assertEqual((trade.close_at_price, trade.close_at_above), (1002.0, False))
+
+    def test_stop_price_beyond_the_market_is_refused(self):
+        trade = self._open()
+        with patch("app.main.DerivClient", return_value=self._client()):
+            r = self.client.post("/webhook/positions/stop", json={"secret": "s", "trade_id": trade.id, "price": 1004})
+        self.assertEqual(r.status_code, 422)
+        self.assertIn("below the current price", r.json()["detail"])
+        self.db.refresh(trade)
+        self.assertIsNone(trade.close_at_price)
+
+    def test_stop_price_blank_cancels(self):
+        trade = self._open()
+        trade.close_at_price, trade.close_at_above = 1002.0, False
+        self.db.commit()
+        r = self.client.post("/webhook/positions/stop", json={"secret": "s", "trade_id": trade.id, "price": None})
+        self.assertEqual(r.status_code, 200)
+        self.db.refresh(trade)
+        self.assertIsNone(trade.close_at_price)
+
+    def test_trail_starts_from_the_current_profit_and_cancels(self):
+        trade = self._open()
+        with patch("app.main.DerivClient", return_value=self._client()):
+            r = self.client.post("/webhook/positions/trail", json={"secret": "s", "trade_id": trade.id, "distance": 2})
+        self.assertEqual(r.status_code, 200)
+        self.db.refresh(trade)
+        self.assertEqual((trade.trail_distance, trade.trail_peak), (2.0, 1.5))
+        self.client.post("/webhook/positions/trail", json={"secret": "s", "trade_id": trade.id, "distance": None})
+        self.db.refresh(trade)
+        self.assertEqual((trade.trail_distance, trade.trail_peak), (None, None))
+
     def test_wrong_secret_is_refused_everywhere(self):
         trade = self._open()
         for path, extra in (("/webhook/positions", {}), ("/webhook/positions/tpsl", {"trade_id": trade.id}),
-                            ("/webhook/positions/close", {"trade_id": trade.id})):
+                            ("/webhook/positions/close", {"trade_id": trade.id}),
+                            ("/webhook/positions/stop", {"trade_id": trade.id}),
+                            ("/webhook/positions/trail", {"trade_id": trade.id})):
             self.assertEqual(self.client.post(path, json={"secret": "x", **extra}).status_code, 403, path)
+
+
+class TradeTrailMonitorTests(unittest.IsolatedAsyncioTestCase):
+    """The extension's per-trade trail, driven by the live profit stream."""
+
+    def _monitor(self, peak=5.0):
+        monitor = trailing.TrailingStopMonitor()
+        monitor._spawn = lambda coro: coro.close()
+        monitor._tracked["1"] = trailing._Tracked(
+            trade_id=1, stake=100.0, start=None, distance=None, peak=None, saved_peak=None,
+            trail_distance=3.0, trail_peak=peak, saved_trail_peak=peak,
+        )
+        return monitor
+
+    @staticmethod
+    def _tick(monitor, profit):
+        monitor._handle({"proposal_open_contract": {"contract_id": "1", "profit": profit, "current_spot": 1.0}})
+
+    async def test_closes_once_profit_falls_the_distance_below_its_peak(self):
+        monitor = self._monitor()
+        self._tick(monitor, 9.0)
+        self._tick(monitor, 6.5)
+        self.assertEqual(monitor._closing, set())
+        self._tick(monitor, 6.0)
+        self.assertEqual(monitor._closing, {"1"})
+
+    async def test_rearming_restarts_the_peak_but_a_saved_peak_does_not(self):
+        monitor = self._monitor()
+        self._tick(monitor, 9.0)
+        info = trailing._Tracked(1, 100.0, None, None, None, None, trail_distance=3.0, trail_peak=9.0, saved_trail_peak=9.0)
+        monitor._tracked["1"].saved_trail_peak = 9.0
+        await monitor._sync(AsyncMock(), {"1": info})
+        self.assertEqual(monitor._tracked["1"].trail_peak, 9.0)
+        info.trail_peak = 2.0
+        await monitor._sync(AsyncMock(), {"1": info})
+        self.assertEqual(monitor._tracked["1"].trail_peak, 2.0)
 
 
 if __name__ == "__main__":

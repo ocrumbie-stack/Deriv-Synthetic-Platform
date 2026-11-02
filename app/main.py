@@ -19,7 +19,7 @@ from app.config import ENV_EXECUTION_MODE, ENV_MAX_MULTIPLIER_FLOOR, ENV_TIMEZON
 from app.database import Base, SessionLocal, engine, get_db, sync_schema
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
-from app.schemas import BotPairOut, BotPairUpdate, CloseAllTarget, ManualExitSignal, PositionAction, PositionTpSl, PositionTpSlAction, PositionTpSlDetail, SecretQuery, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, SignalStatusQuery, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
+from app.schemas import BotPairOut, BotPairUpdate, CloseAllTarget, ManualExitSignal, PositionAction, PositionStopAction, PositionTpSl, PositionTpSlAction, PositionTpSlDetail, PositionTrailAction, SecretQuery, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, SignalStatusQuery, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
 from app.services import PAIR_DEFAULT_FIELDS, account_exposure, close_all_open_trades, close_all_target, get_app_settings, local_period_start, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, preview_chart_trade, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal, trade_execution_lock
 from app import auth, notify, trade_audit
 from app.trade_audit import trade_audit_scheduler
@@ -849,13 +849,8 @@ def _get_open_trade(db: Session, trade_id: int) -> Trade:
     return trade
 
 
-@app.post("/api/open-positions/{trade_id}/close-at", response_model=TradeOut)
-async def set_close_at_price(trade_id: int, price: float, db: Session = Depends(get_db)) -> Trade:
-    """Arm a pending close: the trailing monitor sells the contract once the
-    spot reaches `price`, from whichever side of the market it is now."""
-    trade = _get_open_trade(db, trade_id)
-    if not math.isfinite(price) or price <= 0:
-        raise HTTPException(status_code=422, detail="Enter a positive price.")
+async def _live_contract(db: Session, trade: Trade) -> dict | None:
+    """The contract's fresh state, for arming something the monitor watches."""
     if not trade.exchange_order_id:
         raise HTTPException(status_code=409, detail="This position has no Deriv contract to watch.")
     poc = await DerivClient().get_contract_status(trade.exchange_order_id, use_cache=False)
@@ -863,10 +858,26 @@ async def set_close_at_price(trade_id: int, price: float, db: Session = Depends(
         await reconcile_open_trade(db, trade)
         db.commit()
         raise HTTPException(status_code=409, detail="Position is already closed on Deriv.")
+    return poc
+
+
+@app.post("/api/open-positions/{trade_id}/close-at", response_model=TradeOut)
+async def set_close_at_price(trade_id: int, price: float, db: Session = Depends(get_db), stop: bool = False) -> Trade:
+    """Arm a pending close: the trailing monitor sells the contract once the
+    spot reaches `price`, from whichever side of the market it is now. With
+    `stop`, the price must be on the losing side of the market."""
+    trade = _get_open_trade(db, trade_id)
+    if not math.isfinite(price) or price <= 0:
+        raise HTTPException(status_code=422, detail="Enter a positive price.")
+    poc = await _live_contract(db, trade)
     try:
         spot = float((poc or {}).get("current_spot"))
     except (TypeError, ValueError):
         raise HTTPException(status_code=502, detail="Couldn't read the current price from Deriv.")
+    is_long = trade.direction.value == "long"
+    if stop and (price >= spot if is_long else price <= spot):
+        side = "below" if is_long else "above"
+        raise HTTPException(status_code=422, detail=f"A stop on a {trade.direction.value} must be {side} the current price ({spot}).")
     trade.close_at_price = price
     trade.close_at_above = price >= spot
     db.commit()
@@ -980,6 +991,10 @@ async def webhook_positions(query: SecretQuery, db: Session = Depends(get_db)) -
             "opened_at": trade.opened_at.isoformat(),
             "profit": _as_float((poc or {}).get("profit")),
             "current_spot": _as_float((poc or {}).get("current_spot")),
+            "close_at_price": trade.close_at_price,
+            "close_at_above": trade.close_at_above,
+            "trail_distance": trade.trail_distance,
+            "trail_peak": trade.trail_peak,
         })
     return {"mode": settings.execution_mode.lower(), "positions": positions}
 
@@ -990,6 +1005,35 @@ async def webhook_position_tpsl(action: PositionTpSlAction, db: Session = Depend
     return await set_position_tpsl(
         action.trade_id, PositionTpSl(take_profit=action.take_profit, stop_loss=action.stop_loss), db
     )
+
+
+@app.post("/webhook/positions/stop")
+async def webhook_position_stop(action: PositionStopAction, db: Session = Depends(get_db)) -> dict:
+    """A stop price the platform watches, for levels Deriv's stop loss can't
+    hold, such as one in profit. It shares the close-at-price slot."""
+    _require_secret(action.secret)
+    if action.price is None:
+        trade = cancel_close_at_price(action.trade_id, db)
+    else:
+        trade = await set_close_at_price(action.trade_id, action.price, db, stop=True)
+    return {"trade_id": trade.id, "close_at_price": trade.close_at_price}
+
+
+@app.post("/webhook/positions/trail")
+async def webhook_position_trail(action: PositionTrailAction, db: Session = Depends(get_db)) -> dict:
+    """Trail this one position: the monitor sells it once profit falls
+    `distance` dollars below its peak, measured from now."""
+    _require_secret(action.secret)
+    trade = _get_open_trade(db, action.trade_id)
+    peak = None
+    if action.distance is not None:
+        peak = _as_float((await _live_contract(db, trade) or {}).get("profit"))
+        if peak is None:
+            raise HTTPException(status_code=502, detail="Couldn't read the current profit from Deriv.")
+    trade.trail_distance = action.distance
+    trade.trail_peak = peak
+    db.commit()
+    return {"trade_id": trade.id, "trail_distance": trade.trail_distance, "trail_peak": trade.trail_peak}
 
 
 @app.post("/webhook/positions/close")

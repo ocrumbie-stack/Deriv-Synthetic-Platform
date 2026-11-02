@@ -82,6 +82,18 @@ class PositionTpSlAction(PositionAction):
     stop_loss: float | None = Field(default=None, gt=0)
 
 
+class PositionStopAction(PositionAction):
+    """A platform-watched stop price. None cancels it."""
+
+    price: float | None = Field(default=None, gt=0)
+
+
+class PositionTrailAction(PositionAction):
+    """A per-trade trailing stop, in dollars of profit. None cancels it."""
+
+    distance: float | None = Field(default=None, gt=0)
+
+
 class PositionTpSl(BaseModel):
     """Dollar TP/SL for one open contract - profit/loss amounts, the unit
     Deriv's limit_order takes. None removes that side."""
@@ -245,6 +257,7 @@ class TradeOut(BaseModel):
     opened_at: datetime
     closed_at: datetime | None
     close_at_price: float | None = None
+    trail_distance: float | None = None
     manual_tpsl: bool | None = None
     close_reason: str | None = None
 
