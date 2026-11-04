@@ -196,3 +196,14 @@ This file and that page list the same items - when adding a fix, update both.
 | M5 | Exits, pause and Emergency Stop | Pause the bot and send an entry, then an exit. Turn Emergency Stop on and repeat. | Entries are rejected (paused / emergency stop); exits still close the position. | 8745e0e (3 Nov) |
 | M6 | Demo and live kept apart | Send a demo signal, switch to live, open Crypto. | The demo signal, positions and balance don't show in live, and back in demo they're there. A live signal with no live keys is rejected naming the missing BLOFIN_API_* settings. | 8745e0e (3 Nov) |
 | M7 | Close from Open Positions | Click Close on a crypto position. | The dialog names the mode and pair (BTCUSDT); the position closes at market on BloFin and disappears from the table. | 8745e0e (3 Nov) |
+
+## N. Home
+
+| ID | Check | How to test | Expect | Commit |
+|---|---|---|---|---|
+| N1 | Home is the landing page | Open the dashboard with no #page in the URL, and with a made-up one (#nope). | Home opens, first tab in the top bar. Tabs read Home, Synthetic, Forex, Crypto with no broker names; sidebar headings are generic too. Each card's Open button goes to that market's Overview. | adceedf (3 Nov) |
+| N2 | Market cards match the market pages | Compare each card with its market's Overview. | Synthetic and Crypto equity, available, unrealized P/L and open positions match their own pages (Crypto in USDT, Synthetic in USD, no combined total). Synthetic's today P/L, trade count and win rate match today's Trade History. Forex shows Not connected. | adceedf (3 Nov) |
+| N3 | Demo and live kept apart | Note the cards and Recent Activity, switch demo/live, reload Home. | The badge flips, and the counts, balances and activity only show the current mode's data. | adceedf (3 Nov) |
+| N4 | One broker down doesn't block the page | Remove or break the Crypto keys (or wait for a Deriv outage). | The broken card shows Unavailable (hover for the error); the other cards and Recent Activity still load. | adceedf (3 Nov) |
+| N5 | Risk strip | Set a daily loss limit and max exposure on Risk Controls, open a trade, turn Emergency Stop on and off. | Emergency Stop reads ACTIVE/Inactive. Loss and exposure show "used of limit" with a bar that turns yellow at 50% and red at 80% ("no limit" when unset). | adceedf (3 Nov) |
+| N6 | Recent Activity merges markets | Send a Synthetic and a Crypto signal. | Both appear newest first, tagged Synthetic / Crypto, crypto pairs shown as BTCUSDT. | adceedf (3 Nov) |
