@@ -21,7 +21,7 @@ from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, CryptoBot, ExecutionStatus, ForexBot, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
 from app.schemas import BotPairOut, BotPairUpdate, CloseAllTarget, CryptoBotCreate, CryptoBotUpdate, ForexBotCreate, ForexBotUpdate, ForexPairUpdate, ManualExitSignal, PositionAction, PositionStopAction, PositionTpSl, PositionTpSlAction, PositionTpSlDetail, PositionTrailAction, SecretQuery, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, SignalStatusQuery, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
 from app.services import PAIR_DEFAULT_FIELDS, account_exposure, close_all_open_trades, close_all_target, get_app_settings, local_period_start, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, preview_chart_trade, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal, trade_execution_lock
-from app import auth, crypto, forex, notify, trade_audit
+from app import auth, crypto, forex, home, notify, trade_audit
 from app.blofin import BlofinError, missing_settings as blofin_missing
 from app.trade_audit import trade_audit_scheduler
 from app.trailing import trailing_monitor
@@ -1340,6 +1340,11 @@ async def account_balance(db: Session = Depends(get_db)) -> dict:
         }
     except Exception:
         return {"mode": mode, "equity": None, "available": None, "unrealized_pnl": None, "error": "fetch_failed"}
+
+
+@app.get("/api/home")
+async def home_summary(db: Session = Depends(get_db)) -> dict:
+    return await home.summary(db, lambda: account_balance(db))
 
 
 @app.get("/api/summary")

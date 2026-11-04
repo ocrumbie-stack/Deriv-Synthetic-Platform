@@ -102,18 +102,6 @@ body {
 
 .market-name { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; }
 
-.market-broker {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  padding: 1px 7px;
-}
-
-.market-tab.active .market-broker { border-color: rgba(255, 193, 7, 0.35); color: var(--yellow); }
-
 .topbar-actions {
   align-items: center;
   align-self: stretch;
@@ -820,8 +808,35 @@ td.wrap-cell { min-width: 260px; white-space: normal; }
 .empty-state .subtle { max-width: 460px; }
 #cryptoWebhookUrl { overflow-wrap: anywhere; }
 
+/* ── Home ── */
+.home-markets { display: grid; gap: 10px; grid-template-columns: repeat(3, 1fr); }
+.home-card {
+  align-content: start;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 18px 20px;
+}
+.home-card.offline { opacity: 0.6; }
+.home-card-head { align-items: center; display: flex; justify-content: space-between; margin-bottom: 6px; }
+.home-card-name { font-size: 15px; font-weight: 700; }
+.home-card-equity { font-size: 24px; font-weight: 700; margin: 0; }
+.home-card-stats { display: grid; gap: 8px 16px; grid-template-columns: 1fr 1fr; margin: 8px 0; }
+.home-card-stats dt { color: var(--muted); font-size: 11px; }
+.home-card-stats dd { font-weight: 600; margin: 2px 0 0; }
+.home-card .nav-link-btn { justify-self: start; }
+.home-risk { display: grid; gap: 10px; grid-template-columns: repeat(3, 1fr); }
+.home-risk .risk-panel { gap: 8px; }
+.home-meter { background: var(--panel-2); border-radius: 4px; height: 6px; overflow: hidden; }
+.home-meter b { background: var(--green); border-radius: 4px; display: block; height: 100%; width: 0; }
+.home-meter b.warn { background: var(--yellow); }
+.home-meter b.danger { background: var(--red); }
+
 @media (max-width: 760px) {
   .crypto-stats { grid-template-columns: repeat(2, 1fr); }
+  .home-markets, .home-risk { grid-template-columns: 1fr; }
   .crypto-bot-fields, .forex-bot-fields { grid-template-columns: 1fr 1fr; }
   .forex-bot-fields label:first-child, .forex-pairs-field { grid-column: 1 / -1; }
   .crypto-bot-fields label:first-child, .crypto-bot-fields label:nth-child(4) { grid-column: 1 / -1; }
@@ -1555,7 +1570,7 @@ tr.clickable:hover td, tr.selected td { background: var(--panel-2, #16161e); }
 
 @media (max-width: 1100px) {
   .topbar-brand { width: auto; }
-  .topbar-brand .version, .market-broker { display: none; }
+  .topbar-brand .version { display: none; }
 }
 
 /* Narrow screens: markets scroll along the top, and the sidebar becomes a

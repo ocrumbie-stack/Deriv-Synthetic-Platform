@@ -117,7 +117,7 @@ cmd_shots() {
   # The dashboard is a single page routed by URL hash (see pageIds in
   # app.js) - navigate straight to a page's hash instead of clicking
   # through the sidebar.
-  local pages=(dashboard-overview:dashboard trading-history:history signals-journal:signals trading-positions:positions system-risk:risk)
+  local pages=(home:home dashboard-overview:dashboard trading-history:history signals-journal:signals trading-positions:positions system-risk:risk)
   for p in "${pages[@]}"; do
     local hash="${p%%:*}" name="${p##*:}"
     "$chrome" --headless=new --disable-gpu --no-sandbox --window-size=1500,1000 \

@@ -190,6 +190,7 @@ async function patchJson(url, body) {
 // ─── Navigation ──────────────────────────────────────────────────────────────
 
 const pageIds = new Set([
+  "home",
   "dashboard-overview",
   "trading-bots",
   "trading-positions",
@@ -222,6 +223,7 @@ const tabParent = {
 // The top bar's market each page belongs to. The sidebar only lists the
 // selected market's pages.
 const marketPages = {
+  home:      ["home"],
   synthetic: ["dashboard-overview", "trading-bots", "trading-positions", "trading-history", "signals-journal", "strategies-ranking"],
   forex:     ["forex-overview", "forex-bots", "forex-positions", "forex-history"],
   crypto:    ["crypto-overview", "crypto-bots", "crypto-positions", "crypto-history"],
@@ -233,11 +235,12 @@ const pageMarket = Object.fromEntries(Object.entries(marketPages).flatMap(([m, p
 const lastMarketPage = {};
 const forexView = { data: null, timer: null, refetchAt: 0, loading: false };
 const cryptoView = { data: null, timer: null, loading: false };
+const homeView = { timer: null, loading: false };
 
 function navigate(pageId, updateUrl = true) {
-  if (!pageIds.has(pageId)) pageId = "dashboard-overview";
+  if (!pageIds.has(pageId)) pageId = "home";
   const navId = tabParent[pageId] || pageId;
-  const market = pageMarket[pageId] || "synthetic";
+  const market = pageMarket[pageId] || "home";
   lastMarketPage[market] = pageId;
   document.body.dataset.market = market;
   document.querySelectorAll(".nav-item").forEach(btn => {
@@ -267,6 +270,8 @@ function navigate(pageId, updateUrl = true) {
   if (pageId === "forex-bots") loadForexBots();
   if (market === "crypto") startCryptoView();
   else stopCryptoView();
+  if (pageId === "home") startHomeView();
+  else stopHomeView();
   if (updateUrl && window.location.hash !== `#${pageId}`) {
     history.pushState(null, "", `#${pageId}`);
   }
@@ -297,7 +302,114 @@ document.querySelectorAll(".nav-link-btn[data-page], .page-tab[data-page]").forE
   btn.addEventListener("click", () => navigate(btn.dataset.page));
 });
 
-navigate(window.location.hash.slice(1) || "dashboard-overview", false);
+navigate(window.location.hash.slice(1) || "home", false);
+
+// ─── Home page ───────────────────────────────────────────────────────────────
+
+function startHomeView() {
+  loadHome();
+  if (!homeView.timer) homeView.timer = setInterval(loadHome, 15000);
+}
+
+function stopHomeView() {
+  clearInterval(homeView.timer);
+  homeView.timer = null;
+}
+
+async function loadHome() {
+  if (homeView.loading) return;
+  homeView.loading = true;
+  let message = "";
+  try {
+    renderHome(await getJson("/api/home"));
+  } catch {
+    message = "Couldn't load the home page. Retrying…";
+  } finally {
+    document.querySelector("#homeError").textContent = message;
+    homeView.loading = false;
+  }
+}
+
+// Synthetic is in USD and Crypto in USDT, so each card keeps its own
+// currency and there's no combined total.
+function homeMoney(v, unit) {
+  if (v == null || v === "") return "—";
+  const text = currency.format(Number(v));
+  return unit === "USDT" ? `${text.replace("$", "")} USDT` : text;
+}
+
+function homeCard(m) {
+  const status = !m.connected ? ["warn", "Not connected"] : m.error ? ["bad", "Unavailable"] : ["ok", "Connected"];
+  const b = m.balance || {};
+  const t = m.today;
+  const winRate = t && t.trades ? `${Math.round((t.wins / t.trades) * 100)}%` : "—";
+  const stat = (label, value, cls = "") => `<div><dt>${label}</dt><dd class="${cls}">${value}</dd></div>`;
+  return `<div class="home-card${m.connected ? "" : " offline"}">
+    <div class="home-card-head">
+      <span class="home-card-name">${escapeAttr(m.label)}</span>
+      <span class="badge ${status[0]}"${m.error ? ` title="${escapeAttr(m.error)}"` : ""}>${status[1]}</span>
+    </div>
+    <p class="panel-label">Equity</p>
+    <p class="home-card-equity">${homeMoney(b.equity, m.currency)}</p>
+    <dl class="home-card-stats">
+      ${stat("Available", homeMoney(b.available, m.currency))}
+      ${stat("Unrealized P/L", homeMoney(b.unrealized_pnl, m.currency), pnlClass(Number(b.unrealized_pnl || 0)))}
+      ${stat("Open positions", m.open_positions ?? "—")}
+      ${stat("Today", t ? homeMoney(t.net, m.currency) : "—", t ? pnlClass(t.net) : "")}
+      ${stat("Trades today", t ? `${t.trades} · ${winRate} won` : "—")}
+      ${stat("Last signal", m.last_signal_at ? timeAgo(m.last_signal_at) : "—")}
+    </dl>
+    <button type="button" class="nav-link-btn" data-home-page="${m.key === "synthetic" ? "dashboard-overview" : `${m.key}-overview`}">Open ${escapeAttr(m.label)} →</button>
+  </div>`;
+}
+
+// Fill a usage bar: amount used against a limit (0 = no limit set).
+function homeMeter(bar, used, limit) {
+  const pct = limit > 0 ? clamp((used / limit) * 100, 0, 100) : 0;
+  bar.style.width = `${pct}%`;
+  bar.className = pct >= 80 ? "danger" : pct >= 50 ? "warn" : "";
+}
+
+function renderHome(data) {
+  const live = data.mode === "live";
+  const badge = document.querySelector("#homeMode");
+  badge.textContent = live ? "LIVE" : "DEMO";
+  badge.className = `live-badge ${live ? "live" : "paper"}`;
+
+  document.querySelector("#homeMarkets").innerHTML = data.markets.map(homeCard).join("");
+
+  const r = data.risk;
+  const stop = document.querySelector("#homeStop");
+  stop.textContent = r.emergency_stop ? "ACTIVE" : "Inactive";
+  stop.className = `panel-title ${r.emergency_stop ? "negative" : "positive"}`;
+  const loss = Math.max(0, -r.today_net);
+  document.querySelector("#homeLoss").textContent = r.daily_loss_limit > 0
+    ? `${currency.format(loss)} of ${currency.format(r.daily_loss_limit)}`
+    : `${currency.format(loss)} · no limit`;
+  homeMeter(document.querySelector("#homeLossBar"), loss, r.daily_loss_limit);
+  document.querySelector("#homeExposure").textContent = r.max_exposure > 0
+    ? `${currency.format(r.exposure)} of ${currency.format(r.max_exposure)}`
+    : `${currency.format(r.exposure)} · no limit`;
+  homeMeter(document.querySelector("#homeExposureBar"), r.exposure, r.max_exposure);
+
+  const marketName = { synthetic: "Synthetic", crypto: "Crypto", forex: "Forex" };
+  document.querySelector("#homeActivity").innerHTML = data.activity.length
+    ? data.activity.map(s => `<tr>
+      <td>${fmtDate(s.created_at)}</td>
+      <td>${marketName[s.market] || escapeAttr(s.market)}</td>
+      <td>${escapeAttr(s.strategy_name)}</td>
+      <td>${s.market === "crypto" ? cryptoPair(s.symbol) : escapeAttr(s.symbol)}</td>
+      <td>${escapeAttr(s.action)}${s.direction ? ` ${escapeAttr(s.direction)}` : ""}</td>
+      <td>${statusBadge(s.status)}</td>
+      <td class="subtle wrap-cell">${escapeAttr(s.reason || "")}</td>
+    </tr>`).join("")
+    : emptyRow(7, "No signals yet");
+}
+
+document.querySelector("#homeMarkets").addEventListener("click", e => {
+  const btn = e.target.closest("[data-home-page]");
+  if (btn) navigate(btn.dataset.homePage);
+});
 
 // ─── Forex page ──────────────────────────────────────────────────────────────
 
