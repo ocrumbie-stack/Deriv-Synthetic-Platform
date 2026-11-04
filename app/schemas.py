@@ -13,6 +13,45 @@ def normalize_symbol(value: str) -> str:
     return value.strip().upper()
 
 
+class ForexPairUpdate(BaseModel):
+    sessions: list[str] = Field(..., min_length=1)
+
+
+class ForexBotCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    symbols: str | None = Field(default=None, max_length=400)
+    # 0.01 is a micro lot (1,000 units), OANDA's usual smallest step here.
+    lots: float = Field(default=0.01, ge=0.01, le=100)
+    stop_loss_pips: float | None = Field(default=None, gt=0)
+    take_profit_pips: float | None = Field(default=None, gt=0)
+    trailing_stop_pips: float | None = Field(default=None, ge=5)
+
+
+class ForexBotUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    symbols: str | None = Field(default=None, max_length=400)
+    lots: float | None = Field(default=None, ge=0.01, le=100)
+    stop_loss_pips: float | None = Field(default=None, gt=0)
+    take_profit_pips: float | None = Field(default=None, gt=0)
+    trailing_stop_pips: float | None = Field(default=None, ge=5)
+    enabled: bool | None = None
+
+
+class CryptoBotCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    symbols: str | None = Field(default=None, max_length=400)
+    margin: float = Field(default=10.0, gt=0)
+    leverage: int = Field(default=1, ge=1, le=125)
+
+
+class CryptoBotUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    symbols: str | None = Field(default=None, max_length=400)
+    margin: float | None = Field(default=None, gt=0)
+    leverage: int | None = Field(default=None, ge=1, le=125)
+    enabled: bool | None = None
+
+
 class WebhookSignal(BaseModel):
     secret: str | None = None
     strategy: str = Field(..., min_length=1, max_length=120)

@@ -198,6 +198,14 @@ const pageIds = new Set([
   "strategies-ranking",
   "strategies-settings",
   "strategies-leverage",
+  "forex-overview",
+  "forex-bots",
+  "forex-positions",
+  "forex-history",
+  "crypto-overview",
+  "crypto-bots",
+  "crypto-positions",
+  "crypto-history",
   "system-risk",
   "system-settings",
 ]);
@@ -211,11 +219,35 @@ const tabParent = {
   "strategies-leverage": "system-risk",
 };
 
+// The top bar's market each page belongs to. The sidebar only lists the
+// selected market's pages.
+const marketPages = {
+  synthetic: ["dashboard-overview", "trading-bots", "trading-positions", "trading-history", "signals-journal", "strategies-ranking"],
+  forex:     ["forex-overview", "forex-bots", "forex-positions", "forex-history"],
+  crypto:    ["crypto-overview", "crypto-bots", "crypto-positions", "crypto-history"],
+  system:    ["system-risk", "system-settings", "strategies-settings", "strategies-leverage"],
+};
+const pageMarket = Object.fromEntries(Object.entries(marketPages).flatMap(([m, pages]) => pages.map(p => [p, m])));
+
+// Declared here because navigate() runs during this script's first pass.
+const lastMarketPage = {};
+const forexView = { data: null, timer: null, refetchAt: 0, loading: false };
+const cryptoView = { data: null, timer: null, loading: false };
+
 function navigate(pageId, updateUrl = true) {
   if (!pageIds.has(pageId)) pageId = "dashboard-overview";
   const navId = tabParent[pageId] || pageId;
+  const market = pageMarket[pageId] || "synthetic";
+  lastMarketPage[market] = pageId;
+  document.body.dataset.market = market;
   document.querySelectorAll(".nav-item").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.page === navId);
+  });
+  document.querySelectorAll(".market-tab").forEach(tab => {
+    tab.classList.toggle("active", tab.dataset.market === market);
+  });
+  document.querySelectorAll(".nav-section[data-market]").forEach(section => {
+    section.hidden = section.dataset.market !== market;
   });
   document.querySelectorAll(".page").forEach(p => {
     p.classList.toggle("active", p.id === `page-${pageId}`);
@@ -230,6 +262,11 @@ function navigate(pageId, updateUrl = true) {
     wireBotForm();
   }
   if (pageId === "system-settings") loadAppSettings();
+  if (pageId === "forex-overview") startForexView();
+  else stopForexView();
+  if (pageId === "forex-bots") loadForexBots();
+  if (market === "crypto") startCryptoView();
+  else stopCryptoView();
   if (updateUrl && window.location.hash !== `#${pageId}`) {
     history.pushState(null, "", `#${pageId}`);
   }
@@ -247,12 +284,572 @@ document.querySelectorAll(".nav-item[data-page]").forEach(btn => {
   btn.addEventListener("click", () => navigate(btn.dataset.page));
 });
 
+// A market tab reopens the page last used in that market.
+document.querySelectorAll(".market-tab[data-market]").forEach(tab => {
+  tab.addEventListener("click", () => {
+    const market = tab.dataset.market;
+    navigate(lastMarketPage[market] || marketPages[market][0]);
+  });
+});
+
 // nav-link-btn (inline "go to page" links inside content) and page tabs
 document.querySelectorAll(".nav-link-btn[data-page], .page-tab[data-page]").forEach(btn => {
   btn.addEventListener("click", () => navigate(btn.dataset.page));
 });
 
 navigate(window.location.hash.slice(1) || "dashboard-overview", false);
+
+// ─── Forex page ──────────────────────────────────────────────────────────────
+
+function startForexView() {
+  loadForex();
+  if (!forexView.timer) forexView.timer = setInterval(tickForex, 1000);
+}
+
+function stopForexView() {
+  clearInterval(forexView.timer);
+  forexView.timer = null;
+}
+
+async function loadForex() {
+  if (forexView.loading) return;
+  forexView.loading = true;
+  const error = document.querySelector("#forexError");
+  // Refetch when the next open or close passes, but never in a tight loop if
+  // this device's clock runs ahead of the server's.
+  forexView.refetchAt = Date.now() + 15000;
+  try {
+    const data = await getJson("/api/forex/overview");
+    forexView.data = data;
+    const changes = [data.day_end, data.market.next_change, data.rollover.start, data.rollover.end,
+      ...data.overlaps.flatMap(o => [o.start, o.end]), ...data.sessions.map(s => s.next_change), ...data.pairs.map(p => p.next_change)]
+      .filter(Boolean).map(v => new Date(v).getTime()).filter(t => t > Date.now());
+    forexView.refetchAt = Math.max(Math.min(...changes), Date.now() + 15000);
+    error.textContent = "";
+    renderForex();
+  } catch {
+    error.textContent = "Couldn't load forex sessions. Retrying…";
+  } finally {
+    forexView.loading = false;
+  }
+}
+
+function forexClockTime(zone, seconds = false) {
+  return new Intl.DateTimeFormat("en-GB", { timeZone: zone, hour: "2-digit", minute: "2-digit", second: seconds ? "2-digit" : undefined }).format(new Date());
+}
+
+function forexCountdown(iso) {
+  if (!iso) return "—";
+  const minutes = Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 60000));
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  if (days) return `${days}d ${hours}h`;
+  return hours ? `${hours}h ${minutes % 60}m` : `${minutes}m`;
+}
+
+function forexDayPosition(iso) {
+  const start = new Date(forexView.data.day_start).getTime();
+  const end = new Date(forexView.data.day_end).getTime();
+  return clamp((new Date(iso).getTime() - start) / (end - start) * 100, 0, 100);
+}
+
+// The session clock: one ring per session, outermost first, over the display
+// time zone's day with midnight at the top.
+const FX_RINGS = { sydney: 120, tokyo: 104, london: 88, new_york: 72 };
+
+function forexTime(iso, zone) {
+  return new Intl.DateTimeFormat("en-GB", { timeZone: zone, hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
+}
+
+function forexZoneAbbr(zone) {
+  const part = new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "short" }).formatToParts(new Date())
+    .find(p => p.type === "timeZoneName");
+  return part ? part.value : zone;
+}
+
+function forexDialArcs(key, periods, live) {
+  const r = FX_RINGS[key];
+  const circumference = 2 * Math.PI * r;
+  return periods.map(p => {
+    const start = forexDayPosition(p.start) / 100;
+    const length = (forexDayPosition(p.end) / 100 - start) * circumference;
+    return `<circle class="fx-arc ${key}${live ? " live" : ""}" cx="150" cy="150" r="${r}"
+      stroke-dasharray="${length.toFixed(2)} ${circumference.toFixed(2)}" stroke-dashoffset="${(-start * circumference).toFixed(2)}"/>`;
+  }).join("");
+}
+
+function renderForexDial(data) {
+  const rings = Object.values(FX_RINGS).map(r => `<circle class="fx-ring" cx="150" cy="150" r="${r}"/>`).join("");
+  const arcs = data.sessions.map(s => forexDialArcs(s.key, s.periods, s.open)).join("");
+  const labels = [["00", 150, 13, "middle"], ["06", 293, 154, "end"], ["12", 150, 295, "middle"], ["18", 7, 154, "start"]]
+    .map(([t, x, y, anchor]) => `<text class="fx-hour" x="${x}" y="${y}" text-anchor="${anchor}">${t}</text>`).join("");
+  document.querySelector("#forexDial").innerHTML = `
+    <g transform="rotate(-90 150 150)">${rings}${arcs}</g>${labels}
+    <line class="fx-needle" id="forexNeedle" x1="150" y1="150" x2="150" y2="24"/>
+    <circle class="fx-hub" cx="150" cy="150" r="46"/>
+    <text class="fx-hub-time" id="forexDialTime" x="150" y="148" text-anchor="middle"></text>
+    <text class="fx-hub-zone" x="150" y="166" text-anchor="middle">${escapeAttr(forexZoneAbbr(data.timezone))}</text>`;
+}
+
+function renderForexSessions(data) {
+  const order = [...data.sessions].sort((a, b) => (b.open - a.open) || (new Date(a.next_change) - new Date(b.next_change)));
+  document.querySelector("#forexSessions").innerHTML = order.map(s => `<div class="fx-session ${s.open ? "live" : ""}">
+    <div class="fx-session-name"><i class="fx-dot ${s.key}"></i>${escapeAttr(s.name)}<span class="sub" data-fx-clock="${escapeAttr(s.zone)}"></span></div>
+    <div class="fx-progress"><b class="${s.key}" ${s.open ? `data-fx-from="${escapeAttr(s.opened_at)}" data-fx-to="${escapeAttr(s.next_change)}"` : ""}></b></div>
+    <div class="fx-session-next">${s.open ? '<span class="fx-live">LIVE</span>' : ""}<span data-fx-countdown="${escapeAttr(s.next_change || "")}" data-fx-verb="${s.open ? "closes" : "opens"}"></span></div>
+  </div>`).join("");
+
+  // London + New York overlap: tightest spreads on the majors.
+  const callout = document.querySelector("#forexCallout");
+  const overlap = data.overlaps.find(o => new Date(o.end) > Date.now());
+  callout.hidden = !overlap || !data.market.open;
+  if (overlap) {
+    const live = new Date(overlap.start) <= Date.now();
+    callout.classList.toggle("live", live);
+    callout.innerHTML = `<b>Peak liquidity</b> · London + New York overlap ${forexTime(overlap.start, data.timezone)}–${forexTime(overlap.end, data.timezone)},
+      <span data-fx-countdown="${escapeAttr(live ? overlap.end : overlap.start)}" data-fx-verb="${live ? "live now, ends" : "starts"}"></span>. Majors usually have their tightest spreads then.`;
+  }
+  document.querySelector("#forexRollover").innerHTML =
+    `Rollover pause <b>${forexTime(data.rollover.start, data.timezone)}–${forexTime(data.rollover.end, data.timezone)}</b>`;
+}
+
+// A pair's open periods today: its sessions' periods joined where they touch.
+function forexPairPeriods(data, keys) {
+  const periods = data.sessions.filter(s => keys.includes(s.key)).flatMap(s => s.periods)
+    .map(p => [new Date(p.start).getTime(), new Date(p.end).getTime()]).sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  periods.forEach(([start, end]) => {
+    const last = merged[merged.length - 1];
+    if (last && start <= last[1]) last[1] = Math.max(last[1], end);
+    else merged.push([start, end]);
+  });
+  return merged.map(([start, end]) => ({ start: new Date(start).toISOString(), end: new Date(end).toISOString() }));
+}
+
+function forexCurrencies(label) {
+  return label.split("/").map(c => `<span class="fx-ccy c-${escapeAttr(c)}">${escapeAttr(c)}</span>`).join("");
+}
+
+function renderForex() {
+  const data = forexView.data;
+  const market = document.querySelector("#forexMarket");
+  market.textContent = data.market.open ? "Market open" : "Market closed";
+  market.className = `badge ${data.market.open ? "ok" : "warn"}`;
+
+  renderForexDial(data);
+  renderForexSessions(data);
+  const tradable = data.pairs.filter(p => p.open).length;
+  document.querySelector("#forexTradable").innerHTML = `${tradable} <span>/ ${data.pairs.length}</span>`;
+  document.querySelector("#forexTradableBar").style.width = `${tradable / data.pairs.length * 100}%`;
+
+  // Open pairs first, then by when they next change.
+  const pairs = [...data.pairs].sort((a, b) => (b.open - a.open) || (new Date(a.next_change) - new Date(b.next_change)));
+  document.querySelector("#forexPairs").innerHTML = pairs.map(p => `<tr class="${p.open ? "fx-open" : ""}">
+    <td><div class="fx-pair">${forexCurrencies(p.label)}<strong>${escapeAttr(p.label)}</strong></div></td>
+    <td class="fx-mono">${p.pip}</td>
+    <td>
+      <div class="fx-strip ${p.open ? "on" : ""}">${forexPairPeriods(data, p.sessions).map(period => {
+        const left = forexDayPosition(period.start);
+        return `<i style="left:${left}%;width:${forexDayPosition(period.end) - left}%"></i>`;
+      }).join("")}<span class="fx-now"></span></div>
+      <div class="fx-chips">${data.sessions.map(s => `<button type="button" class="fx-chip ${s.key} ${p.sessions.includes(s.key) ? "on" : ""}"
+        data-symbol="${escapeAttr(p.symbol)}" data-session="${escapeAttr(s.key)}" aria-pressed="${p.sessions.includes(s.key)}">${escapeAttr(s.name)}</button>`).join("")}</div>
+    </td>
+    <td><span class="fx-status ${p.open ? "open" : ""}"><i></i>${p.open ? "Open" : "Closed"}</span>${p.reason ? `<span class="fx-reason">${escapeAttr(p.reason.replace(/^.*?closed: /, ""))}</span>` : ""}</td>
+    <td class="fx-mono"><span data-fx-countdown="${escapeAttr(p.next_change || "")}" data-fx-verb="${p.open ? "Closes" : "Opens"}"></span></td>
+  </tr>`).join("");
+  tickForex();
+}
+
+function tickForex() {
+  const data = forexView.data;
+  if (!data) return;
+  if (Date.now() >= forexView.refetchAt) loadForex();
+  document.querySelector("#forexClock").textContent = `${forexClockTime(data.timezone, true)} ${data.timezone}`;
+  document.querySelector("#forexDialTime").textContent = forexClockTime(data.timezone);
+  document.querySelector("#forexMarketNext").innerHTML =
+    `Week ${data.market.open ? "closes" : "opens"} in <b>${forexCountdown(data.market.next_change)}</b>`;
+  document.querySelectorAll("[data-fx-clock]").forEach(el => { el.textContent = forexClockTime(el.dataset.fxClock); });
+  document.querySelectorAll("[data-fx-countdown]").forEach(el => {
+    const at = el.dataset.fxCountdown;
+    el.textContent = at ? `${el.dataset.fxVerb} in ${forexCountdown(at)}` : "—";
+  });
+  document.querySelectorAll("[data-fx-from]").forEach(el => {
+    const from = new Date(el.dataset.fxFrom).getTime(), to = new Date(el.dataset.fxTo).getTime();
+    el.style.width = `${clamp((Date.now() - from) / (to - from) * 100, 0, 100)}%`;
+  });
+  const nowPct = forexDayPosition(new Date().toISOString());
+  document.querySelector("#forexNeedle").setAttribute("transform", `rotate(${nowPct * 3.6} 150 150)`);
+  document.querySelectorAll(".fx-now").forEach(el => { el.style.left = `${nowPct}%`; });
+}
+
+document.querySelector("#forexPairs").addEventListener("click", async event => {
+  const chip = event.target.closest(".fx-chip");
+  if (!chip) return;
+  const pair = forexView.data.pairs.find(p => p.symbol === chip.dataset.symbol);
+  const key = chip.dataset.session;
+  const sessions = pair.sessions.includes(key) ? pair.sessions.filter(s => s !== key) : [...pair.sessions, key];
+  if (!sessions.length) {
+    showNotice("Trading window", `${pair.label} needs at least one session.`);
+    return;
+  }
+  try {
+    await patchJson(`/api/forex/pairs/${pair.symbol}`, { sessions });
+    await loadForex();
+  } catch (e) {
+    showNotice("Trading window", e.message);
+  }
+});
+
+// ─── Crypto page ─────────────────────────────────────────────────────────────
+
+function startCryptoView() {
+  document.querySelector("#cryptoWebhookUrl").textContent = `${window.location.origin}/webhook/blofin`;
+  loadCrypto();
+  if (!cryptoView.timer) cryptoView.timer = setInterval(loadCrypto, 10000);
+}
+
+function stopCryptoView() {
+  clearInterval(cryptoView.timer);
+  cryptoView.timer = null;
+}
+
+function cryptoMoney(v) {
+  return v == null || v === "" ? "—" : currency.format(Number(v));
+}
+
+async function loadCrypto() {
+  if (cryptoView.loading) return;
+  cryptoView.loading = true;
+  let message = "";
+  try {
+    const data = await getJson("/api/crypto/overview");
+    message = data.error ? `BloFin: ${data.error}` : "";
+    cryptoView.data = data;
+    renderCrypto(data);
+  } catch {
+    message = "Couldn't load crypto data. Retrying…";
+  } finally {
+    document.querySelectorAll(".crypto-error").forEach(el => { el.textContent = message; });
+    cryptoView.loading = false;
+  }
+}
+
+// BloFin's BTC-USDT as the BTCUSDT a TradingView alert sends (and Toobit's
+// old BTC-SWAP-USDT, still in signals logged before the switch).
+function cryptoPairText(symbol) {
+  return String(symbol).replace("-SWAP-", "").replace("-", "");
+}
+
+function cryptoPair(symbol) {
+  return escapeAttr(cryptoPairText(symbol));
+}
+
+function cryptoSignalAction(s) {
+  return `${escapeAttr(s.action)}${s.direction ? ` ${escapeAttr(s.direction)}` : ""}`;
+}
+
+function renderCrypto(data) {
+  const badge = document.querySelector("#cryptoConnection");
+  badge.textContent = data.connected ? (data.error ? "BloFin error" : "Connected") : "Not connected";
+  badge.className = `badge ${data.connected && !data.error ? "ok" : "warn"}`;
+  const live = data.mode === "live";
+  document.querySelectorAll(".crypto-mode").forEach(el => {
+    el.textContent = live ? "LIVE" : "DEMO";
+    el.className = `live-badge crypto-mode ${live ? "live" : "paper"}`;
+  });
+  document.querySelector("#cryptoPositionsSub").textContent = `${live ? "Live" : "Demo"} on BloFin`;
+
+  const b = data.balance || {};
+  document.querySelector("#cryptoBalance").textContent = cryptoMoney(b.equity);
+  document.querySelector("#cryptoAvailable").textContent = cryptoMoney(b.available);
+  const unrealized = document.querySelector("#cryptoUnrealized");
+  unrealized.textContent = cryptoMoney(b.unrealized_pnl);
+  unrealized.className = `panel-title ${pnlClass(Number(b.unrealized_pnl || 0))}`;
+  const activeBots = data.bots.filter(bot => bot.enabled).length;
+  document.querySelector("#cryptoCounts").textContent = `${data.positions.length} open · ${activeBots} active bot${activeBots === 1 ? "" : "s"}`;
+
+  document.querySelector("#cryptoRecent").innerHTML = data.signals.length
+    ? data.signals.slice(0, 5).map(s => `<tr>
+      <td>${fmtDate(s.created_at)}</td>
+      <td>${escapeAttr(s.strategy_name)}</td>
+      <td>${cryptoPair(s.symbol)}</td>
+      <td>${cryptoSignalAction(s)}</td>
+      <td>${statusBadge(s.status)}</td>
+      <td class="subtle wrap-cell">${escapeAttr(s.reason || "")}</td>
+    </tr>`).join("")
+    : emptyRow(6, "No crypto signals yet");
+
+  document.querySelector("#cryptoPositionCount").textContent = `${data.positions.length} open`;
+  document.querySelector("#cryptoPositions").innerHTML = data.positions.length
+    ? data.positions.map(p => `<tr>
+      <td><strong>${cryptoPair(p.symbol)}</strong></td>
+      <td><span class="badge ${p.side === "LONG" ? "ok" : "bad"}">${escapeAttr(p.side)}</span></td>
+      <td>${cryptoMoney(p.margin)}</td>
+      <td>${p.leverage == null ? "—" : `${escapeAttr(p.leverage)}x`}</td>
+      <td>${cryptoMoney(p.value)}</td>
+      <td>${p.entry_price == null ? "—" : number.format(p.entry_price)}</td>
+      <td>${p.mark_price == null ? "—" : number.format(p.mark_price)}</td>
+      <td>${p.liquidation_price ? number.format(p.liquidation_price) : "—"}</td>
+      <td class="${pnlClass(Number(p.unrealized_pnl || 0))}">${cryptoMoney(p.unrealized_pnl)}</td>
+      <td><button type="button" class="mini-switch" style="background:var(--red-dim);color:var(--red)" data-crypto-close="${escapeAttr(p.symbol)}" data-side="${escapeAttr(p.side)}">Close</button></td>
+    </tr>`).join("")
+    : emptyRow(10, data.connected ? "No open positions" : `Set ${data.missing.map(escapeAttr).join(", ")} to connect BloFin ${escapeAttr(data.mode)}`);
+
+  document.querySelector("#cryptoHistoryCount").textContent = `${data.signals.length} signal${data.signals.length === 1 ? "" : "s"}`;
+  document.querySelector("#cryptoSignals").innerHTML = data.signals.length
+    ? data.signals.map(s => `<tr>
+      <td>${fmtDate(s.created_at)}</td>
+      <td>${escapeAttr(s.strategy_name)}</td>
+      <td>${cryptoPair(s.symbol)}</td>
+      <td>${cryptoSignalAction(s)}</td>
+      <td>${s.action === "entry" && s.margin ? cryptoMoney(s.margin) : "—"}</td>
+      <td>${s.action === "entry" && s.margin ? `${s.leverage}x` : "—"}</td>
+      <td>${s.take_profit || s.stop_loss ? `${s.take_profit ? number.format(s.take_profit) : "—"} / ${s.stop_loss ? number.format(s.stop_loss) : "—"}` : "—"}</td>
+      <td>${statusBadge(s.status)}</td>
+      <td class="subtle wrap-cell">${escapeAttr(s.reason || "")}</td>
+    </tr>`).join("")
+    : emptyRow(9, "No crypto signals yet");
+
+  document.querySelector("#cryptoBots").innerHTML = data.bots.length
+    ? data.bots.map(bot => `<tr>
+      <td><strong>${escapeAttr(bot.name)}</strong></td>
+      <td>${cryptoMoney(bot.margin)}</td>
+      <td>${bot.leverage}x</td>
+      <td>${cryptoMoney(bot.position_value)}</td>
+      <td>${bot.symbols.length ? bot.symbols.map(cryptoPair).join(", ") : '<span class="subtle">Any</span>'}</td>
+      <td>${statusBadge(bot.enabled ? "enabled" : "paused")}</td>
+      <td class="row-actions">
+        <button type="button" class="mini-switch neutral" data-bot-action="toggle" data-bot-id="${bot.id}">${bot.enabled ? "Pause" : "Resume"}</button>
+        <button type="button" class="mini-switch neutral" data-bot-action="edit" data-bot-id="${bot.id}">Edit</button>
+        <button type="button" class="mini-switch" data-bot-action="delete" data-bot-id="${bot.id}">Delete</button>
+      </td>
+    </tr>`).join("")
+    : emptyRow(7, "No crypto bots yet. Create one for each strategy that should trade on BloFin.");
+}
+
+function cryptoPositionHint(margin, leverage) {
+  const value = Number(margin) * Number(leverage);
+  return value > 0
+    ? `Each entry opens about a ${currency.format(value)} position: ${currency.format(Number(margin))} margin at ${Number(leverage)}x.`
+    : "";
+}
+
+async function sendJson(method, url, body) {
+  const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    const detail = Array.isArray(data.detail) ? data.detail.map(d => d.msg).join("; ") : data.detail;
+    throw new Error(detail || "Request failed.");
+  }
+  return r.json();
+}
+
+document.querySelector("#cryptoBotNew").addEventListener("click", () => {
+  const form = document.querySelector("#cryptoBotForm");
+  form.hidden = !form.hidden;
+  if (!form.hidden) form.elements.name.focus();
+  form.dispatchEvent(new Event("input"));
+});
+
+document.querySelector("#cryptoBotForm").addEventListener("input", event => {
+  const form = event.currentTarget;
+  document.querySelector("#cryptoBotPreview").textContent = cryptoPositionHint(form.elements.margin.value, form.elements.leverage.value);
+});
+
+document.querySelector("#cryptoBotForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.target;
+  const error = document.querySelector("#cryptoBotError");
+  try {
+    await sendJson("POST", "/api/crypto/bots", {
+      name: form.elements.name.value.trim(),
+      margin: Number(form.elements.margin.value),
+      leverage: Number(form.elements.leverage.value),
+      symbols: form.elements.symbols.value.trim() || null,
+    });
+    form.reset();
+    form.hidden = true;
+    error.textContent = "";
+    loadCrypto();
+  } catch (e) {
+    error.textContent = e.message;
+  }
+});
+
+document.querySelector("#cryptoBots").addEventListener("click", async event => {
+  const button = event.target.closest("[data-bot-action]");
+  if (!button) return;
+  const bot = cryptoView.data.bots.find(b => b.id === Number(button.dataset.botId));
+  const url = `/api/crypto/bots/${bot.id}`;
+  const action = button.dataset.botAction;
+  if (action === "toggle") {
+    try {
+      await sendJson("PATCH", url, { enabled: !bot.enabled });
+      loadCrypto();
+    } catch (e) {
+      showNotice("Crypto bot", e.message);
+    }
+  } else if (action === "edit") {
+    const saved = await openDialog({
+      title: `Edit ${bot.name}`,
+      fields: [
+        { name: "name", label: "Strategy name", value: bot.name },
+        [{ name: "margin", label: "Margin", value: bot.margin, prefix: "$" },
+         { name: "leverage", label: "Leverage", value: bot.leverage }],
+        { name: "symbols", label: "Allowed pairs", value: bot.symbols.map(cryptoPairText).join(", "), placeholder: "Any", hint: "Leave empty to allow any USDT pair." },
+      ],
+      note: "Position value is margin × leverage, rounded down to BloFin's lot size.",
+      confirmLabel: "Save",
+      onSubmit: values => sendJson("PATCH", url, {
+        name: values.name, margin: Number(values.margin), leverage: Number(values.leverage), symbols: values.symbols,
+      }),
+    });
+    if (saved) loadCrypto();
+  } else if (action === "delete") {
+    const deleted = await openDialog({
+      title: "Delete crypto bot",
+      message: `Delete ${bot.name}? Its entries will be refused until a bot with this name exists again. Open positions stay open.`,
+      confirmLabel: "Delete", tone: "danger",
+      onSubmit: () => sendJson("DELETE", url),
+    });
+    if (deleted) loadCrypto();
+  }
+});
+
+document.querySelector("#cryptoPositions").addEventListener("click", async event => {
+  const button = event.target.closest("[data-crypto-close]");
+  if (!button) return;
+  const { cryptoClose: symbol, side } = button.dataset;
+  const closed = await openDialog({
+    title: "Close position",
+    message: `Close the ${side.toLowerCase()} ${cryptoPairText(symbol)} position at market on your ${cryptoView.data.mode} BloFin account?`,
+    confirmLabel: "Close", tone: "danger",
+    onSubmit: async () => {
+      const r = await fetch(`/api/crypto/positions/close?symbol=${encodeURIComponent(symbol)}&side=${encodeURIComponent(side)}`, { method: "POST" });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "Close failed.");
+    },
+  });
+  if (closed) loadCrypto();
+});
+
+// ─── Forex bots ──────────────────────────────────────────────────────────────
+
+let forexBots = [];
+
+function fxPair(symbol) { return escapeAttr(symbol.replace("_", "/")); }
+
+function fxPips(v) { return v == null ? '<span class="subtle">—</span>' : `${number.format(v)} pips`; }
+
+function fxLots(lots) {
+  return `${number.format(lots)} lot${lots === 1 ? "" : "s"}`;
+}
+
+// Blank pip fields mean "no stop", sent as null.
+function fxBotBody(get) {
+  const pips = name => (get(name) === "" ? null : Number(get(name)));
+  return {
+    name: get("name"),
+    lots: Number(get("lots")),
+    stop_loss_pips: pips("stop_loss_pips"),
+    take_profit_pips: pips("take_profit_pips"),
+    trailing_stop_pips: pips("trailing_stop_pips"),
+    symbols: get("symbols") || null,
+  };
+}
+
+async function loadForexBots() {
+  try {
+    forexBots = await getJson("/api/forex/bots");
+  } catch {
+    return;
+  }
+  document.querySelector("#forexBots").innerHTML = forexBots.length
+    ? forexBots.map(bot => `<tr>
+      <td><strong>${escapeAttr(bot.name)}</strong></td>
+      <td>${fxLots(bot.lots)}<span class="sub-line">${number.format(bot.units)} units</span></td>
+      <td>${fxPips(bot.stop_loss_pips)}</td>
+      <td>${fxPips(bot.take_profit_pips)}</td>
+      <td>${fxPips(bot.trailing_stop_pips)}</td>
+      <td>${bot.symbols.length ? bot.symbols.map(fxPair).join(", ") : '<span class="subtle">All pairs</span>'}</td>
+      <td>${statusBadge(bot.enabled ? "enabled" : "paused")}</td>
+      <td class="row-actions">
+        <button type="button" class="mini-switch neutral" data-bot-action="toggle" data-bot-id="${bot.id}">${bot.enabled ? "Pause" : "Resume"}</button>
+        <button type="button" class="mini-switch neutral" data-bot-action="edit" data-bot-id="${bot.id}">Edit</button>
+        <button type="button" class="mini-switch" data-bot-action="delete" data-bot-id="${bot.id}">Delete</button>
+      </td>
+    </tr>`).join("")
+    : emptyRow(8, "No forex bots yet. Create one for each strategy that should trade forex on OANDA.");
+}
+
+document.querySelector("#forexBotNew").addEventListener("click", () => {
+  const form = document.querySelector("#forexBotForm");
+  form.hidden = !form.hidden;
+  if (!form.hidden) form.elements.name.focus();
+  form.dispatchEvent(new Event("input"));
+});
+
+document.querySelector("#forexBotForm").addEventListener("input", event => {
+  const lots = Number(event.currentTarget.elements.lots.value);
+  document.querySelector("#forexBotPreview").textContent = lots > 0
+    ? `Each entry trades ${fxLots(lots)} = ${number.format(Math.round(lots * 100000))} units. On EUR/USD that's about $${number.format(lots * 10)} per pip.`
+    : "";
+});
+
+document.querySelector("#forexBotForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.target;
+  const error = document.querySelector("#forexBotError");
+  try {
+    await sendJson("POST", "/api/forex/bots", fxBotBody(name => form.elements[name].value.trim()));
+    form.reset();
+    form.hidden = true;
+    error.textContent = "";
+    loadForexBots();
+  } catch (e) {
+    error.textContent = e.message;
+  }
+});
+
+document.querySelector("#forexBots").addEventListener("click", async event => {
+  const button = event.target.closest("[data-bot-action]");
+  if (!button) return;
+  const bot = forexBots.find(b => b.id === Number(button.dataset.botId));
+  const url = `/api/forex/bots/${bot.id}`;
+  const action = button.dataset.botAction;
+  if (action === "toggle") {
+    try {
+      await sendJson("PATCH", url, { enabled: !bot.enabled });
+      loadForexBots();
+    } catch (e) {
+      showNotice("Forex bot", e.message);
+    }
+  } else if (action === "edit") {
+    const saved = await openDialog({
+      title: `Edit ${bot.name}`,
+      fields: [
+        [{ name: "name", label: "Strategy name", value: bot.name },
+         { name: "lots", label: "Size (lots)", value: bot.lots }],
+        [{ name: "stop_loss_pips", label: "Stop loss (pips)", value: bot.stop_loss_pips, placeholder: "none" },
+         { name: "take_profit_pips", label: "Take profit (pips)", value: bot.take_profit_pips, placeholder: "none" }],
+        [{ name: "trailing_stop_pips", label: "Trailing stop (pips)", value: bot.trailing_stop_pips, placeholder: "none" },
+         { name: "symbols", label: "Allowed pairs", value: bot.symbols.map(s => s.replace("_", "")).join(", "), placeholder: "All pairs" }],
+      ],
+      note: "Leave a pip field empty for no stop. 1 lot = 100,000 units.",
+      confirmLabel: "Save",
+      onSubmit: values => sendJson("PATCH", url, fxBotBody(name => values[name])),
+    });
+    if (saved) loadForexBots();
+  } else if (action === "delete") {
+    const deleted = await openDialog({
+      title: "Delete forex bot",
+      message: `Delete ${bot.name}? Its entries will be refused until a bot with this name exists again.`,
+      confirmLabel: "Delete", tone: "danger",
+      onSubmit: () => sendJson("DELETE", url),
+    });
+    if (deleted) loadForexBots();
+  }
+});
 
 // ─── Render: Summary cards ───────────────────────────────────────────────────
 
@@ -2128,7 +2725,13 @@ function renderAppSettings(s) {
     : bal.equity == null
       ? row("Balance check", `${escapeAttr(s.execution_mode)} account: ${escapeAttr(bal.error || "no answer")}`, "Failing", "bad")
       : row("Balance check", `${escapeAttr(s.execution_mode)} account answering`, "OK", "ok");
-  document.querySelector("#connectionRows").innerHTML = deriv + balanceRow +
+  const blofin = s.blofin.map(b => {
+    const sub = [b.mode === "live" ? "crypto futures · real money" : "crypto futures · demo trading", b.mode === s.execution_mode ? "in use now" : ""].filter(Boolean).join(" · ");
+    return b.missing.length
+      ? row(`BloFin ${b.mode}`, `Missing ${b.missing.map(escapeAttr).join(", ")}`, "Not set", "warn")
+      : row(`BloFin ${b.mode}`, sub, "Ready", "ok");
+  }).join("");
+  document.querySelector("#connectionRows").innerHTML = deriv + balanceRow + blofin +
     row("Webhook secret", s.webhook_secret_set ? "set in Railway" : "still the default — alerts can be forged", s.webhook_secret_set ? "Set" : "Default", s.webhook_secret_set ? "ok" : "bad") +
     row("Dashboard sign-in", s.sign_in_enabled ? `Google · ${s.allowed_email_count} allowed email${s.allowed_email_count === 1 ? "" : "s"}` : "anyone with the URL can open the dashboard", s.sign_in_enabled ? "On" : "Off", s.sign_in_enabled ? "ok" : "warn");
 

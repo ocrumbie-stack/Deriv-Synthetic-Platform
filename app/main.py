@@ -18,10 +18,11 @@ from zoneinfo import ZoneInfo
 from app.config import ENV_EXECUTION_MODE, ENV_MAX_MULTIPLIER_FLOOR, ENV_TIMEZONE, deriv_credential_names, settings
 from app.database import Base, SessionLocal, engine, get_db, sync_schema
 from app.deriv import DerivClient, DerivExecutionError
-from app.models import BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
-from app.schemas import BotPairOut, BotPairUpdate, CloseAllTarget, ManualExitSignal, PositionAction, PositionStopAction, PositionTpSl, PositionTpSlAction, PositionTpSlDetail, PositionTrailAction, SecretQuery, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, SignalStatusQuery, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
+from app.models import BotPair, CryptoBot, ExecutionStatus, ForexBot, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
+from app.schemas import BotPairOut, BotPairUpdate, CloseAllTarget, CryptoBotCreate, CryptoBotUpdate, ForexBotCreate, ForexBotUpdate, ForexPairUpdate, ManualExitSignal, PositionAction, PositionStopAction, PositionTpSl, PositionTpSlAction, PositionTpSlDetail, PositionTrailAction, SecretQuery, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, SignalStatusQuery, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
 from app.services import PAIR_DEFAULT_FIELDS, account_exposure, close_all_open_trades, close_all_target, get_app_settings, local_period_start, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, preview_chart_trade, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal, trade_execution_lock
-from app import auth, notify, trade_audit
+from app import auth, crypto, forex, notify, trade_audit
+from app.blofin import BlofinError, missing_settings as blofin_missing
 from app.trade_audit import trade_audit_scheduler
 from app.trailing import trailing_monitor
 
@@ -272,6 +273,26 @@ async def receive_exit_webhook(payload: ManualExitSignal, background_tasks: Back
             break
     payload.symbol = symbol
     background_tasks.add_task(_process_exit_in_background, payload)
+    return {"status": "received"}
+
+
+async def _process_crypto_in_background(payload: WebhookSignal) -> None:
+    async with crypto.order_lock:
+        db = SessionLocal()
+        try:
+            await crypto.process_signal(db, payload)
+        except Exception:
+            db.rollback()
+            logger.exception("Failed to process BloFin webhook: %s", payload.model_dump(mode="json", exclude={"secret"}))
+        finally:
+            db.close()
+
+
+@app.post("/webhook/blofin", status_code=202)
+async def receive_blofin_webhook(payload: WebhookSignal, background_tasks: BackgroundTasks) -> dict:
+    # Its own URL so the same alert format trades BloFin instead of Deriv,
+    # without the strategy knowing which broker it's on.
+    background_tasks.add_task(_process_crypto_in_background, payload)
     return {"status": "received"}
 
 
@@ -673,6 +694,7 @@ def app_settings(db: Session = Depends(get_db)) -> dict:
         "env_timezone": ENV_TIMEZONE,
         "execution_mode": settings.execution_mode,
         "deriv": deriv,
+        "blofin": [{"mode": mode, "missing": blofin_missing(mode)} for mode in ("demo", "live")],
         "webhook_secret_set": settings.webhook_secret.strip() not in ("", "change-me"),
         "sign_in_enabled": auth.auth_enabled(),
         "allowed_email_count": len(auth.allowed_emails()),
@@ -740,6 +762,130 @@ async def telegram_test() -> dict:
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     return {"status": "sent"}
+
+
+@app.get("/api/forex/overview")
+def forex_overview(db: Session = Depends(get_db)) -> dict:
+    get_app_settings(db)
+    return forex.overview(db, settings.timezone)
+
+
+@app.patch("/api/forex/pairs/{symbol}")
+def update_forex_pair(symbol: str, updates: ForexPairUpdate, db: Session = Depends(get_db)) -> dict:
+    if symbol not in forex.DEFAULT_PAIRS:
+        raise HTTPException(status_code=404, detail="Unknown forex pair.")
+    unknown = [key for key in updates.sessions if key not in forex.SESSIONS]
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unknown session: {', '.join(unknown)}.")
+    forex.set_pair_sessions(db, symbol, updates.sessions)
+    return {"symbol": symbol, "sessions": list(forex.pair_sessions(db)[symbol])}
+
+
+@app.get("/api/crypto/overview")
+async def crypto_overview(db: Session = Depends(get_db)) -> dict:
+    return await crypto.overview(db)
+
+
+def _crypto_bot_fields(fields: dict, db: Session, bot_id: int | None = None) -> dict:
+    if "symbols" in fields:
+        try:
+            fields["symbols"] = crypto.normalize_symbols(fields["symbols"])
+        except BlofinError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+    if "name" in fields:
+        fields["name"] = fields["name"].strip()
+        other = crypto.get_bot(db, fields["name"])
+        if other and other.id != bot_id:
+            raise HTTPException(status_code=409, detail="A crypto bot with this strategy name already exists.")
+    return fields
+
+
+@app.post("/api/crypto/bots", status_code=201)
+def create_crypto_bot(data: CryptoBotCreate, db: Session = Depends(get_db)) -> dict:
+    bot = CryptoBot(**_crypto_bot_fields(data.model_dump(), db))
+    db.add(bot)
+    db.commit()
+    return crypto.bot_out(bot)
+
+
+@app.patch("/api/crypto/bots/{bot_id}")
+def update_crypto_bot(bot_id: int, updates: CryptoBotUpdate, db: Session = Depends(get_db)) -> dict:
+    bot = db.get(CryptoBot, bot_id)
+    if not bot:
+        raise HTTPException(status_code=404, detail="Crypto bot not found.")
+    for key, value in _crypto_bot_fields(updates.model_dump(exclude_unset=True), db, bot_id).items():
+        setattr(bot, key, value)
+    db.commit()
+    return crypto.bot_out(bot)
+
+
+@app.delete("/api/crypto/bots/{bot_id}")
+def delete_crypto_bot(bot_id: int, db: Session = Depends(get_db)) -> dict:
+    bot = db.get(CryptoBot, bot_id)
+    if not bot:
+        raise HTTPException(status_code=404, detail="Crypto bot not found.")
+    db.delete(bot)
+    db.commit()
+    return {"status": "deleted"}
+
+
+@app.post("/api/crypto/positions/close")
+async def close_crypto_position(symbol: str, side: str) -> dict:
+    if side not in ("LONG", "SHORT"):
+        raise HTTPException(status_code=422, detail="Side must be LONG or SHORT.")
+    try:
+        await crypto.close_position(symbol, side)
+    except BlofinError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"status": "closed"}
+
+
+def _forex_bot_fields(fields: dict, db: Session, bot_id: int | None = None) -> dict:
+    if "symbols" in fields:
+        try:
+            fields["symbols"] = forex.normalize_pairs(fields["symbols"])
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+    if "name" in fields:
+        fields["name"] = fields["name"].strip()
+        other = forex.get_bot(db, fields["name"])
+        if other and other.id != bot_id:
+            raise HTTPException(status_code=409, detail="A forex bot with this strategy name already exists.")
+    return fields
+
+
+@app.get("/api/forex/bots")
+def list_forex_bots(db: Session = Depends(get_db)) -> list[dict]:
+    return forex.list_bots(db)
+
+
+@app.post("/api/forex/bots", status_code=201)
+def create_forex_bot(data: ForexBotCreate, db: Session = Depends(get_db)) -> dict:
+    bot = ForexBot(**_forex_bot_fields(data.model_dump(), db))
+    db.add(bot)
+    db.commit()
+    return forex.bot_out(bot)
+
+
+@app.patch("/api/forex/bots/{bot_id}")
+def update_forex_bot(bot_id: int, updates: ForexBotUpdate, db: Session = Depends(get_db)) -> dict:
+    bot = db.get(ForexBot, bot_id)
+    if not bot:
+        raise HTTPException(status_code=404, detail="Forex bot not found.")
+    for key, value in _forex_bot_fields(updates.model_dump(exclude_unset=True), db, bot_id).items():
+        setattr(bot, key, value)
+    db.commit()
+    return forex.bot_out(bot)
+
+
+@app.delete("/api/forex/bots/{bot_id}")
+def delete_forex_bot(bot_id: int, db: Session = Depends(get_db)) -> dict:
+    bot = db.get(ForexBot, bot_id)
+    if not bot:
+        raise HTTPException(status_code=404, detail="Forex bot not found.")
+    db.delete(bot)
+    db.commit()
+    return {"status": "deleted"}
 
 
 @app.get("/api/signals", response_model=list[SignalOut])

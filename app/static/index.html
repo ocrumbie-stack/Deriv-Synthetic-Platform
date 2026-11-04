@@ -3,31 +3,69 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Deriv Synthetic — Trading Dashboard</title>
+    <title>Trading Platform</title>
     <link rel="stylesheet" href="/static/styles.css?v=5" />
   </head>
   <body>
     <div class="app">
 
-      <!-- ── Sidebar ──────────────────────────────────────────── -->
-      <aside class="sidebar">
-
-        <div class="sidebar-brand">
-          <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+      <!-- ── Top bar: markets ─────────────────────────────────── -->
+      <header class="topbar">
+        <div class="topbar-brand">
+          <svg width="24" height="24" viewBox="0 0 26 26" fill="none">
             <path d="M13 2L3 6v6.5c0 5.2 3.8 10 10 11.3C19.2 22.5 23 17.7 23 12.5V6L13 2z" fill="#ffc107" opacity="0.9"/>
             <path d="M9 13l3 3 5-5.5" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
           <div>
-            <div class="brand">DERIV SYNTHETIC</div>
+            <div class="brand">TRADING PLATFORM</div>
             <div class="version">v1.0.0</div>
-            <span class="live-badge paper" id="liveModeBrand" style="display:inline-block;margin-top:6px">DEMO</span>
           </div>
         </div>
 
+        <nav class="market-tabs" aria-label="Markets">
+          <button class="market-tab active" data-market="synthetic">
+            <svg width="15" height="15" viewBox="0 0 14 14" fill="none"><path d="M1 10l3-4 3 2 3-5 3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="market-name">Synthetic</span><span class="market-broker">Deriv</span>
+          </button>
+          <button class="market-tab" data-market="forex">
+            <svg width="15" height="15" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.4"/><path d="M1.5 7h11M7 1.5c1.6 1.5 2.4 3.3 2.4 5.5S8.6 11 7 12.5C5.4 11 4.6 9.2 4.6 7S5.4 3 7 1.5z" stroke="currentColor" stroke-width="1.2"/></svg>
+            <span class="market-name">Forex</span><span class="market-broker">OANDA</span>
+          </button>
+          <button class="market-tab" data-market="crypto">
+            <svg width="15" height="15" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 4v6M5.5 4.2h2.2a1.4 1.4 0 010 2.8H5.5M5.5 7h2.5a1.5 1.5 0 010 3H5.5M6.5 3v1.2M6.5 10v1" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
+            <span class="market-name">Crypto</span><span class="market-broker">BloFin</span>
+          </button>
+        </nav>
+
+        <div class="topbar-actions">
+          <span class="live-badge paper" id="liveModeBrand" title="Synthetic execution mode">DEMO</span>
+          <button class="es-widget" id="sidebarEmergencyStop" aria-pressed="false" title="Emergency Stop">
+            <span class="es-dot"></span>
+            <span class="es-label">Emergency Stop</span>
+            <span class="es-state" id="esWidgetState">INACTIVE — click to activate</span>
+          </button>
+          <button class="market-tab system-tab" data-market="system" aria-label="System" title="Risk Controls and Settings">
+            <svg width="15" height="15" viewBox="0 0 14 14" fill="none">
+              <circle cx="7" cy="7" r="1.8" stroke="currentColor" stroke-width="1.3"/>
+              <path d="M7 1v1.5M7 11.5V13M13 7h-1.5M2.5 7H1M11.2 2.8l-1.1 1.1M3.9 10.1l-1.1 1.1M11.2 11.2l-1.1-1.1M3.9 3.9L2.8 2.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            </svg>
+            <span class="market-name">System</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="shell">
+
+      <!-- ── Sidebar: the selected market's pages ─────────────── -->
+      <aside class="sidebar">
+
         <nav class="sidebar-nav">
 
-          <div class="nav-section">
-            <span class="nav-section-label">Dashboard</span>
+          <div class="nav-section" data-market="synthetic">
+            <div class="nav-section-head">
+              <span class="nav-section-label">Synthetic</span>
+              <span class="nav-section-sub">Deriv multipliers</span>
+            </div>
             <button class="nav-item active" data-page="dashboard-overview">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                 <rect x="1" y="1" width="5" height="5" rx="1" fill="currentColor"/>
@@ -37,10 +75,6 @@
               </svg>
               Overview
             </button>
-          </div>
-
-          <div class="nav-section">
-            <span class="nav-section-label">Trading</span>
             <button class="nav-item" data-page="trading-bots">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                 <rect x="3" y="1" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.4"/>
@@ -65,8 +99,57 @@
             </button>
           </div>
 
-          <div class="nav-section">
-            <span class="nav-section-label">System</span>
+          <div class="nav-section" data-market="forex">
+            <div class="nav-section-head">
+              <span class="nav-section-label">Forex</span>
+              <span class="nav-section-sub">OANDA · not connected</span>
+            </div>
+            <button class="nav-item" data-page="forex-overview">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="5" height="5" rx="1" fill="currentColor"/><rect x="8" y="1" width="5" height="5" rx="1" fill="currentColor"/><rect x="1" y="8" width="5" height="5" rx="1" fill="currentColor"/><rect x="8" y="8" width="5" height="5" rx="1" fill="currentColor"/></svg>
+              Overview
+            </button>
+            <button class="nav-item" data-page="forex-bots">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="3" y="1" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M1 6h2M11 6h2M5 9v4M9 9v4M5 13h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+              Signal Bots
+            </button>
+            <button class="nav-item" data-page="forex-positions">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 4L7 1l6 3-6 3-6-3z" fill="currentColor"/><path d="M1 7.5L7 10.5l6-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none"/><path d="M1 11L7 14l6-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none"/></svg>
+              Open Positions
+            </button>
+            <button class="nav-item" data-page="forex-history">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5"/><path d="M7 4V7l2 1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              Trade History
+            </button>
+          </div>
+
+          <div class="nav-section" data-market="crypto">
+            <div class="nav-section-head">
+              <span class="nav-section-label">Crypto</span>
+              <span class="nav-section-sub">BloFin perpetuals</span>
+            </div>
+            <button class="nav-item" data-page="crypto-overview">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="5" height="5" rx="1" fill="currentColor"/><rect x="8" y="1" width="5" height="5" rx="1" fill="currentColor"/><rect x="1" y="8" width="5" height="5" rx="1" fill="currentColor"/><rect x="8" y="8" width="5" height="5" rx="1" fill="currentColor"/></svg>
+              Overview
+            </button>
+            <button class="nav-item" data-page="crypto-bots">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="3" y="1" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M1 6h2M11 6h2M5 9v4M9 9v4M5 13h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+              Signal Bots
+            </button>
+            <button class="nav-item" data-page="crypto-positions">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 4L7 1l6 3-6 3-6-3z" fill="currentColor"/><path d="M1 7.5L7 10.5l6-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none"/><path d="M1 11L7 14l6-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none"/></svg>
+              Open Positions
+            </button>
+            <button class="nav-item" data-page="crypto-history">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5"/><path d="M7 4V7l2 1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              Trade History
+            </button>
+          </div>
+
+          <div class="nav-section" data-market="system">
+            <div class="nav-section-head">
+              <span class="nav-section-label">System</span>
+              <span class="nav-section-sub">Platform-wide controls</span>
+            </div>
             <button class="nav-item" data-page="system-risk">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                 <path d="M7 1L1.5 3.5V7c0 2.9 2.2 5.6 5.5 6.3C10.3 12.6 12.5 9.9 12.5 7V3.5L7 1z" stroke="currentColor" stroke-width="1.4" fill="none"/>
@@ -86,15 +169,7 @@
 
         </nav>
 
-        <!-- Emergency Stop — always visible -->
         <div class="sidebar-footer">
-          <button class="es-widget" id="sidebarEmergencyStop" aria-pressed="false">
-            <div class="es-top">
-              <span class="es-dot"></span>
-              <span class="es-label">Emergency Stop</span>
-            </div>
-            <span class="es-state" id="esWidgetState">INACTIVE — click to activate</span>
-          </button>
           <div class="footer-meta">
             <span class="live-dot"></span>
             <span class="live-badge paper" id="liveMode">DEMO</span>
@@ -247,7 +322,10 @@
 
         <div class="page" id="page-trading-bots">
           <div class="page-header">
-            <h1 class="page-title">Signal Bots</h1>
+            <div>
+              <h1 class="page-title">Signal Bots</h1>
+              <p class="subtle">One bot per TradingView strategy trading on Deriv</p>
+            </div>
             <button id="newBotToggle" class="copy-btn">+ New Bot</button>
           </div>
           <div class="page-body">
@@ -483,6 +561,291 @@
           </div>
         </div>
 
+        <!-- ────────── FOREX ────────── -->
+
+        <div class="page" id="page-forex-overview">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Forex</h1>
+              <p class="subtle">Currency pairs through OANDA</p>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+              <span class="header-badge" id="forexClock">--:--</span>
+              <span class="badge" id="forexMarket">Loading</span>
+            </div>
+          </div>
+          <div class="page-body">
+            <p class="settings-error" id="forexError" role="alert"></p>
+            <div class="fx-hero">
+              <div class="fx-dial-card">
+                <svg class="fx-dial" id="forexDial" viewBox="0 0 300 300" role="img" aria-label="Today's trading sessions"></svg>
+                <div class="fx-legend">
+                  <span><i class="fx-dot sydney"></i>Sydney</span><span><i class="fx-dot tokyo"></i>Tokyo</span>
+                  <span><i class="fx-dot london"></i>London</span><span><i class="fx-dot new_york"></i>New York</span>
+                </div>
+              </div>
+              <div class="fx-now-card">
+                <p class="panel-label">Right now</p>
+                <div class="fx-sessions" id="forexSessions"></div>
+                <div class="fx-callout" id="forexCallout" hidden></div>
+                <div class="fx-tradable">
+                  <div><span class="panel-label">Pairs tradable now</span><span class="fx-tradable-count" id="forexTradable">—</span></div>
+                  <div class="fx-progress"><b id="forexTradableBar"></b></div>
+                </div>
+                <div class="fx-facts">
+                  <span id="forexRollover"></span>
+                  <span id="forexMarketNext"></span>
+                </div>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="fx-pairs-table">
+                <thead><tr>
+                  <th>Pair</th><th>Pip</th><th>Trading window today</th><th>Status</th><th>Next change</th>
+                </tr></thead>
+                <tbody id="forexPairs"></tbody>
+              </table>
+            </div>
+            <div class="risk-grid">
+              <div class="risk-panel">
+                <div>
+                  <p class="panel-label">Connections</p>
+                  <p class="panel-title">OANDA Accounts</p>
+                </div>
+                <div class="settings-rows">
+                  <div class="settings-row"><div>OANDA practice<span class="sub">Virtual money</span></div><span class="badge warn">Not connected</span></div>
+                  <div class="settings-row"><div>OANDA live<span class="sub">Real money</span></div><span class="badge warn">Not connected</span></div>
+                </div>
+                <p class="subtle settings-hint">This platform can't place OANDA orders yet, so there are no forex prices, positions or history to show. Bots can be set up now and will trade once it's connected.</p>
+              </div>
+              <div class="risk-panel">
+                <div>
+                  <p class="panel-label">Until then</p>
+                  <p class="panel-title">Where Things Apply</p>
+                </div>
+                <p class="subtle settings-hint">Trading windows will block OANDA entries once it's connected. Forex tickers sent to the current webhook URL, such as EURUSD, still trade on Deriv at any hour and appear under Synthetic.</p>
+                <p class="subtle settings-hint">Windows pause entries for 5 minutes either side of the 5pm New York rollover. Market holidays aren't included.</p>
+                <p class="subtle settings-hint">The demo/live switch and Risk Controls only cover Deriv for now. Emergency Stop will block forex entries too once OANDA is connected.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="page" id="page-forex-bots">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Signal Bots</h1>
+              <p class="subtle">One bot per TradingView strategy trading forex on OANDA</p>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px">
+              <span class="badge warn">OANDA not connected</span>
+              <button id="forexBotNew" class="copy-btn">+ New Bot</button>
+            </div>
+          </div>
+          <div class="page-body">
+            <form id="forexBotForm" class="risk-panel" hidden>
+              <p class="panel-title">New Forex Bot</p>
+              <div class="forex-bot-fields">
+                <label><span class="bot-field-label">Strategy name</span><input name="name" type="text" placeholder="Must match the alert's strategy" required /></label>
+                <label><span class="bot-field-label">Size (lots)</span><input name="lots" type="number" min="0.01" max="100" step="0.01" value="0.01" required /></label>
+                <label><span class="bot-field-label">Stop loss (pips)</span><input name="stop_loss_pips" type="number" min="0.1" step="0.1" placeholder="optional" /></label>
+                <label><span class="bot-field-label">Take profit (pips)</span><input name="take_profit_pips" type="number" min="0.1" step="0.1" placeholder="optional" /></label>
+                <label><span class="bot-field-label">Trailing stop (pips)</span><input name="trailing_stop_pips" type="number" min="5" step="0.1" placeholder="optional, 5+" /></label>
+                <label class="forex-pairs-field"><span class="bot-field-label">Allowed pairs</span><input name="symbols" type="text" placeholder="All pairs — or EURUSD, GBPUSD" /></label>
+                <button type="submit" class="dialog-btn primary">Create</button>
+              </div>
+              <p class="subtle settings-hint" id="forexBotPreview"></p>
+              <p class="settings-error" id="forexBotError" role="alert"></p>
+            </form>
+            <div class="table-wrap">
+              <table>
+                <thead><tr>
+                  <th>Strategy</th><th>Size</th><th>Stop loss</th><th>Take profit</th><th>Trailing stop</th><th>Allowed pairs</th><th>Status</th><th></th>
+                </tr></thead>
+                <tbody id="forexBots"></tbody>
+              </table>
+            </div>
+            <div class="risk-grid">
+              <div class="risk-panel">
+                <div><p class="panel-label">Sizing</p><p class="panel-title">Lots and Pips</p></div>
+                <p class="subtle settings-hint">1 lot = 100,000 units of the first currency in the pair; 0.1 is a mini lot and 0.01 a micro lot. A pip is 0.0001, or 0.01 on yen pairs.</p>
+                <p class="subtle settings-hint">Leverage isn't set per bot: OANDA sets the margin needed for each pair on your account.</p>
+              </div>
+              <div class="risk-panel">
+                <div><p class="panel-label">Once connected</p><p class="panel-title">How Bots Will Trade</p></div>
+                <p class="subtle settings-hint">Alerts will go to their own forex webhook. Entries are refused outside each pair's trading window on the Overview page; exits always go through.</p>
+                <p class="subtle settings-hint">Stops are placed on OANDA with the order. Until OANDA is connected, bots are saved but nothing trades.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="page" id="page-forex-positions">
+          <div class="page-header">
+            <div><h1 class="page-title">Open Positions</h1><p class="subtle">Forex positions on OANDA</p></div>
+            <span class="badge warn">OANDA not connected</span>
+          </div>
+          <div class="page-body">
+            <div class="table-wrap">
+              <table>
+                <thead><tr>
+                  <th>Pair</th><th>Side</th><th>Size</th><th>Entry</th><th>Current</th><th>Pips</th><th>Stop loss</th><th>Take profit</th><th>Margin used</th><th>Swap</th><th>Unrealized P/L</th><th>Opened</th>
+                </tr></thead>
+                <tbody><tr><td colspan="12" class="empty">No forex positions. Open OANDA trades will show here once it's connected.</td></tr></tbody>
+              </table>
+            </div>
+            <p class="subtle settings-hint">Forex tickers sent to the Synthetic webhook, such as EURUSD, still trade on Deriv and show under Synthetic.</p>
+          </div>
+        </div>
+
+        <div class="page" id="page-forex-history">
+          <div class="page-header">
+            <div><h1 class="page-title">Trade History</h1><p class="subtle">Closed forex trades on OANDA</p></div>
+            <span class="badge warn">OANDA not connected</span>
+          </div>
+          <div class="page-body">
+            <div class="table-wrap">
+              <table>
+                <thead><tr>
+                  <th>Strategy</th><th>Pair</th><th>Side</th><th>Size</th><th>Entry</th><th>Exit</th><th>Pips</th><th>Swap</th><th>Net P/L</th><th>Reason</th><th>Opened</th><th>Closed</th><th>Duration</th>
+                </tr></thead>
+                <tbody><tr><td colspan="13" class="empty">No forex trades yet. Closed OANDA trades will be listed here once it's connected.</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ────────── CRYPTO ────────── -->
+
+        <div class="page" id="page-crypto-overview">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Crypto</h1>
+              <p class="subtle">USDT perpetual futures through BloFin</p>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+              <span class="live-badge crypto-mode paper">DEMO</span>
+              <span class="badge" id="cryptoConnection">Loading</span>
+            </div>
+          </div>
+          <div class="page-body">
+            <p class="settings-error crypto-error" role="alert"></p>
+            <div class="crypto-stats">
+              <div class="risk-panel"><p class="panel-label">Wallet balance</p><p class="panel-title" id="cryptoBalance">—</p></div>
+              <div class="risk-panel"><p class="panel-label">Available</p><p class="panel-title" id="cryptoAvailable">—</p></div>
+              <div class="risk-panel"><p class="panel-label">Unrealized P/L</p><p class="panel-title" id="cryptoUnrealized">—</p></div>
+              <div class="risk-panel"><p class="panel-label">Open · Bots</p><p class="panel-title" id="cryptoCounts">—</p></div>
+            </div>
+            <div class="chart-panel">
+              <div class="chart-header">
+                <span class="chart-title">Latest Signals</span>
+                <button type="button" class="nav-link-btn" data-page="crypto-history">Trade History →</button>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr>
+                    <th>Time</th><th>Strategy</th><th>Pair</th><th>Action</th><th>Status</th><th>Detail</th>
+                  </tr></thead>
+                  <tbody id="cryptoRecent"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="risk-grid">
+              <div class="risk-panel">
+                <div>
+                  <p class="panel-label">Webhook</p>
+                  <p class="panel-title">TradingView Alerts</p>
+                </div>
+                <p class="subtle settings-hint">Send alerts to <code id="cryptoWebhookUrl">/webhook/blofin</code>, in the same format as the Synthetic webhook. Tickers like BTCUSDT or BTCUSDT.P trade BloFin's BTC-USDT perpetual future.</p>
+                <p class="subtle settings-hint">The alert's strategy must match a crypto bot, which sets the margin and leverage. take_profit and stop_loss are prices, held on BloFin.</p>
+              </div>
+              <div class="risk-panel">
+                <div>
+                  <p class="panel-label">Demo / live</p>
+                  <p class="panel-title">How It Applies</p>
+                </div>
+                <p class="subtle settings-hint">Crypto follows the demo/live switch: demo trades BloFin's demo-trading account, live trades real money. Each mode has its own BloFin API key, and this page only shows the current mode.</p>
+                <p class="subtle settings-hint">Emergency Stop blocks crypto entries too. Exits always go through. An entry against an open opposite position closes it first; a second entry the same way is refused.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="page" id="page-crypto-bots">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Signal Bots</h1>
+              <p class="subtle">One bot per TradingView strategy trading on BloFin</p>
+            </div>
+            <button id="cryptoBotNew" class="copy-btn">+ New Bot</button>
+          </div>
+          <div class="page-body">
+            <form id="cryptoBotForm" class="risk-panel" hidden>
+              <p class="panel-title">New Crypto Bot</p>
+              <div class="crypto-bot-fields">
+                <label><span class="bot-field-label">Strategy name</span><input name="name" type="text" placeholder="Must match the alert's strategy" required /></label>
+                <label><span class="bot-field-label">Margin (USDT)</span><input name="margin" type="number" min="1" step="0.01" value="10" required /></label>
+                <label><span class="bot-field-label">Leverage</span><input name="leverage" type="number" min="1" max="125" step="1" value="10" required /></label>
+                <label><span class="bot-field-label">Allowed pairs</span><input name="symbols" type="text" placeholder="Any — or BTCUSDT, ETHUSDT" /></label>
+                <button type="submit" class="dialog-btn primary">Create</button>
+              </div>
+              <p class="subtle settings-hint" id="cryptoBotPreview"></p>
+              <p class="settings-error" id="cryptoBotError" role="alert"></p>
+            </form>
+            <div class="table-wrap">
+              <table>
+                <thead><tr>
+                  <th>Strategy</th><th>Margin</th><th>Leverage</th><th>Position value</th><th>Allowed pairs</th><th>Status</th><th></th>
+                </tr></thead>
+                <tbody id="cryptoBots"></tbody>
+              </table>
+            </div>
+            <p class="subtle settings-hint">Each entry puts up the bot's margin at its leverage, so $20 at 10x opens about a $200 position (isolated margin, rounded down to BloFin's lot size). Entries need an enabled bot with the alert's strategy name; the alert's own size and leverage are ignored. Pausing a bot only stops new entries — its exits still close positions.</p>
+          </div>
+        </div>
+
+        <div class="page" id="page-crypto-positions">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Open Positions</h1>
+              <p class="subtle" id="cryptoPositionsSub">On BloFin</p>
+            </div>
+            <span class="header-badge" id="cryptoPositionCount">0 open</span>
+          </div>
+          <div class="page-body">
+            <p class="settings-error crypto-error" role="alert"></p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr>
+                  <th>Pair</th><th>Side</th><th>Margin</th><th>Leverage</th><th>Position value</th><th>Entry</th><th>Mark</th><th>Liq.</th><th>Unrealized</th><th></th>
+                </tr></thead>
+                <tbody id="cryptoPositions"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="page" id="page-crypto-history">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Trade History</h1>
+              <p class="subtle">Every alert sent to /webhook/blofin in the current mode, and what the platform did</p>
+            </div>
+            <span class="header-badge" id="cryptoHistoryCount">0 signals</span>
+          </div>
+          <div class="page-body">
+            <div class="table-wrap">
+              <table>
+                <thead><tr>
+                  <th>Time</th><th>Strategy</th><th>Pair</th><th>Action</th><th>Margin</th><th>Leverage</th><th>TP / SL</th><th>Status</th><th>Detail</th>
+                </tr></thead>
+                <tbody id="cryptoSignals"></tbody>
+              </table>
+            </div>
+            <p class="subtle settings-hint">Closed-trade profit and loss from BloFin will be added here once it has been checked against a demo account.</p>
+          </div>
+        </div>
+
         <!-- ────────── SYSTEM ────────── -->
 
         <div class="page" id="page-system-risk">
@@ -623,6 +986,7 @@
 
 
       </div><!-- /main-content -->
+      </div><!-- /shell -->
     </div><!-- /app -->
 
     <div id="exitWebhookModal" class="modal-overlay" style="display:none">

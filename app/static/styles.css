@@ -33,9 +33,102 @@ body {
 
 .app {
   display: flex;
+  flex-direction: column;
   height: 100vh;
   overflow: hidden;
 }
+
+.shell {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── Top bar: markets ───────────────────────────────────────── */
+
+.topbar {
+  align-items: center;
+  background: linear-gradient(180deg, #111118 0%, var(--sidebar-bg) 100%);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-shrink: 0;
+  gap: 20px;
+  min-height: 60px;
+  padding: 0 18px;
+}
+
+.topbar-brand {
+  align-items: center;
+  display: flex;
+  flex-shrink: 0;
+  gap: 10px;
+  width: 188px;
+}
+
+.market-tabs {
+  align-self: stretch;
+  display: flex;
+  flex: 1;
+  gap: 4px;
+  min-width: 0;
+}
+
+.market-tab {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  flex-shrink: 0;
+  font: inherit;
+  gap: 8px;
+  padding: 0 16px;
+  position: relative;
+  transition: color 120ms, background 120ms, border-color 120ms;
+}
+
+.market-tab:hover { color: var(--text); background: rgba(255, 255, 255, 0.025); }
+
+.market-tab.active {
+  background: linear-gradient(180deg, transparent 0%, rgba(255, 193, 7, 0.07) 100%);
+  border-bottom-color: var(--yellow);
+  color: var(--text);
+}
+
+.market-tab svg { flex-shrink: 0; opacity: 0.75; }
+.market-tab.active svg { color: var(--yellow); opacity: 1; }
+
+.market-name { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; }
+
+.market-broker {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 1px 7px;
+}
+
+.market-tab.active .market-broker { border-color: rgba(255, 193, 7, 0.35); color: var(--yellow); }
+
+.topbar-actions {
+  align-items: center;
+  align-self: stretch;
+  display: flex;
+  flex-shrink: 0;
+  gap: 10px;
+}
+
+.system-tab { padding: 0 12px; }
+
+/* The demo/live switch only covers Deriv, so its badges would mislead on
+   the Forex and Crypto pages. */
+body[data-market="forex"] #liveModeBrand, body[data-market="crypto"] #liveModeBrand,
+body[data-market="forex"] .sidebar-footer .footer-meta:first-child,
+body[data-market="crypto"] .sidebar-footer .footer-meta:first-child { display: none; }
 
 /* ── Sidebar ────────────────────────────────────────────────── */
 
@@ -48,13 +141,17 @@ body {
   width: 224px;
 }
 
-.sidebar-brand {
-  align-items: center;
+.nav-section-head {
   border-bottom: 1px solid var(--border);
-  display: flex;
-  gap: 12px;
-  padding: 20px 18px;
+  display: grid;
+  gap: 2px;
+  margin: 0 12px 8px;
+  padding: 14px 6px 12px;
 }
+
+.nav-section-head .nav-section-label { color: var(--text); font-size: 11px; padding: 0; }
+
+.nav-section-sub { color: var(--muted); font-size: 11px; }
 
 .brand {
   color: var(--text);
@@ -81,6 +178,7 @@ body {
 }
 
 .nav-section { display: flex; flex-direction: column; }
+.nav-section[hidden] { display: none; }
 
 .nav-section-label {
   color: var(--muted);
@@ -95,8 +193,7 @@ body {
   align-items: center;
   background: transparent;
   border: 0;
-  border-left: 2px solid transparent;
-  border-radius: 0;
+  border-radius: 6px;
   color: var(--muted);
   cursor: pointer;
   display: flex;
@@ -104,22 +201,33 @@ body {
   font-size: 13px;
   font-weight: 500;
   gap: 10px;
-  min-height: 42px;
-  padding: 0 18px;
+  margin: 1px 10px;
+  min-height: 38px;
+  padding: 0 10px;
+  position: relative;
   text-align: left;
-  transition: color 120ms, background 120ms, border-color 120ms;
-  width: 100%;
+  transition: color 120ms, background 120ms;
+  width: calc(100% - 20px);
 }
 
 .nav-item:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.04);
   color: var(--text);
 }
 
 .nav-item.active {
-  background: rgba(255, 193, 7, 0.06);
-  border-left-color: var(--yellow);
+  background: rgba(255, 193, 7, 0.09);
   color: var(--text);
+}
+
+.nav-item.active::before {
+  background: var(--yellow);
+  border-radius: 2px;
+  content: "";
+  height: 16px;
+  left: -10px;
+  position: absolute;
+  width: 3px;
 }
 
 .nav-item svg { flex-shrink: 0; opacity: 0.7; }
@@ -135,16 +243,27 @@ body {
 }
 
 .es-widget {
+  align-items: center;
+  align-self: center;
   background: var(--panel-2, #16161e);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 18px;
   cursor: pointer;
-  display: grid;
-  gap: 5px;
-  padding: 10px 13px;
+  display: flex;
+  font: inherit;
+  gap: 7px;
+  padding: 6px 12px;
   text-align: left;
   transition: border-color 150ms, background 150ms;
-  width: 100%;
+}
+
+/* The ACTIVE/INACTIVE wording stays for screen readers; the dot shows it. */
+.es-widget .es-state {
+  clip: rect(0 0 0 0);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  width: 1px;
 }
 
 .es-widget:hover { border-color: var(--muted-2); }
@@ -571,6 +690,142 @@ canvas { display: block; width: 100%; }
 .settings-rows { display: grid; gap: 10px; }
 .settings-row { align-items: center; display: flex; gap: 12px; justify-content: space-between; font-size: 13px; }
 .settings-row .sub { color: var(--muted); display: block; font-size: 11px; margin-top: 2px; }
+
+/* ── Forex page ─────────────────────────────────────────────── */
+
+/* Forex Overview: session clock, "right now" panel and pair table. Each
+   session keeps one colour everywhere on the page. */
+:root {
+  --fx-sydney: #2dd4bf;
+  --fx-tokyo: #f472b6;
+  --fx-london: #60a5fa;
+  --fx-new_york: #fbbf24;
+}
+.sydney { --fx: var(--fx-sydney); }
+.tokyo { --fx: var(--fx-tokyo); }
+.london { --fx: var(--fx-london); }
+.new_york { --fx: var(--fx-new_york); }
+
+.fx-hero { display: grid; gap: 16px; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); }
+.fx-dial-card, .fx-now-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+.fx-dial-card {
+  background: radial-gradient(circle at 50% 42%, #17172a, var(--panel) 70%);
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  padding: 18px;
+}
+.fx-dial { max-width: 300px; width: 100%; }
+.fx-ring { fill: none; stroke: #1c1c28; stroke-width: 11; }
+.fx-arc { fill: none; opacity: 0.4; stroke: var(--fx); stroke-linecap: round; stroke-width: 11; }
+.fx-arc.live { filter: drop-shadow(0 0 6px var(--fx)); opacity: 1; }
+.fx-hour { fill: var(--muted); font-family: monospace; font-size: 10px; }
+.fx-needle { filter: drop-shadow(0 0 4px #fff); stroke: #fff; stroke-linecap: round; stroke-width: 2; }
+.fx-hub { fill: #0d0d14; stroke: #262636; }
+.fx-hub-time { fill: var(--text); font-family: 'JetBrains Mono', Consolas, monospace; font-size: 20px; font-weight: 700; }
+.fx-hub-zone { fill: var(--muted); font-size: 10px; letter-spacing: 0.15em; }
+.fx-legend { color: var(--muted); display: flex; flex-wrap: wrap; font-size: 11px; gap: 6px 14px; justify-content: center; }
+.fx-dot { background: var(--fx); border-radius: 50%; display: inline-block; height: 7px; margin-right: 6px; vertical-align: 1px; width: 7px; }
+
+.fx-now-card { align-content: start; display: grid; gap: 14px; padding: 20px 22px; }
+.fx-sessions { display: grid; gap: 14px; }
+.fx-session { align-items: center; display: grid; gap: 14px; grid-template-columns: 130px minmax(0, 1fr) 150px; }
+.fx-session-name { font-size: 13px; font-weight: 600; }
+.fx-session-name .sub { color: var(--muted); font-family: monospace; font-size: 10px; font-weight: 400; margin-left: 8px; }
+.fx-session:not(.live) .fx-session-name { color: var(--muted); }
+.fx-progress { background: var(--panel-2); border-radius: 4px; height: 8px; overflow: hidden; }
+.fx-progress b { background: linear-gradient(90deg, var(--fx), color-mix(in srgb, var(--fx) 70%, #000)); border-radius: 4px; display: block; height: 100%; width: 0; }
+.fx-session.live .fx-progress b { box-shadow: 0 0 10px var(--fx); }
+.fx-session-next { color: var(--muted); font-family: monospace; font-size: 11px; text-align: right; white-space: nowrap; }
+.fx-live {
+  background: var(--green-dim);
+  border-radius: 999px;
+  color: var(--green);
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  margin-right: 8px;
+  padding: 2px 8px;
+}
+.fx-callout {
+  background: linear-gradient(90deg, rgba(251, 191, 36, 0.08), transparent);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  border-radius: 8px;
+  font-size: 13px;
+  padding: 12px 14px;
+}
+.fx-callout b { color: var(--fx-new_york); }
+.fx-callout.live { background: linear-gradient(90deg, rgba(0, 230, 118, 0.08), transparent); border-color: rgba(0, 230, 118, 0.35); }
+.fx-callout.live b { color: var(--green); }
+.fx-tradable { border-top: 1px solid var(--border); display: grid; gap: 8px; padding-top: 14px; }
+.fx-tradable > div:first-child { align-items: baseline; display: flex; justify-content: space-between; }
+.fx-tradable-count { font-size: 20px; font-weight: 700; }
+.fx-tradable-count span { color: var(--muted); font-size: 13px; }
+.fx-tradable .fx-progress b { --fx: var(--green); background: linear-gradient(90deg, var(--green), #00b85c); }
+.fx-facts { color: var(--muted); display: flex; flex-wrap: wrap; font-size: 12px; gap: 6px 22px; }
+.fx-facts b { color: var(--text); font-family: monospace; }
+
+.fx-pairs-table td { vertical-align: middle; }
+.fx-pairs-table tr.fx-open td:first-child { box-shadow: inset 2px 0 0 var(--green); }
+.fx-pair { align-items: center; display: flex; gap: 10px; }
+.fx-pair strong { margin-left: 4px; }
+.fx-ccy { border-radius: 5px; color: #0b0b0e; font-size: 9px; font-weight: 800; letter-spacing: 0.02em; padding: 3px 0; text-align: center; width: 30px; }
+.fx-ccy + .fx-ccy { margin-left: -7px; }
+.c-EUR { background: #60a5fa; } .c-USD { background: #34d399; } .c-GBP { background: #c084fc; } .c-JPY { background: #f87171; }
+.c-CHF { background: #fb7185; } .c-AUD { background: #fbbf24; } .c-NZD { background: #a3e635; } .c-CAD { background: #f97316; }
+.fx-mono { color: var(--muted); font-family: monospace; font-size: 12px; white-space: nowrap; }
+.fx-strip { background: var(--panel-2); border-radius: 5px; height: 10px; margin-bottom: 8px; max-width: 320px; position: relative; }
+.fx-strip i { background: rgba(96, 165, 250, 0.45); border-radius: 5px; bottom: 0; position: absolute; top: 0; }
+.fx-strip.on i { background: var(--green); box-shadow: 0 0 10px rgba(0, 230, 118, 0.45); }
+.fx-now { background: #fff; bottom: -4px; position: absolute; top: -4px; width: 2px; }
+.fx-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.fx-chip { background: transparent; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); cursor: pointer; font-size: 10px; padding: 2px 7px; }
+.fx-chip:hover { color: var(--text); }
+.fx-chip.on { background: color-mix(in srgb, var(--fx) 14%, transparent); border-color: color-mix(in srgb, var(--fx) 60%, transparent); color: var(--text); }
+.fx-status { align-items: center; color: var(--muted); display: inline-flex; font-size: 12px; font-weight: 600; gap: 7px; }
+.fx-status i { background: var(--muted-2); border-radius: 50%; height: 7px; width: 7px; }
+.fx-status.open { color: var(--green); }
+.fx-status.open i { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.fx-reason { color: var(--muted); display: block; font-size: 11px; margin-top: 4px; }
+.fx-countdown { color: var(--muted); font-family: monospace; font-size: 12px; white-space: nowrap; }
+
+@media (max-width: 900px) {
+  .fx-hero { grid-template-columns: minmax(0, 1fr); }
+  .fx-session { gap: 8px; grid-template-columns: 1fr auto; }
+  .fx-progress { grid-column: 1 / -1; grid-row: 2; }
+}
+
+.crypto-stats { display: grid; gap: 10px; grid-template-columns: repeat(4, 1fr); }
+.crypto-bot-fields { align-items: end; display: grid; gap: 12px; grid-template-columns: 1.4fr 1fr 1fr 1.6fr auto; }
+.crypto-bot-fields input { width: 100%; }
+#cryptoBotForm[hidden], #forexBotForm[hidden] { display: none; }
+.forex-bot-fields { align-items: end; display: grid; gap: 12px; grid-template-columns: 1.4fr repeat(4, 1fr) 1.4fr auto; }
+.forex-bot-fields input { width: 100%; }
+.sub-line { color: var(--muted); display: block; font-size: 11px; }
+.row-actions { text-align: right; white-space: nowrap; }
+.row-actions .mini-switch + .mini-switch { margin-left: 6px; }
+.mini-switch.neutral { background: var(--panel-2); border-color: var(--border); color: var(--text); }
+td.wrap-cell { min-width: 260px; white-space: normal; }
+.empty-state {
+  background: var(--panel);
+  border: 1px dashed var(--muted-2);
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  padding: 48px 24px;
+  text-align: center;
+}
+.empty-state .subtle { max-width: 460px; }
+#cryptoWebhookUrl { overflow-wrap: anywhere; }
+
+@media (max-width: 760px) {
+  .crypto-stats { grid-template-columns: repeat(2, 1fr); }
+  .crypto-bot-fields, .forex-bot-fields { grid-template-columns: 1fr 1fr; }
+  .forex-bot-fields label:first-child, .forex-pairs-field { grid-column: 1 / -1; }
+  .crypto-bot-fields label:first-child, .crypto-bot-fields label:nth-child(4) { grid-column: 1 / -1; }
+}
 
 /* ── Risk panels ────────────────────────────────────────────── */
 
@@ -1298,15 +1553,28 @@ tr.clickable:hover td, tr.selected td { background: var(--panel-2, #16161e); }
   .metrics, .positions-summary { grid-template-columns: repeat(2, 1fr); }
 }
 
+@media (max-width: 1100px) {
+  .topbar-brand { width: auto; }
+  .topbar-brand .version, .market-broker { display: none; }
+}
+
+/* Narrow screens: markets scroll along the top, and the sidebar becomes a
+   row of the selected market's pages under it. */
 @media (max-width: 900px) {
-  .sidebar { width: 56px; }
-  .sidebar .brand, .sidebar .version, .nav-item span,
-  .nav-section-label, .stop-label, .es-state, .es-label, .footer-meta,
-  #liveModeBrand { display: none; }
-  .sidebar-brand { justify-content: center; padding: 16px 0; }
-  .nav-item { justify-content: center; padding: 0; }
-  .es-widget { padding: 10px; }
-  .sidebar-footer { gap: 6px; padding: 10px 6px; }
+  .topbar { flex-wrap: wrap; gap: 0 12px; padding: 0 12px; }
+  .topbar-brand { min-height: 48px; }
+  .topbar-actions { margin-left: auto; min-height: 48px; }
+  .market-tabs { flex-basis: 100%; order: 3; overflow-x: auto; scrollbar-width: none; }
+  .market-tab { min-height: 42px; padding: 0 12px; }
+  .topbar-actions .market-tab { min-height: 0; }
+  .es-label, .system-tab .market-name { display: none; }
+  .shell { flex-direction: column; }
+  .sidebar { border-bottom: 1px solid var(--border); border-right: 0; width: auto; }
+  .sidebar-nav { overflow-x: auto; overflow-y: hidden; padding: 6px 4px; scrollbar-width: none; }
+  .nav-section { flex-direction: row; }
+  .nav-section-head, .sidebar-footer { display: none; }
+  .nav-item { flex-shrink: 0; margin: 0 2px; white-space: nowrap; width: auto; }
+  .nav-item.active::before { display: none; }
   .charts-row, .analytics-grid, .risk-grid,
   .risk-status-grid, .integration-cards { grid-template-columns: 1fr; }
   .pnl-panel { grid-column: span 1; }

@@ -36,7 +36,7 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 
 PUBLIC_PATHS = {
-    "/webhook", "/webhook/exit", "/webhook/preview", "/webhook/status",
+    "/webhook", "/webhook/exit", "/webhook/blofin", "/webhook/preview", "/webhook/status",
     "/webhook/positions", "/webhook/positions/tpsl", "/webhook/positions/close",
     "/webhook/positions/stop", "/webhook/positions/trail", "/health",
     "/login", "/logout", "/auth/google", "/auth/callback",

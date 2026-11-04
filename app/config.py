@@ -51,6 +51,18 @@ class Settings(BaseSettings):
     # here. The Settings page can override it (see get_app_settings).
     timezone: str = "UTC"
 
+    # BloFin USDT perpetual futures (see app/blofin.py) - the Crypto pages.
+    # They follow the demo/live switch: demo trades BloFin's demo-trading
+    # environment, whose API keys are made separately from the live ones.
+    # Entries are refused until the current mode's key, secret and
+    # passphrase are all set. Size and leverage come from the crypto bot.
+    blofin_api_key: str = ""
+    blofin_api_secret: str = ""
+    blofin_api_passphrase: str = ""
+    blofin_demo_api_key: str = ""
+    blofin_demo_api_secret: str = ""
+    blofin_demo_api_passphrase: str = ""
+
     # Telegram alerts (see app/notify.py) - off until both are set. Get the
     # token from @BotFather and the chat id from the bot's getUpdates.
     telegram_bot_token: str = ""

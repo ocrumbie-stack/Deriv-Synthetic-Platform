@@ -67,6 +67,80 @@ class AppSettings(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class ForexPair(Base):
+    """A forex pair whose trading window was changed on the Forex page. Pairs
+    with no row use app.forex.DEFAULT_PAIRS."""
+
+    __tablename__ = "forex_pairs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    # Comma-separated keys of app.forex.SESSIONS, e.g. "london,new_york".
+    sessions: Mapped[str] = mapped_column(String(80))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ForexBot(Base):
+    """A strategy allowed to trade forex on OANDA. Sized in lots (1 lot =
+    100,000 units of the base currency); stops are in pips. Leverage isn't
+    per bot - OANDA sets the margin rate for each pair on the account."""
+
+    __tablename__ = "forex_bots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    # Comma-separated keys of app.forex.DEFAULT_PAIRS (EUR_USD,...); NULL allows all.
+    symbols: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    lots: Mapped[float] = mapped_column(Float, default=0.01)
+    stop_loss_pips: Mapped[float | None] = mapped_column(Float, nullable=True)
+    take_profit_pips: Mapped[float | None] = mapped_column(Float, nullable=True)
+    trailing_stop_pips: Mapped[float | None] = mapped_column(Float, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class CryptoBot(Base):
+    """A strategy allowed to trade on BloFin, and how big its entries are:
+    `margin` USDT put up at `leverage`, so a position worth margin x leverage.
+    The webhook's own size and leverage are ignored, as on Deriv."""
+
+    __tablename__ = "crypto_bots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    # Comma-separated BloFin instruments (BTC-USDT,...); NULL allows any.
+    symbols: Mapped[str | None] = mapped_column(String(400), nullable=True)
+    margin: Mapped[float] = mapped_column(Float, default=10.0)
+    leverage: Mapped[int] = mapped_column(Integer, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class CryptoSignal(Base):
+    """A webhook sent to /webhook/blofin and what became of it. Kept apart
+    from Signal/Trade: BloFin holds the positions itself, and the Deriv
+    reconcile, trailing and audit loops must never see them."""
+
+    __tablename__ = "crypto_signals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    strategy_name: Mapped[str] = mapped_column(String(120))
+    symbol: Mapped[str] = mapped_column(String(40), index=True)
+    action: Mapped[SignalAction] = mapped_column(SqlEnum(SignalAction))
+    direction: Mapped[Direction | None] = mapped_column(SqlEnum(Direction), nullable=True)
+    margin: Mapped[float | None] = mapped_column(Float, nullable=True)
+    leverage: Mapped[int] = mapped_column(Integer, default=1)
+    take_profit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stop_loss: Mapped[float | None] = mapped_column(Float, nullable=True)
+    signal_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    status: Mapped[ExecutionStatus] = mapped_column(SqlEnum(ExecutionStatus), default=ExecutionStatus.received)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    order_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # demo or live - the page only shows the current mode's signals.
+    execution_mode: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
 class Strategy(Base):
     __tablename__ = "strategies"
 
