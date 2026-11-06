@@ -81,11 +81,15 @@
               <span class="nav-section-label">Synthetic</span>
               <span class="nav-section-sub">Multipliers · CFDs</span>
             </div>
+            <div class="nav-switch" role="tablist" aria-label="Synthetic account">
+              <button type="button" class="nav-switch-btn" data-sub="multipliers" role="tab">Multipliers</button>
+              <button type="button" class="nav-switch-btn" data-sub="cfds" role="tab">CFDs</button>
+            </div>
+            <div class="nav-group" data-sub="multipliers">
             <button class="nav-item" data-page="dashboard-overview">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="5" height="5" rx="1" fill="currentColor"/><rect x="8" y="1" width="5" height="5" rx="1" fill="currentColor"/><rect x="1" y="8" width="5" height="5" rx="1" fill="currentColor"/><rect x="8" y="8" width="5" height="5" rx="1" fill="currentColor"/></svg>
               Overview
             </button>
-            <span class="nav-group-label">Multipliers</span>
             <button class="nav-item" data-page="trading-bots">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="3" y="1" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M1 6h2M11 6h2M5 9v4M9 9v4M5 13h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
               Signal Bots
@@ -102,7 +106,12 @@
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 12h10M3.5 12V8M7 12V4.5M10.5 12V2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
               Leverage
             </button>
-            <span class="nav-group-label">CFDs</span>
+            </div>
+            <div class="nav-group" data-sub="cfds">
+            <button class="nav-item" data-page="cfd-overview">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="5" height="5" rx="1" fill="currentColor"/><rect x="8" y="1" width="5" height="5" rx="1" fill="currentColor"/><rect x="1" y="8" width="5" height="5" rx="1" fill="currentColor"/><rect x="8" y="8" width="5" height="5" rx="1" fill="currentColor"/></svg>
+              Overview
+            </button>
             <button class="nav-item" data-page="cfd-bots">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="3" y="1" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M1 6h2M11 6h2M5 9v4M9 9v4M5 13h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
               Signal Bots
@@ -115,10 +124,7 @@
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5"/><path d="M7 4V7l2 1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
               Trade History
             </button>
-            <button class="nav-item" data-page="cfd-account">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M6 8a2.5 2.5 0 0 0 3.5 0l2-2A2.5 2.5 0 0 0 8 2.5L7.3 3.2M8 6a2.5 2.5 0 0 0-3.5 0l-2 2A2.5 2.5 0 0 0 6 11.5l.7-.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-              cTrader Account
-            </button>
+            </div>
           </div>
 
           <div class="nav-section" data-market="forex">
@@ -257,7 +263,7 @@
           <div class="page-header">
             <div>
               <h1 class="page-title">Overview</h1>
-              <p class="subtle">Your command center</p>
+              <p class="subtle">Multipliers on Deriv</p>
             </div>
             <div class="period-tabs">
               <button data-period="today" class="active">1D</button>
@@ -275,14 +281,6 @@
                 <div class="status-banner-sub" id="riskStatusSub">No limits breached · Emergency stop inactive</div>
               </div>
               <button class="nav-link-btn" data-page="system-risk">Manage →</button>
-            </div>
-            <div class="risk-panel ctrader-summary">
-              <div>
-                <p class="panel-label">CFD account</p>
-                <p class="panel-title" style="margin-bottom:2px">cTrader</p>
-                <p id="ctraderOverviewStatus" style="font-size:12px;color:var(--muted)">Loading…</p>
-              </div>
-              <button type="button" class="nav-link-btn" data-page="cfd-account">Manage →</button>
             </div>
             <div class="charts-row">
               <div class="chart-panel pnl-panel">
@@ -648,7 +646,7 @@
                 <label><span class="bot-field-label">Max Cycles (per symbol)</span><input name="max_cycles" type="number" step="1" min="1" placeholder="optional" /></label>
                 <button type="submit" class="copy-btn">Create</button>
               </div>
-              <p class="subtle settings-hint">Trades on the account picked under cTrader Account, demo or live following the mode switch. The name must match the alert's strategy and can't also be used by a Multipliers bot.</p>
+              <p class="subtle settings-hint">Trades on the cTrader account picked on the CFDs Overview, demo or live following the mode switch. The name must match the alert's strategy and can't also be used by a Multipliers bot.</p>
               <p class="settings-error" id="cfdBotError" role="alert"></p>
             </form>
             <div class="table-wrap">
@@ -690,11 +688,30 @@
           </div>
         </div>
 
-        <div class="page" id="page-cfd-account">
+        <div class="page" id="page-cfd-overview">
           <div class="page-header">
-            <div><h1 class="page-title">cTrader Account</h1><p class="subtle">The account CFD bots trade on</p></div>
+            <div><h1 class="page-title">Overview</h1><p class="subtle">CFDs on cTrader</p></div>
           </div>
           <div class="page-body">
+            <p class="cfd-pending">cTrader orders aren't switched on yet, so CFD bots' entries are refused for now. You can connect and set up bots ahead of time.</p>
+            <div class="crypto-account cfd-stats">
+              <button type="button" class="crypto-figure" data-page="cfd-bots">
+                <span class="crypto-figure-label">Active bots</span>
+                <span class="crypto-figure-value" id="cfdStatBots">—</span>
+              </button>
+              <button type="button" class="crypto-figure" data-page="cfd-positions">
+                <span class="crypto-figure-label">Open positions</span>
+                <span class="crypto-figure-value" id="cfdStatOpen">—</span>
+              </button>
+              <button type="button" class="crypto-figure" data-page="cfd-history">
+                <span class="crypto-figure-label">Closed trades</span>
+                <span class="crypto-figure-value" id="cfdStatClosed">—</span>
+              </button>
+              <div class="crypto-figure">
+                <span class="crypto-figure-label">Net P/L</span>
+                <span class="crypto-figure-value" id="cfdStatPnl">—</span>
+              </div>
+            </div>
             <div class="risk-panel" id="ctraderPanel">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
                 <div>

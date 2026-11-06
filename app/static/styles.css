@@ -220,15 +220,32 @@ body[data-market="crypto"] .sidebar-footer .footer-meta:first-child { display: n
 
 .nav-item svg { flex-shrink: 0; opacity: 0.7; }
 
-/* A sub-group inside a market's pages (Synthetic: Multipliers, CFDs). */
-.nav-group-label {
-  color: var(--muted);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  padding: 14px 18px 4px;
-  text-transform: uppercase;
+/* Synthetic's Multipliers | CFDs switch; only the chosen group's pages show. */
+.nav-switch {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  display: grid;
+  gap: 2px;
+  grid-template-columns: 1fr 1fr;
+  margin: 0 12px 10px;
+  padding: 3px;
 }
+.nav-switch-btn {
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 8px;
+}
+.nav-switch-btn:hover { color: var(--text); }
+.nav-switch-btn.active { background: rgba(255, 193, 7, 0.12); color: var(--yellow); }
+.nav-group { display: flex; flex-direction: column; }
+.nav-group[hidden] { display: none; }
 .nav-item.active svg { opacity: 1; }
 
 /* ── Emergency Stop widget ──────────────────────────────────── */
@@ -816,7 +833,8 @@ canvas { display: block; width: 100%; }
 .cfd-bot-fields input { width: 100%; }
 #cfdBotForm[hidden] { display: none; }
 .cfd-pending { background: var(--yellow-dim); border: 1px solid rgba(255, 193, 7, 0.25); border-radius: 8px; color: var(--yellow); font-size: 12px; padding: 10px 14px; }
-.risk-panel.ctrader-summary { align-items: center; display: flex; gap: 12px; justify-content: space-between; padding: 14px 22px; }
+.cfd-stats button.crypto-figure { background: none; border: 0; border-right: 1px solid var(--border); color: inherit; cursor: pointer; font: inherit; text-align: left; }
+.cfd-stats button.crypto-figure:hover { background: rgba(255, 255, 255, 0.03); }
 .crypto-position-list, .crypto-bot-list { display: grid; padding: 0 18px 8px; }
 .crypto-position-list > .empty, .crypto-bot-list > .empty { padding: 16px 0 20px; }
 .crypto-position-head .badge { justify-self: start; }
@@ -1652,7 +1670,8 @@ tr.clickable:hover td, tr.selected td { background: var(--panel-2, #16161e); }
   .nav-section { flex-direction: row; }
   .nav-section-head, .sidebar-footer { display: none; }
   .nav-item { flex-shrink: 0; margin: 0 2px; white-space: nowrap; width: auto; }
-  .nav-group-label { align-self: center; flex-shrink: 0; padding: 0 6px 0 12px; }
+  .nav-switch { align-self: center; flex-shrink: 0; margin: 0 6px; width: 190px; }
+  .nav-group { flex-direction: row; }
   .nav-item.active::before { display: none; }
   .charts-row, .analytics-grid, .risk-grid,
   .risk-status-grid, .integration-cards { grid-template-columns: 1fr; }

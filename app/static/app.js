@@ -199,10 +199,10 @@ const pageIds = new Set([
   "strategies-ranking",
   "strategies-settings",
   "strategies-leverage",
+  "cfd-overview",
   "cfd-bots",
   "cfd-positions",
   "cfd-history",
-  "cfd-account",
   "forex-overview",
   "forex-bots",
   "forex-positions",
@@ -228,20 +228,29 @@ const tabParent = {
 const marketPages = {
   home:      ["home"],
   synthetic: ["dashboard-overview", "trading-bots", "trading-positions", "trading-history", "signals-journal", "strategies-ranking",
-              "strategies-leverage", "cfd-bots", "cfd-positions", "cfd-history", "cfd-account"],
+              "strategies-leverage", "cfd-overview", "cfd-bots", "cfd-positions", "cfd-history"],
   forex:     ["forex-overview", "forex-bots", "forex-positions", "forex-history"],
   crypto:    ["crypto-overview", "crypto-bots", "crypto-positions", "crypto-history"],
   system:    ["system-risk", "system-settings", "strategies-settings"],
 };
 const pageMarket = Object.fromEntries(Object.entries(marketPages).flatMap(([m, pages]) => pages.map(p => [p, m])));
 
+// Synthetic's sidebar switches between its two accounts' pages: Multipliers
+// (Deriv) and CFDs (cTrader). Only the chosen group is listed.
+const SUB_HOME = { multipliers: "dashboard-overview", cfds: "cfd-overview" };
+function syntheticSub(pageId) { return pageId.startsWith("cfd-") ? "cfds" : "multipliers"; }
+// Old links from before the CFDs Overview existed.
+const pageAliases = { "cfd-account": "cfd-overview" };
+
 // Declared here because navigate() runs during this script's first pass.
 const lastMarketPage = {};
+const lastSubPage = {};
 const forexView = { data: null, timer: null, refetchAt: 0, loading: false };
 const cryptoView = { data: null, timer: null, loading: false };
 const homeView = { timer: null, loading: false };
 
 function navigate(pageId, updateUrl = true) {
+  pageId = pageAliases[pageId] || pageId;
   if (!pageIds.has(pageId)) pageId = "home";
   const navId = tabParent[pageId] || pageId;
   const market = pageMarket[pageId] || "home";
@@ -256,6 +265,15 @@ function navigate(pageId, updateUrl = true) {
   document.querySelectorAll(".nav-section[data-market]").forEach(section => {
     section.hidden = section.dataset.market !== market;
   });
+  if (market === "synthetic") {
+    const sub = syntheticSub(pageId);
+    lastSubPage[sub] = pageId;
+    document.querySelectorAll(".nav-group[data-sub]").forEach(group => { group.hidden = group.dataset.sub !== sub; });
+    document.querySelectorAll(".nav-switch-btn").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.sub === sub);
+      btn.setAttribute("aria-selected", btn.dataset.sub === sub);
+    });
+  }
   document.querySelectorAll(".page").forEach(p => {
     p.classList.toggle("active", p.id === `page-${pageId}`);
   });
@@ -264,7 +282,7 @@ function navigate(pageId, updateUrl = true) {
   if (pageId !== "trading-bots") {
     renderAll();
   }
-  if (pageId === "trading-bots" || pageId === "cfd-bots") {
+  if (pageId === "trading-bots" || pageId === "cfd-bots" || pageId === "cfd-overview") {
     refreshBots();
     wireBotForm();
   }
@@ -299,6 +317,15 @@ document.querySelectorAll(".market-tab[data-market]").forEach(tab => {
     const market = tab.dataset.market;
     navigate(lastMarketPage[market] || marketPages[market][0]);
   });
+});
+
+document.querySelectorAll(".nav-switch-btn").forEach(btn => {
+  btn.addEventListener("click", () => navigate(lastSubPage[btn.dataset.sub] || SUB_HOME[btn.dataset.sub]));
+});
+
+// The CFDs Overview's figures open their pages.
+document.querySelectorAll(".cfd-stats [data-page]").forEach(btn => {
+  btn.addEventListener("click", () => navigate(btn.dataset.page));
 });
 
 // nav-link-btn (inline "go to page" links inside content) and page tabs
@@ -2284,6 +2311,12 @@ function renderCfdTrades(open, closed) {
       <td>${fmtDate(t.opened_at)}</td>
     </tr>`).join("")
     : emptyRow(7, `No open CFD positions. ${pending}.`);
+  document.querySelector("#cfdStatOpen").textContent = open.length;
+  document.querySelector("#cfdStatClosed").textContent = closed.length;
+  const net = closed.reduce((sum, t) => sum + t.net_result, 0);
+  const pnl = document.querySelector("#cfdStatPnl");
+  pnl.textContent = closed.length ? `${net > 0 ? "+" : ""}${currency.format(net)}` : "—";
+  pnl.className = `crypto-figure-value ${closed.length ? pnlClass(net) : ""}`;
   document.querySelector("#cfdHistoryCount").textContent = `${closed.length} trade${closed.length === 1 ? "" : "s"}`;
   document.querySelector("#cfdHistory").innerHTML = closed.length
     ? closed.map(t => `<tr>
@@ -3624,6 +3657,8 @@ function wireBotForm() {
 // ─── CFD bots (Synthetic → CFDs, traded on cTrader) ─────────────────────────
 
 function renderCfdBots(bots) {
+  const active = bots.filter(b => b.enabled).length;
+  document.querySelector("#cfdStatBots").textContent = bots.length ? `${active} of ${bots.length}` : "0";
   document.querySelector("#cfdBots").innerHTML = bots.length
     ? bots.map(b => `<tr>
       <td><span class="bot-dot ${b.enabled ? "active" : "paused"}"></span> <strong>${escapeAttr(b.name)}</strong></td>
@@ -3742,7 +3777,7 @@ getJson("/api/me").then(me => {
   document.querySelector("#signedIn").style.display = "";
 }).catch(() => {});
 
-// ─── cTrader connection (Synthetic → CFDs → cTrader Account) ────────────────
+// ─── cTrader connection (Synthetic → CFDs → Overview) ───────────────────────
 
 function escapeText(v) {
   return String(v ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
@@ -3760,16 +3795,7 @@ function ctraderAccountLabel(a) {
   return `${a.broker || "cTrader"} · ${a.login || a.account_id}`;
 }
 
-// The cTrader Account page has the full panel; the Synthetic Overview shows
-// the same status line.
 async function refreshCTrader() {
-  await refreshCTraderPanel();
-  const statusEl = document.querySelector("#ctraderStatus");
-  const overview = document.querySelector("#ctraderOverviewStatus");
-  if (statusEl && overview) overview.textContent = statusEl.textContent;
-}
-
-async function refreshCTraderPanel() {
   const statusEl = document.querySelector("#ctraderStatus");
   const actions = document.querySelector("#ctraderActions");
   const picks = document.querySelector("#ctraderAccounts");
