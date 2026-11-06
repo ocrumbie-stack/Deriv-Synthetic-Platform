@@ -240,6 +240,11 @@ def validate_signal(db: Session, payload: WebhookSignal, strategy: Strategy, bot
     # strategy's own exit signal for it.
     if bot and not bot.enabled and payload.action == SignalAction.entry:
         return "Signal bot is disabled."
+    # cTrader bots are saved now but their orders go through /webhook's
+    # cTrader path once it is built - until then they must never fall
+    # through to a Deriv Multiplier on the Options account.
+    if bot and bot.account == "ctrader" and payload.action == SignalAction.entry:
+        return "This bot trades on cTrader, and cTrader execution isn't switched on yet."
     if bot and bot.symbol:
         allowed = [s.strip().upper() for s in bot.symbol.split(",")]
         if payload.symbol.upper() not in allowed:

@@ -63,6 +63,13 @@ class Settings(BaseSettings):
     blofin_demo_api_secret: str = ""
     blofin_demo_api_passphrase: str = ""
 
+    # cTrader Open API app (openapi.ctrader.com > Applications > Credentials)
+    # - lets the Synthetic page trade lot-sized CFDs on a cTrader account
+    # (see app/ctrader.py). The trader then logs in with their cTrader ID
+    # on the dashboard; no account password is ever stored.
+    ctrader_client_id: str = ""
+    ctrader_client_secret: str = ""
+
     # Telegram alerts (see app/notify.py) - off until both are set. Get the
     # token from @BotFather and the chat id from the bot's getUpdates.
     telegram_bot_token: str = ""

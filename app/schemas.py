@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -178,6 +178,16 @@ class SignalBotCreate(BaseModel):
     default_pair_max_cycles: int | None = Field(default=None, gt=0)
     trail_start_pct: float | None = Field(default=None, gt=0)
     trail_distance_pct: float | None = Field(default=None, gt=0)
+    # "options" trades Deriv Multipliers sized by `size` (the stake);
+    # "ctrader" trades lot-sized CFDs on the cTrader account, sized by `lots`.
+    account: Literal["options", "ctrader"] = "options"
+    lots: float | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def ctrader_needs_lots(self) -> "SignalBotCreate":
+        if self.account == "ctrader" and not self.lots:
+            raise ValueError("A cTrader bot needs a lot size.")
+        return self
 
 
 class SignalBotUpdate(BaseModel):
@@ -192,6 +202,8 @@ class SignalBotUpdate(BaseModel):
     default_pair_max_cycles: int | None = Field(default=None, gt=0)
     trail_start_pct: float | None = Field(default=None, gt=0)
     trail_distance_pct: float | None = Field(default=None, gt=0)
+    account: Literal["options", "ctrader"] | None = None
+    lots: float | None = Field(default=None, gt=0)
 
 
 class SymbolLeverageOut(BaseModel):
@@ -242,6 +254,8 @@ class SignalBotOut(BaseModel):
     default_pair_max_cycles: int | None
     trail_start_pct: float | None
     trail_distance_pct: float | None
+    account: str = "options"
+    lots: float | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

@@ -141,6 +141,25 @@ class CryptoSignal(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
+class CTraderConnection(Base):
+    """The cTrader ID login (a single row, id 1): its OAuth tokens, the
+    trading accounts linked to it, and which one trades in demo and in live
+    mode. The tokens grant trading on those accounts - never shown or sent
+    back to the dashboard."""
+
+    __tablename__ = "ctrader_connection"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # JSON list from CTraderClient.list_accounts, refreshed on each login.
+    accounts: Mapped[str | None] = mapped_column(Text, nullable=True)
+    demo_account_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    live_account_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Strategy(Base):
     __tablename__ = "strategies"
 
@@ -231,6 +250,9 @@ class Trade(Base):
     # exits (strategy_exit, reversal, webhook_exit, manual_close, price_exit,
     # trailing_stop, close_all_target, deriv_close). Shown as Trade History's reason.
     close_reason: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # Which Synthetic account holds it (see SignalBot.account). For cTrader,
+    # exchange_order_id is the position id and size is in lots.
+    account: Mapped[str] = mapped_column(String(10), default="options", index=True)
 
     strategy: Mapped[Strategy] = relationship(back_populates="trades")
 
@@ -263,6 +285,11 @@ class SignalBot(Base):
     # this column was added), so a later P&L correction only adjusts the
     # session total if that session actually counted the trade.
     session_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Which Synthetic account the bot trades: "options" (Deriv Multipliers,
+    # sized by the stake in `size` and `leverage`) or "ctrader" (lot-sized
+    # CFDs on the picked cTrader account, sized by `lots`).
+    account: Mapped[str] = mapped_column(String(10), default="options")
+    lots: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     pairs: Mapped[list["BotPair"]] = relationship(back_populates="bot", cascade="all, delete-orphan")

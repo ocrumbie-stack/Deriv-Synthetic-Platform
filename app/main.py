@@ -21,7 +21,7 @@ from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, CryptoBot, ExecutionStatus, ForexBot, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
 from app.schemas import BotPairOut, BotPairUpdate, CloseAllTarget, CryptoBotCreate, CryptoBotUpdate, ForexBotCreate, ForexBotUpdate, ForexPairUpdate, ManualExitSignal, PositionAction, PositionStopAction, PositionTpSl, PositionTpSlAction, PositionTpSlDetail, PositionTrailAction, SecretQuery, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, SignalStatusQuery, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
 from app.services import PAIR_DEFAULT_FIELDS, account_exposure, close_all_open_trades, close_all_target, get_app_settings, local_period_start, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, preview_chart_trade, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal, trade_execution_lock
-from app import auth, crypto, forex, home, notify, trade_audit
+from app import auth, crypto, ctrader_routes, forex, home, notify, trade_audit
 from app.blofin import BlofinError, missing_settings as blofin_missing
 from app.trade_audit import trade_audit_scheduler
 from app.trailing import trailing_monitor
@@ -163,6 +163,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.middleware("http")(auth.require_login)
 app.include_router(auth.router)
+app.include_router(ctrader_routes.router)
 if not auth.auth_enabled():
     logger.warning(
         "Dashboard sign-in is OFF - anyone with the URL can use it. Set GOOGLE_CLIENT_ID, "
@@ -570,6 +571,13 @@ async def update_signal_bot(bot_id: int, updates: SignalBotUpdate, db: Session =
     if not bot:
         raise HTTPException(status_code=404, detail="Signal bot not found.")
     data = updates.model_dump(exclude_unset=True)
+    if data.get("account") and data["account"] != bot.account:
+        if data["account"] == "ctrader" and not (data.get("lots") or bot.lots):
+            raise HTTPException(status_code=422, detail="A cTrader bot needs a lot size.")
+        # Its open position would be left on the other account with nothing
+        # managing it - the exit would go to the wrong place.
+        if db.scalar(select(Trade.id).where(Trade.strategy_name == bot.name, Trade.status == PositionStatus.open)):
+            raise HTTPException(status_code=409, detail="Close this bot's open positions before switching its account.")
     # A pair copies the bot's defaults when its coin first trades, so without
     # this a changed default would never reach a coin that had already traded.
     # Pairs still on the old default follow the new one; a value customised
