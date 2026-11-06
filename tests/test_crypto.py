@@ -52,6 +52,7 @@ class BlofinHelperTests(unittest.TestCase):
 
 class CryptoSignalTests(unittest.TestCase):
     def setUp(self):
+        crypto._cache.clear()
         engine = create_engine("sqlite://")
         Base.metadata.create_all(engine)
         self.db = sessionmaker(bind=engine)()
@@ -203,6 +204,70 @@ class CryptoSignalTests(unittest.TestCase):
         data = asyncio.run(crypto.overview(self.db, client))
         self.assertEqual(data["mode"], "demo")
         self.assertEqual(len(data["signals"]), 1)
+
+    def test_api_key_failure_only_hides_the_badges(self):
+        client = self._client()
+        client.balance.return_value = {"equity": 100.0, "available": 90.0, "unrealized_pnl": 0.0}
+        client.api_key.side_effect = BlofinError("BloFin error 152401: access key does not exist")
+        data = asyncio.run(crypto.overview(self.db, client))
+        self.assertIsNone(data["api_key"])
+        self.assertIsNone(data["error"])
+
+
+class CryptoMarketTests(unittest.TestCase):
+    def setUp(self):
+        crypto._cache.clear()
+        self._mode = settings.execution_mode
+        settings.execution_mode = "demo"
+
+    def tearDown(self):
+        crypto._cache.clear()
+        settings.execution_mode = self._mode
+
+    def _client(self):
+        client = AsyncMock()
+        client.tickers.return_value = {
+            "BTC-USDT": {"last": 110.0, "open_24h": 100.0, "high_24h": 120.0, "low_24h": 90.0, "volume_24h": 5e9},
+            "ETH-USDT": {"last": 50.0, "open_24h": None, "high_24h": None, "low_24h": None, "volume_24h": None},
+        }
+        client.funding_rates.return_value = {"BTC-USDT": {"rate": 0.0001, "next_time": 1, "interval_hours": 8.0}}
+        client.closes.return_value = [100.0, 105.0, 110.0]
+        return client
+
+    def test_pairs_come_back_in_order_with_change_and_funding(self):
+        data = asyncio.run(crypto.market("ethusdt.p, BTCUSDT, BTC-USDT, NOPE-USDT, BTCUSD", self._client()))
+        self.assertEqual([p["symbol"] for p in data["pairs"]], ["ETH-USDT", "BTC-USDT"])
+        btc = data["pairs"][1]
+        self.assertAlmostEqual(btc["change_24h"], 0.1)
+        self.assertEqual(btc["funding"]["rate"], 0.0001)
+        self.assertEqual(btc["sparkline"], [100.0, 105.0, 110.0])
+        self.assertIsNone(data["pairs"][0]["change_24h"])
+        self.assertIsNone(data["pairs"][0]["funding"])
+
+    def test_market_data_is_cached(self):
+        client = self._client()
+        asyncio.run(crypto.market("BTCUSDT", client))
+        asyncio.run(crypto.market("BTCUSDT", client))
+        self.assertEqual(client.tickers.await_count, 1)
+        self.assertEqual(client.closes.await_count, 1)
+
+    def test_failed_sparkline_keeps_the_price(self):
+        client = self._client()
+        client.closes.side_effect = BlofinError("BloFin HTTP 429: too many requests")
+        data = asyncio.run(crypto.market("BTCUSDT", client))
+        self.assertEqual(data["pairs"][0]["last"], 110.0)
+        self.assertEqual(data["pairs"][0]["sparkline"], [])
+
+    def test_ticker_failure_reports_an_error(self):
+        client = self._client()
+        client.tickers.side_effect = BlofinError("BloFin HTTP 503: down")
+        data = asyncio.run(crypto.market("BTCUSDT", client))
+        self.assertEqual((data["pairs"], data["error"]), ([], "BloFin HTTP 503: down"))
+
+    def test_no_pairs_makes_no_calls(self):
+        client = self._client()
+        self.assertEqual(asyncio.run(crypto.market("", client))["pairs"], [])
+        client.tickers.assert_not_awaited()
 
 
 if __name__ == "__main__":

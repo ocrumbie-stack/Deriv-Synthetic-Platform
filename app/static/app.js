@@ -246,7 +246,7 @@ const pageAliases = { "cfd-account": "cfd-overview" };
 const lastMarketPage = {};
 const lastSubPage = {};
 const forexView = { data: null, timer: null, refetchAt: 0, loading: false };
-const cryptoView = { data: null, timer: null, loading: false };
+const cryptoView = { data: null, market: null, timer: null, loading: false };
 const homeView = { timer: null, loading: false };
 
 function navigate(pageId, updateUrl = true) {
@@ -670,12 +670,106 @@ async function loadCrypto() {
     message = data.error ? `BloFin: ${data.error}` : "";
     cryptoView.data = data;
     renderCrypto(data);
+    loadCryptoMarkets(data);
   } catch {
     message = "Couldn't load crypto data. Retrying…";
   } finally {
     document.querySelectorAll(".crypto-error").forEach(el => { el.textContent = message; });
     cryptoView.loading = false;
   }
+}
+
+// Majors shown alongside the pairs being traded, so the strip is never
+// empty before the first bot or position.
+const CRYPTO_DEFAULT_PAIRS = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "XRP-USDT"];
+const CRYPTO_MARKET_MIN = 4, CRYPTO_MARKET_MAX = 8;
+const compactMoney = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 });
+
+// Open positions first, then the pairs bots are limited to, then majors.
+function cryptoMarketPairs(data) {
+  const pairs = [...data.positions.map(p => p.symbol), ...data.bots.flatMap(b => b.symbols)];
+  for (const pair of CRYPTO_DEFAULT_PAIRS) if (new Set(pairs).size < CRYPTO_MARKET_MIN) pairs.push(pair);
+  return [...new Set(pairs)].slice(0, CRYPTO_MARKET_MAX);
+}
+
+// Separate from the overview so slow market data never holds up the account.
+async function loadCryptoMarkets(data) {
+  try {
+    const market = await getJson(`/api/crypto/market?symbols=${encodeURIComponent(cryptoMarketPairs(data).join(","))}`);
+    cryptoView.market = market;
+    renderCryptoMarkets(market, data);
+  } catch {
+    if (!cryptoView.market) document.querySelector("#cryptoMarkets").innerHTML = "";
+  }
+}
+
+function cryptoSparkline(closes, tone) {
+  if (closes.length < 2) return "";
+  const lo = Math.min(...closes), hi = Math.max(...closes), span = hi - lo || 1;
+  const points = closes.map((c, i) => `${(i / (closes.length - 1) * 100).toFixed(1)},${(26 - (c - lo) / span * 24).toFixed(1)}`).join(" ");
+  return `<svg class="crypto-spark ${tone}" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true"><polyline points="${points}" /></svg>`;
+}
+
+function cryptoCountdown(ms) {
+  const m = Math.max(0, Math.round((ms - Date.now()) / 60000));
+  return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
+}
+
+function cryptoFunding(f) {
+  if (!f || f.rate == null) return `<span class="crypto-funding">Funding —</span>`;
+  const pct = f.rate * 100;
+  const who = f.rate > 0 ? "Longs pay shorts" : f.rate < 0 ? "Shorts pay longs" : "No funding";
+  const every = f.interval_hours ? ` every ${f.interval_hours}h` : "";
+  return `<span class="crypto-funding ${f.rate > 0 ? "pay-long" : f.rate < 0 ? "pay-short" : ""}" title="${who}${every}">` +
+    `Funding <b>${pct > 0 ? "+" : ""}${pct.toFixed(4)}%</b>${f.next_time ? ` · ${cryptoCountdown(f.next_time)}` : ""}</span>`;
+}
+
+function renderCryptoMarkets(market, data) {
+  const open = new Set(data.positions.map(p => p.symbol));
+  document.querySelector("#cryptoMarkets").innerHTML = market.pairs.map(m => {
+    const change = m.change_24h;
+    const tone = change == null ? "neutral" : pnlClass(change);
+    const range = m.high_24h && m.low_24h && m.high_24h > m.low_24h ? clamp((m.last - m.low_24h) / (m.high_24h - m.low_24h), 0, 1) : null;
+    return `<div class="crypto-market${open.has(m.symbol) ? " has-position" : ""}">
+      <div class="crypto-market-head">
+        <strong>${cryptoPair(m.symbol)}</strong>
+        ${open.has(m.symbol) ? `<span class="crypto-market-open" title="You have an open position">OPEN</span>` : ""}
+        <span class="crypto-market-change ${tone}">${change == null ? "—" : `${change > 0 ? "+" : ""}${(change * 100).toFixed(2)}%`}</span>
+      </div>
+      <div class="crypto-market-price">${cryptoPrice(m.last)}</div>
+      ${cryptoSparkline(m.sparkline || [], tone)}
+      <div class="crypto-market-range" title="Where the price sits in today's range">
+        <span>${cryptoPrice(m.low_24h)}</span>
+        <div class="crypto-range-track">${range == null ? "" : `<i style="left:${range * 100}%"></i>`}</div>
+        <span>${cryptoPrice(m.high_24h)}</span>
+      </div>
+      <div class="crypto-market-foot">
+        ${cryptoFunding(m.funding)}
+        <span title="24h volume">Vol ${m.volume_24h == null ? "—" : compactMoney.format(m.volume_24h)}</span>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+// What the connected key can do, and how long it has left. A key without an
+// IP lock expires after 90 days on BloFin.
+function renderCryptoKeyBadges(key) {
+  const el = document.querySelector("#cryptoKeyBadges");
+  if (!key) { el.innerHTML = ""; return; }
+  const badges = [
+    key.read_only
+      ? `<span class="badge bad" title="This key can't place orders, so alerts will fail">Read-only key</span>`
+      : `<span class="badge ok" title="This key can read the account and place orders">Trade access</span>`,
+    key.ip_locked
+      ? `<span class="badge ok" title="Only whitelisted IPs can use this key">IP-locked</span>`
+      : `<span class="badge warn" title="Any IP can use this key, and BloFin expires unlocked keys after 90 days">No IP lock</span>`,
+  ];
+  if (key.expires_at) {
+    const days = Math.floor((key.expires_at - Date.now()) / 86400000);
+    const tone = days < 3 ? "bad" : days < 14 ? "warn" : "ok";
+    badges.push(`<span class="badge ${tone}" title="Key expires ${new Date(key.expires_at).toLocaleDateString()}">${days < 1 ? "Expires today" : `Key expires in ${days}d`}</span>`);
+  }
+  el.innerHTML = badges.join("");
 }
 
 // BloFin's BTC-USDT as the BTCUSDT a TradingView alert sends (and Toobit's
@@ -750,6 +844,16 @@ function renderCryptoOverview(data) {
   meter.className = share >= 0.8 ? "danger" : share >= 0.5 ? "warn" : "";
 
   document.querySelector("#cryptoOpenTitle").textContent = `Open Positions (${data.positions.length})`;
+  // Entry value on each side, so a lopsided book stands out.
+  const exposure = document.querySelector("#cryptoExposure");
+  const sides = { LONG: 0, SHORT: 0 };
+  for (const p of data.positions) sides[p.side] += Number(p.value || 0);
+  const total = sides.LONG + sides.SHORT;
+  exposure.hidden = !total;
+  exposure.innerHTML = total ? `
+    <span class="positive">Long ${cryptoMoney(sides.LONG)}</span>
+    <div class="crypto-exposure-bar" title="Long vs short value at entry"><b style="width:${sides.LONG / total * 100}%"></b></div>
+    <span class="crypto-exposure-short">Short ${cryptoMoney(sides.SHORT)}</span>` : "";
   document.querySelector("#cryptoOverviewPositions").innerHTML = data.positions.length
     ? data.positions.map(p => {
       const liq = cryptoLiquidation(p);
@@ -810,6 +914,7 @@ function renderCrypto(data) {
     el.className = `live-badge crypto-mode ${live ? "live" : "paper"}`;
   });
   document.querySelector("#cryptoPositionsSub").textContent = `${live ? "Live" : "Demo"} on BloFin`;
+  renderCryptoKeyBadges(data.connected ? data.api_key : null);
 
   renderCryptoOverview(data);
 

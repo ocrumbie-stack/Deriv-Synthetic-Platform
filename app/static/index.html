@@ -899,6 +899,7 @@
               <p class="subtle">USDT perpetual futures through BloFin</p>
             </div>
             <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+              <span class="crypto-key-badges" id="cryptoKeyBadges"></span>
               <span class="live-badge crypto-mode paper">DEMO</span>
               <span class="badge" id="cryptoConnection">Loading</span>
             </div>
@@ -932,12 +933,14 @@
                 <div class="home-meter" title="Share of equity held as margin"><b id="cryptoMarginMeter"></b></div>
               </div>
             </div>
+            <div class="crypto-markets" id="cryptoMarkets" aria-label="Markets"></div>
             <div class="crypto-main">
               <div class="chart-panel">
                 <div class="chart-header">
                   <span class="chart-title" id="cryptoOpenTitle">Open Positions</span>
                   <button type="button" class="nav-link-btn" data-page="crypto-positions">View all →</button>
                 </div>
+                <div class="crypto-exposure" id="cryptoExposure" hidden></div>
                 <div class="crypto-position-list" id="cryptoOverviewPositions"></div>
               </div>
               <div class="chart-panel">
@@ -962,6 +965,8 @@
                 </table>
               </div>
             </div>
+            <details class="crypto-help crypto-webhook-setup">
+              <summary>Webhook setup <span class="dim">(URL and alert payloads to paste into TradingView)</span></summary>
             <div class="webhook-panel crypto-webhooks">
               <div class="webhook-section" style="border-right:0;border-bottom:1px solid var(--border)">
                 <span class="webhook-label">CRYPTO WEBHOOK URL</span>
@@ -985,6 +990,7 @@
                 </div>
               </div>
             </div>
+            </details>
             <details class="crypto-help">
               <summary>How crypto alerts work</summary>
               <p class="subtle settings-hint">Alerts use the same format as the Synthetic webhook. Tickers like BTCUSDT or BTCUSDT.P trade BloFin's BTC-USDT perpetual future.</p>

@@ -14,8 +14,10 @@ refused. Exits go through even when the bot is paused or missing.
 
 import asyncio
 import logging
+import time
 import uuid
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -210,6 +212,7 @@ async def overview(db: Session, client: BlofinClient | None = None) -> dict:
         "balance": None,
         "positions": [],
         "error": None,
+        "api_key": None,
         "signals": [_signal_out(s) for s in signals],
     }
     if not data["connected"]:
@@ -219,6 +222,71 @@ async def overview(db: Session, client: BlofinClient | None = None) -> dict:
         data["balance"], data["positions"] = await asyncio.gather(client.balance(), client.positions())
     except (BlofinError, OSError) as e:
         data["error"] = str(e)
+    # Only decorates the header, so a failure here hides the badges rather
+    # than flagging the connection.
+    try:
+        data["api_key"] = await _cached(("api_key", mode), API_KEY_TTL, client.api_key)
+    except (BlofinError, OSError, httpx.HTTPError):
+        data["api_key"] = None
+    return data
+
+
+# Market data is the same for everyone and changes slowly next to a 10s page
+# poll, so it's cached per mode (demo and live quote separately).
+TICKER_TTL, FUNDING_TTL, CANDLE_TTL, API_KEY_TTL = 5, 60, 300, 600
+MAX_MARKET_PAIRS = 8
+_cache: dict[tuple, tuple[float, object]] = {}
+
+
+async def _cached(key: tuple, ttl: float, fetch):
+    hit = _cache.get(key)
+    if hit and time.monotonic() - hit[0] < ttl:
+        return hit[1]
+    value = await fetch()
+    _cache[key] = (time.monotonic(), value)
+    return value
+
+
+async def market(symbols: str | None, client: BlofinClient | None = None) -> dict:
+    """Price, 24h stats, funding and a 24h sparkline for each pair asked for
+    (typed like an alert ticker or as BloFin's id). Pairs BloFin doesn't
+    list are left out. Public data, so it works before keys are set."""
+    mode = _mode()
+    client = client or BlofinClient(mode)
+    pairs = []
+    for part in (symbols or "").split(","):
+        try:
+            pairs.append(contract_symbol(part))
+        except BlofinError:
+            continue
+    pairs = list(dict.fromkeys(pairs))[:MAX_MARKET_PAIRS]
+    data = {"mode": mode, "pairs": [], "error": None}
+    if not pairs:
+        return data
+    try:
+        tickers, funding = await asyncio.gather(
+            _cached(("tickers", mode), TICKER_TTL, client.tickers),
+            _cached(("funding", mode), FUNDING_TTL, client.funding_rates),
+        )
+        pairs = [p for p in pairs if p in tickers]
+        # A missing sparkline shouldn't hide the pair's price.
+        closes = await asyncio.gather(
+            *(_cached(("closes", mode, p), CANDLE_TTL, lambda p=p: client.closes(p)) for p in pairs),
+            return_exceptions=True,
+        )
+    except (BlofinError, OSError, httpx.HTTPError) as e:
+        data["error"] = str(e) or "BloFin market data is unavailable."
+        return data
+    for pair, spark in zip(pairs, closes):
+        ticker = tickers[pair]
+        last, opened = ticker["last"], ticker["open_24h"]
+        data["pairs"].append({
+            "symbol": pair,
+            **ticker,
+            "change_24h": (last - opened) / opened if last and opened else None,
+            "funding": funding.get(pair),
+            "sparkline": spark if isinstance(spark, list) else [],
+        })
     return data
 
 

@@ -794,6 +794,11 @@ async def crypto_overview(db: Session = Depends(get_db)) -> dict:
     return await crypto.overview(db)
 
 
+@app.get("/api/crypto/market")
+async def crypto_market(symbols: str = "") -> dict:
+    return await crypto.market(symbols)
+
+
 def _crypto_bot_fields(fields: dict, db: Session, bot_id: int | None = None) -> dict:
     if "symbols" in fields:
         try:

@@ -172,6 +172,54 @@ class BlofinClient:
             raise BlofinError(f"No BloFin price for {pair_label(symbol)}.")
         return price
 
+    async def tickers(self) -> dict[str, dict]:
+        """Every pair's last price and 24h stats, by instrument id. Volume
+        is in USDT (base volume at the last price)."""
+        rows = await self._request("GET", "/api/v1/market/tickers", signed=False)
+        out = {}
+        for row in rows or []:
+            last, base_volume = _num(row.get("last")), _num(row.get("volCurrency24h"))
+            out[row.get("instId")] = {
+                "last": last,
+                "open_24h": _num(row.get("open24h")),
+                "high_24h": _num(row.get("high24h")),
+                "low_24h": _num(row.get("low24h")),
+                "volume_24h": base_volume * last if base_volume is not None and last else None,
+            }
+        return out
+
+    async def funding_rates(self) -> dict[str, dict]:
+        """Every perpetual's current funding rate (a fraction, positive when
+        longs pay shorts), the next funding time (ms) and the interval."""
+        rows = await self._request("GET", "/api/v1/market/funding-rate", signed=False)
+        return {
+            row.get("instId"): {
+                "rate": _num(row.get("fundingRate")),
+                "next_time": int(row["fundingTime"]) if str(row.get("fundingTime") or "").isdigit() else None,
+                "interval_hours": _num(row.get("fundingInterval")) if row.get("fundingIntervalUnit", "hour") == "hour" else None,
+            }
+            for row in rows or []
+        }
+
+    async def closes(self, symbol: str, bar: str = "1H", limit: int = 24) -> list[float]:
+        """Candle closes, oldest first. BloFin sends newest first, as
+        [ts, open, high, low, close, ...]."""
+        rows = await self._request("GET", "/api/v1/market/candles", {"instId": symbol, "bar": bar, "limit": limit}, signed=False)
+        closes = [_num(row[4]) for row in reversed(rows or []) if len(row) > 4]
+        return [c for c in closes if c is not None]
+
+    async def api_key(self) -> dict:
+        """The connected key's name, access, IP lock and expiry (ms, or None)."""
+        data = await self._request("GET", "/api/v1/user/query-apikey") or {}
+        expires = str(data.get("expireTime") or "")
+        return {
+            "name": data.get("apiName") or None,
+            "read_only": str(data.get("readOnly")) == "1",
+            "ip_locked": bool(data.get("ips")),
+            "expires_at": int(expires) if expires.isdigit() and int(expires) > 0 else None,
+            "sub_account": str(data.get("parentUid") or "0") != "0",
+        }
+
     async def balance(self) -> dict | None:
         """The USDT futures account: equity, available and unrealized P/L."""
         data = await self._request("GET", "/api/v1/account/balance", {"productType": "USDT-FUTURES"}) or {}
