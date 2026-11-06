@@ -79,7 +79,7 @@
           <div class="nav-section" data-market="synthetic">
             <div class="nav-section-head">
               <span class="nav-section-label">Synthetic</span>
-              <span class="nav-section-sub">Multipliers</span>
+              <span class="nav-section-sub">Multipliers · Lots</span>
             </div>
             <button class="nav-item" data-page="dashboard-overview">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -269,6 +269,26 @@
               </div>
               <button class="nav-link-btn" data-page="system-risk">Manage →</button>
             </div>
+            <div class="risk-panel" id="ctraderPanel">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                <div>
+                  <p class="panel-title" style="margin-bottom:2px">cTrader account</p>
+                  <p id="ctraderStatus" style="font-size:12px;color:var(--muted)">Loading…</p>
+                </div>
+                <div id="ctraderActions" style="display:flex;gap:8px;align-items:center"></div>
+              </div>
+              <div id="ctraderAccounts" style="display:none;margin-top:14px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">
+                <div>
+                  <label class="bot-field-label">Demo account</label>
+                  <select id="ctraderDemoAccount" class="inline-input"></select>
+                </div>
+                <div>
+                  <label class="bot-field-label">Live account</label>
+                  <select id="ctraderLiveAccount" class="inline-input"></select>
+                </div>
+              </div>
+              <div id="ctraderMessage" style="display:none;margin-top:10px;font-size:12px"></div>
+            </div>
             <div class="charts-row">
               <div class="chart-panel pnl-panel">
                 <div class="chart-header">
@@ -382,7 +402,7 @@
           <div class="page-header">
             <div>
               <h1 class="page-title">Signal Bots</h1>
-              <p class="subtle">One bot per TradingView strategy trading on Deriv</p>
+              <p class="subtle">One bot per TradingView strategy - Options (Multipliers) or cTrader (lots)</p>
             </div>
             <button id="newBotToggle" class="copy-btn">+ New Bot</button>
           </div>
@@ -391,32 +411,44 @@
             <div id="newBotForm" style="display:none" class="risk-panel">
               <p class="panel-title" style="margin-bottom:4px">New Signal Bot</p>
               <p style="font-size:11px;color:var(--muted);margin-bottom:16px">Size and leverage are stored here — no need to include them in your TradingView alert. Which pairs this bot trades is controlled by your TradingView alerts — set up one alert per symbol using the same strategy name. TP / SL are set on every individual trade as a % of its stake, and Deriv closes the trade when either is hit. Trailing stop: once a trade's profit reaches the trail start, it's closed if profit falls back by the trail distance from its best point (leave start blank to use the distance). Max Cycles applies to each coin individually. You can still override TP / SL for a specific coin later.</p>
-              <div style="display:grid;grid-template-columns:1.4fr repeat(7,1fr) auto;gap:12px;align-items:end">
+              <p id="botCtraderHelp" style="display:none;font-size:11px;color:var(--muted);margin:-8px 0 16px">cTrader bots trade lot-sized CFDs on the cTrader account picked on the Overview (demo or live, following the mode switch). Orders on cTrader aren't switched on yet, so a cTrader bot's entries are refused for now.</p>
+              <div id="botFormGrid" style="display:grid;grid-template-columns:1.4fr 1fr repeat(7,1fr) auto;gap:12px;align-items:end">
                 <div>
                   <label class="bot-field-label">Strategy name</label>
                   <input id="botName" type="text" placeholder="MyStrategy" />
                 </div>
                 <div>
+                  <label class="bot-field-label">Account</label>
+                  <select id="botAccount" class="inline-input">
+                    <option value="options">Options (Multipliers)</option>
+                    <option value="ctrader">cTrader (lots)</option>
+                  </select>
+                </div>
+                <div data-account-field="ctrader" style="display:none">
+                  <label class="bot-field-label">Lots</label>
+                  <input id="botLots" type="number" step="0.01" min="0.01" placeholder="0.10" />
+                </div>
+                <div data-account-field="options">
                   <label class="bot-field-label">Size (USDT)</label>
                   <input id="botSize" type="number" step="1" min="1" placeholder="100" />
                 </div>
-                <div>
+                <div data-account-field="options">
                   <label class="bot-field-label">Leverage (optional)</label>
                   <input id="botLeverage" type="number" step="1" min="0" placeholder="Auto (Leverage page)" />
                 </div>
-                <div>
+                <div data-account-field="options">
                   <label class="bot-field-label">TP % of stake (per trade)</label>
                   <input id="botTp" type="number" step="0.1" min="0.1" placeholder="optional" />
                 </div>
-                <div>
+                <div data-account-field="options">
                   <label class="bot-field-label">SL % of stake (per trade)</label>
                   <input id="botSl" type="number" step="0.1" min="0.1" placeholder="optional" />
                 </div>
-                <div>
+                <div data-account-field="options">
                   <label class="bot-field-label">Trail start % of stake</label>
                   <input id="botTrailStart" type="number" step="0.1" min="0.1" placeholder="= distance" />
                 </div>
-                <div>
+                <div data-account-field="options">
                   <label class="bot-field-label">Trail distance % of stake</label>
                   <input id="botTrailDistance" type="number" step="0.1" min="0.1" placeholder="optional" />
                 </div>
@@ -425,7 +457,7 @@
                   <input id="botCycles" type="number" step="1" min="1" placeholder="optional" />
                 </div>
                 <div style="display:flex;flex-direction:column;gap:6px;align-self:end">
-                  <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:var(--muted)">
+                  <label data-account-field="options" style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:var(--muted)">
                     <input id="botHedge" type="checkbox" /> Hedge
                   </label>
                   <button id="createBotBtn" class="copy-btn" style="height:34px">Create</button>

@@ -125,7 +125,10 @@ def status_out(row: CTraderConnection | None) -> dict:
 
 @router.get("/api/ctrader/status")
 def status(db: Session = Depends(get_db)) -> dict:
-    return status_out(db.get(CTraderConnection, 1))
+    from app.services import get_risk_settings
+
+    get_risk_settings(db)  # applies the dashboard's demo/live switch
+    return {**status_out(db.get(CTraderConnection, 1)), "mode": settings.execution_mode.lower()}
 
 
 class AccountPick(BaseModel):

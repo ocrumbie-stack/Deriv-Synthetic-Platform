@@ -3160,6 +3160,9 @@ async function refreshBots() {
           <span id="chev-${b.id}" style="font-size:9px;color:var(--muted);transition:transform 150ms;display:inline-block">▶</span>
           <span class="bot-dot ${b.enabled ? "active" : "paused"}"></span>
           <span style="font-weight:600">${b.name}</span>
+          ${b.account === "ctrader"
+            ? `<span class="badge" style="font-size:9px">cTrader · ${b.lots ?? "?"} lots</span>`
+            : `<span class="badge" style="font-size:9px;opacity:.7">Options</span>`}
         </div>
         ${pairBadges ? `<div style="margin-top:5px;padding-left:22px">${pairBadges}</div>` : ""}
       </td>
@@ -3400,6 +3403,18 @@ async function refreshBots() {
   });
 }
 
+// The New Bot form shows the stake/multiplier fields for an Options bot and
+// the lot size for a cTrader bot.
+function showBotAccountFields(account) {
+  document.querySelectorAll("#newBotForm [data-account-field]").forEach(el => {
+    el.style.display = el.dataset.accountField === account ? "" : "none";
+  });
+  const grid = document.querySelector("#botFormGrid");
+  if (grid) grid.style.gridTemplateColumns = account === "ctrader" ? "1.4fr 1fr 1fr 1fr auto" : "1.4fr 1fr repeat(7,1fr) auto";
+  const help = document.querySelector("#botCtraderHelp");
+  if (help) help.style.display = account === "ctrader" ? "" : "none";
+}
+
 function wireBotForm() {
   if (_botFormWired) return;
   _botFormWired = true;
@@ -3426,12 +3441,16 @@ function wireBotForm() {
   document.querySelector("#createBotBtn")?.addEventListener("click", async () => {
     const name     = (document.querySelector("#botName")?.value || "").trim();
     const symbol   = "";
-    const size     = parseFloat(document.querySelector("#botSize")?.value || "0");
-    const leverage = parseFloat(document.querySelector("#botLeverage")?.value || "0");
+    const account  = document.querySelector("#botAccount")?.value || "options";
+    const lots     = parseFloat(document.querySelector("#botLots")?.value || "0");
+    // A cTrader bot is sized by lots; the stake is unused but still required.
+    const size     = account === "ctrader" ? 1 : parseFloat(document.querySelector("#botSize")?.value || "0");
+    const leverage = account === "ctrader" ? 0 : parseFloat(document.querySelector("#botLeverage")?.value || "0");
     const errEl    = document.querySelector("#botError");
 
-    if (!name || size <= 0) {
-      if (errEl) { errEl.textContent = "Strategy name and size are required."; errEl.style.display = "block"; }
+    if (!name || size <= 0 || (account === "ctrader" && !(lots > 0))) {
+      const need = account === "ctrader" ? "Strategy name and lots are required." : "Strategy name and size are required.";
+      if (errEl) { errEl.textContent = need; errEl.style.display = "block"; }
       return;
     }
     if (errEl) errEl.style.display = "none";
@@ -3442,13 +3461,16 @@ function wireBotForm() {
     const cycles_raw    = parseInt(document.querySelector("#botCycles")?.value || "");
     const trail_start_raw    = parseFloat(document.querySelector("#botTrailStart")?.value || "");
     const trail_distance_raw = parseFloat(document.querySelector("#botTrailDistance")?.value || "");
-    const body = { name, size, leverage, hedge_mode };
+    const body = { name, size, leverage, hedge_mode: account === "ctrader" ? false : hedge_mode, account };
+    if (account === "ctrader") body.lots = lots;
     if (symbol) body.symbol = symbol.toUpperCase();
-    if (!isNaN(tp_raw) && tp_raw > 0)          body.default_pair_tp_pct     = tp_raw;
-    if (!isNaN(sl_raw) && sl_raw > 0)          body.default_pair_sl_pct     = sl_raw;
+    // The % of stake fields only mean something on the Options account.
+    const pctFields = account === "options";
+    if (pctFields && !isNaN(tp_raw) && tp_raw > 0)          body.default_pair_tp_pct     = tp_raw;
+    if (pctFields && !isNaN(sl_raw) && sl_raw > 0)          body.default_pair_sl_pct     = sl_raw;
     if (!isNaN(cycles_raw) && cycles_raw > 0)  body.default_pair_max_cycles = cycles_raw;
-    if (!isNaN(trail_start_raw) && trail_start_raw > 0)       body.trail_start_pct    = trail_start_raw;
-    if (!isNaN(trail_distance_raw) && trail_distance_raw > 0) body.trail_distance_pct = trail_distance_raw;
+    if (pctFields && !isNaN(trail_start_raw) && trail_start_raw > 0)       body.trail_start_pct    = trail_start_raw;
+    if (pctFields && !isNaN(trail_distance_raw) && trail_distance_raw > 0) body.trail_distance_pct = trail_distance_raw;
     const res = await fetch("/api/signal-bots", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3468,11 +3490,15 @@ function wireBotForm() {
     if (form) form.style.display = "none";
     const preview = document.querySelector("#botTemplatePreview");
     if (preview) preview.style.display = "none";
-    ["#botName","#botSymbol","#botSize","#botLeverage","#botTp","#botSl","#botCycles","#botTrailStart","#botTrailDistance"].forEach(sel => {
+    ["#botName","#botSymbol","#botSize","#botLeverage","#botTp","#botSl","#botCycles","#botTrailStart","#botTrailDistance","#botLots"].forEach(sel => {
       const el = document.querySelector(sel); if (el) el.value = "";
     });
     const hedge = document.querySelector("#botHedge"); if (hedge) hedge.checked = false;
+    const accountSel = document.querySelector("#botAccount");
+    if (accountSel) { accountSel.value = "options"; showBotAccountFields("options"); }
   });
+
+  document.querySelector("#botAccount")?.addEventListener("change", e => showBotAccountFields(e.target.value));
 }
 
 (function() {
@@ -3505,6 +3531,113 @@ getJson("/api/me").then(me => {
   document.querySelector("#signedIn").style.display = "";
 }).catch(() => {});
 
+// ─── cTrader connection (Synthetic Overview) ────────────────────────────────
+
+function escapeText(v) {
+  return String(v ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+function ctraderMessage(text, isError) {
+  const el = document.querySelector("#ctraderMessage");
+  if (!el) return;
+  el.textContent = text || "";
+  el.style.display = text ? "" : "none";
+  el.style.color = isError ? "var(--red)" : "var(--green)";
+}
+
+function ctraderAccountLabel(a) {
+  return `${a.broker || "cTrader"} · ${a.login || a.account_id}`;
+}
+
+async function refreshCTrader() {
+  const statusEl = document.querySelector("#ctraderStatus");
+  const actions = document.querySelector("#ctraderActions");
+  const picks = document.querySelector("#ctraderAccounts");
+  if (!statusEl || !actions || !picks) return;
+  let st;
+  try {
+    st = await getJson("/api/ctrader/status");
+  } catch {
+    statusEl.textContent = "Couldn't load the cTrader status.";
+    return;
+  }
+  if (!st.configured) {
+    statusEl.textContent = `Not set up - add ${st.missing.join(" and ")} to the server's settings (from openapi.ctrader.com).`;
+    actions.innerHTML = "";
+    picks.style.display = "none";
+    return;
+  }
+  if (!st.connected) {
+    statusEl.textContent = "Not connected - log in with your cTrader ID to trade lot-sized positions.";
+    actions.innerHTML = `<a class="copy-btn" href="/ctrader/connect" style="text-decoration:none">Connect cTrader</a>`;
+    picks.style.display = "none";
+    return;
+  }
+
+  const fill = (sel, live, current) => {
+    const el = document.querySelector(sel);
+    const options = st.accounts.filter(a => a.live === live);
+    el.innerHTML = `<option value="">${options.length ? "Choose an account" : "None linked"}</option>` +
+      options.map(a => `<option value="${a.account_id}" ${a.account_id === current ? "selected" : ""}>${escapeText(ctraderAccountLabel(a))}</option>`).join("");
+  };
+  fill("#ctraderDemoAccount", false, st.demo_account_id);
+  fill("#ctraderLiveAccount", true, st.live_account_id);
+  picks.style.display = "grid";
+  actions.innerHTML = `
+    <button class="nav-link-btn" id="ctraderRefreshAccounts">Refresh accounts</button>
+    <button class="mini-switch" id="ctraderDisconnect" style="background:var(--red-dim);color:var(--red)">Disconnect</button>`;
+
+  const mode = st.mode === "live" ? "live" : "demo";
+  const picked = mode === "live" ? st.live_account_id : st.demo_account_id;
+  if (!picked) {
+    statusEl.textContent = `Connected · pick a ${mode} account below.`;
+    return;
+  }
+  try {
+    const info = await getJson(`/api/ctrader/account?mode=${mode}`);
+    const kind = info.hedging ? "hedging" : "netting";
+    statusEl.textContent = `Connected · ${mode.toUpperCase()} ${info.broker || ""} ${info.login || ""} (${kind}) · balance ${currency.format(info.balance)}`;
+  } catch {
+    statusEl.textContent = `Connected · couldn't read the ${mode} account balance from cTrader right now.`;
+  }
+}
+
+function wireCTrader() {
+  const params = new URLSearchParams(location.search);
+  if (params.has("ctrader")) {
+    const ok = params.get("ctrader") === "connected";
+    ctraderMessage(ok ? "cTrader connected." : (params.get("detail") || "The cTrader login failed."), !ok);
+    history.replaceState(null, "", location.pathname + location.hash);
+  }
+  const save = async (field, value) => {
+    try {
+      await patchJson("/api/ctrader/accounts", { [field]: value ? Number(value) : null });
+      ctraderMessage("Saved.", false);
+    } catch (err) {
+      ctraderMessage(err.message, true);
+    }
+    refreshCTrader();
+  };
+  document.querySelector("#ctraderDemoAccount")?.addEventListener("change", e => save("demo_account_id", e.target.value));
+  document.querySelector("#ctraderLiveAccount")?.addEventListener("change", e => save("live_account_id", e.target.value));
+  document.querySelector("#ctraderActions")?.addEventListener("click", async e => {
+    if (e.target.id === "ctraderRefreshAccounts") {
+      const r = await fetch("/api/ctrader/refresh-accounts", { method: "POST" });
+      const data = await r.json().catch(() => ({}));
+      ctraderMessage(r.ok ? "Accounts refreshed." : (data.detail || "Couldn't refresh the accounts."), !r.ok);
+      refreshCTrader();
+    } else if (e.target.id === "ctraderDisconnect") {
+      if (!confirm("Disconnect cTrader? cTrader bots can't trade until you connect again.")) return;
+      await fetch("/api/ctrader/disconnect", { method: "POST" });
+      ctraderMessage("Disconnected.", false);
+      refreshCTrader();
+    }
+  });
+  refreshCTrader();
+  setInterval(refreshCTrader, 60000);
+}
+
+wireCTrader();
 loadWebhookSecret();
 refresh();
 setInterval(refresh, 10000);
