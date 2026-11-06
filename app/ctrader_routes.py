@@ -26,7 +26,8 @@ router = APIRouter()
 
 STATE_COOKIE = "ctrader_state"
 STATE_MAX_AGE = 600
-DONE_PAGE = "/#dashboard-overview"
+# After the cTrader ID login, back to Synthetic → CFDs → cTrader Account.
+DONE_PAGE = "/#cfd-account"
 
 
 def _redirect_uri(request: Request) -> str:

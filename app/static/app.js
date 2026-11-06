@@ -199,6 +199,10 @@ const pageIds = new Set([
   "strategies-ranking",
   "strategies-settings",
   "strategies-leverage",
+  "cfd-bots",
+  "cfd-positions",
+  "cfd-history",
+  "cfd-account",
   "forex-overview",
   "forex-bots",
   "forex-positions",
@@ -217,17 +221,17 @@ const tabParent = {
   "strategies-ranking":  "trading-history",
   "signals-journal":     "trading-history",
   "strategies-settings": "system-risk",
-  "strategies-leverage": "system-risk",
 };
 
 // The top bar's market each page belongs to. The sidebar only lists the
 // selected market's pages.
 const marketPages = {
   home:      ["home"],
-  synthetic: ["dashboard-overview", "trading-bots", "trading-positions", "trading-history", "signals-journal", "strategies-ranking"],
+  synthetic: ["dashboard-overview", "trading-bots", "trading-positions", "trading-history", "signals-journal", "strategies-ranking",
+              "strategies-leverage", "cfd-bots", "cfd-positions", "cfd-history", "cfd-account"],
   forex:     ["forex-overview", "forex-bots", "forex-positions", "forex-history"],
   crypto:    ["crypto-overview", "crypto-bots", "crypto-positions", "crypto-history"],
-  system:    ["system-risk", "system-settings", "strategies-settings", "strategies-leverage"],
+  system:    ["system-risk", "system-settings", "strategies-settings"],
 };
 const pageMarket = Object.fromEntries(Object.entries(marketPages).flatMap(([m, pages]) => pages.map(p => [p, m])));
 
@@ -260,7 +264,7 @@ function navigate(pageId, updateUrl = true) {
   if (pageId !== "trading-bots") {
     renderAll();
   }
-  if (pageId === "trading-bots") {
+  if (pageId === "trading-bots" || pageId === "cfd-bots") {
     refreshBots();
     wireBotForm();
   }
@@ -2220,8 +2224,14 @@ async function refresh() {
   renderAll();
 }
 
+// Which Synthetic account a bot or trade belongs to: Multipliers ("options")
+// or CFDs on cTrader ("ctrader").
+function isCfd(row) { return row.account === "ctrader"; }
+
 function renderAll() {
-  const { risk, performance, positions, signals, history, analytics, symbolLeverage } = latestState;
+  const { risk, performance, signals, analytics, symbolLeverage } = latestState;
+  const positions = latestState.positions.filter(t => !isCfd(t));
+  const history = latestState.history.filter(t => !isCfd(t));
   const tableRows = (performanceSymbolFilter !== "all" && latestState.symbolPerformance) || performance;
   const focused = activeStrategy === "all" ? tableRows : tableRows.filter(r => r.strategy_name === activeStrategy);
 
@@ -2259,6 +2269,36 @@ function renderAll() {
   renderPositions(positions);
   renderSignals(signals);
   renderHistory(history);
+  renderCfdTrades(latestState.positions.filter(isCfd), latestState.history.filter(isCfd));
+}
+
+function renderCfdTrades(open, closed) {
+  const pending = "cTrader orders aren't switched on yet";
+  document.querySelector("#cfdPositionCount").textContent = `${open.length} open`;
+  document.querySelector("#cfdPositions").innerHTML = open.length
+    ? open.map(t => `<tr>
+      <td>${escapeAttr(t.strategy_name)}</td><td>${escapeAttr(t.symbol)}</td><td>${escapeAttr(t.direction)}</td>
+      <td>${number.format(t.size)}</td>
+      <td>${number.format(t.entry_price)}</td>
+      <td>${modeBadge(t.execution_mode)}</td>
+      <td>${fmtDate(t.opened_at)}</td>
+    </tr>`).join("")
+    : emptyRow(7, `No open CFD positions. ${pending}.`);
+  document.querySelector("#cfdHistoryCount").textContent = `${closed.length} trade${closed.length === 1 ? "" : "s"}`;
+  document.querySelector("#cfdHistory").innerHTML = closed.length
+    ? closed.map(t => `<tr>
+      <td>${escapeAttr(t.strategy_name)}</td><td>${escapeAttr(t.symbol)}</td><td>${escapeAttr(t.direction)}</td>
+      <td>${number.format(t.size)}</td>
+      <td>${number.format(t.entry_price)}</td>
+      <td>${t.exit_price == null ? "—" : number.format(t.exit_price)}</td>
+      <td class="${pnlClass(t.net_result)}">${currency.format(t.net_result)}</td>
+      <td>${tradeReason(t)}</td>
+      <td>${modeBadge(t.execution_mode)}</td>
+      <td>${fmtDate(t.opened_at)}</td>
+      <td>${fmtDate(t.closed_at)}</td>
+      <td>${t.closed_at ? duration(t.opened_at, t.closed_at) : "—"}</td>
+    </tr>`).join("")
+    : emptyRow(12, `No closed CFD trades yet. ${pending}.`);
 }
 
 function topRoundRect(ctx, x, y, w, h, r) {
@@ -3203,13 +3243,15 @@ async function loadBotPairs(botId, botName) {
 }
 
 async function refreshBots() {
-  const [bots, uplData] = await Promise.all([
+  const [allBots, uplData] = await Promise.all([
     getJson("/api/signal-bots").catch(() => []),
     getJson("/api/unrealized-pnl").catch(() => ({})),
   ]);
+  botsById = Object.fromEntries(allBots.map(b => [b.id, b]));
+  renderCfdBots(allBots.filter(isCfd));
+  const bots = allBots.filter(b => !isCfd(b));
   const el = document.querySelector("#signalBots");
   if (!el) return;
-  botsById = Object.fromEntries(bots.map(b => [b.id, b]));
 
   if (!bots.length) {
     el.innerHTML = emptyRow(6, "No signal bots yet — click + New Bot to create one.");
@@ -3264,9 +3306,6 @@ async function refreshBots() {
           <span id="chev-${b.id}" style="font-size:9px;color:var(--muted);transition:transform 150ms;display:inline-block">▶</span>
           <span class="bot-dot ${b.enabled ? "active" : "paused"}"></span>
           <span style="font-weight:600">${b.name}</span>
-          ${b.account === "ctrader"
-            ? `<span class="badge" style="font-size:9px">cTrader · ${b.lots ?? "?"} lots</span>`
-            : `<span class="badge" style="font-size:9px;opacity:.7">Options</span>`}
         </div>
         ${pairBadges ? `<div style="margin-top:5px;padding-left:22px">${pairBadges}</div>` : ""}
       </td>
@@ -3507,18 +3546,6 @@ async function refreshBots() {
   });
 }
 
-// The New Bot form shows the stake/multiplier fields for an Options bot and
-// the lot size for a cTrader bot.
-function showBotAccountFields(account) {
-  document.querySelectorAll("#newBotForm [data-account-field]").forEach(el => {
-    el.style.display = el.dataset.accountField === account ? "" : "none";
-  });
-  const grid = document.querySelector("#botFormGrid");
-  if (grid) grid.style.gridTemplateColumns = account === "ctrader" ? "1.4fr 1fr 1fr 1fr auto" : "1.4fr 1fr repeat(7,1fr) auto";
-  const help = document.querySelector("#botCtraderHelp");
-  if (help) help.style.display = account === "ctrader" ? "" : "none";
-}
-
 function wireBotForm() {
   if (_botFormWired) return;
   _botFormWired = true;
@@ -3545,16 +3572,12 @@ function wireBotForm() {
   document.querySelector("#createBotBtn")?.addEventListener("click", async () => {
     const name     = (document.querySelector("#botName")?.value || "").trim();
     const symbol   = "";
-    const account  = document.querySelector("#botAccount")?.value || "options";
-    const lots     = parseFloat(document.querySelector("#botLots")?.value || "0");
-    // A cTrader bot is sized by lots; the stake is unused but still required.
-    const size     = account === "ctrader" ? 1 : parseFloat(document.querySelector("#botSize")?.value || "0");
-    const leverage = account === "ctrader" ? 0 : parseFloat(document.querySelector("#botLeverage")?.value || "0");
+    const size     = parseFloat(document.querySelector("#botSize")?.value || "0");
+    const leverage = parseFloat(document.querySelector("#botLeverage")?.value || "0");
     const errEl    = document.querySelector("#botError");
 
-    if (!name || size <= 0 || (account === "ctrader" && !(lots > 0))) {
-      const need = account === "ctrader" ? "Strategy name and lots are required." : "Strategy name and size are required.";
-      if (errEl) { errEl.textContent = need; errEl.style.display = "block"; }
+    if (!name || size <= 0) {
+      if (errEl) { errEl.textContent = "Strategy name and size are required."; errEl.style.display = "block"; }
       return;
     }
     if (errEl) errEl.style.display = "none";
@@ -3565,16 +3588,13 @@ function wireBotForm() {
     const cycles_raw    = parseInt(document.querySelector("#botCycles")?.value || "");
     const trail_start_raw    = parseFloat(document.querySelector("#botTrailStart")?.value || "");
     const trail_distance_raw = parseFloat(document.querySelector("#botTrailDistance")?.value || "");
-    const body = { name, size, leverage, hedge_mode: account === "ctrader" ? false : hedge_mode, account };
-    if (account === "ctrader") body.lots = lots;
+    const body = { name, size, leverage, hedge_mode, account: "options" };
     if (symbol) body.symbol = symbol.toUpperCase();
-    // The % of stake fields only mean something on the Options account.
-    const pctFields = account === "options";
-    if (pctFields && !isNaN(tp_raw) && tp_raw > 0)          body.default_pair_tp_pct     = tp_raw;
-    if (pctFields && !isNaN(sl_raw) && sl_raw > 0)          body.default_pair_sl_pct     = sl_raw;
+    if (!isNaN(tp_raw) && tp_raw > 0)          body.default_pair_tp_pct     = tp_raw;
+    if (!isNaN(sl_raw) && sl_raw > 0)          body.default_pair_sl_pct     = sl_raw;
     if (!isNaN(cycles_raw) && cycles_raw > 0)  body.default_pair_max_cycles = cycles_raw;
-    if (pctFields && !isNaN(trail_start_raw) && trail_start_raw > 0)       body.trail_start_pct    = trail_start_raw;
-    if (pctFields && !isNaN(trail_distance_raw) && trail_distance_raw > 0) body.trail_distance_pct = trail_distance_raw;
+    if (!isNaN(trail_start_raw) && trail_start_raw > 0)       body.trail_start_pct    = trail_start_raw;
+    if (!isNaN(trail_distance_raw) && trail_distance_raw > 0) body.trail_distance_pct = trail_distance_raw;
     const res = await fetch("/api/signal-bots", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3594,16 +3614,103 @@ function wireBotForm() {
     if (form) form.style.display = "none";
     const preview = document.querySelector("#botTemplatePreview");
     if (preview) preview.style.display = "none";
-    ["#botName","#botSymbol","#botSize","#botLeverage","#botTp","#botSl","#botCycles","#botTrailStart","#botTrailDistance","#botLots"].forEach(sel => {
+    ["#botName","#botSymbol","#botSize","#botLeverage","#botTp","#botSl","#botCycles","#botTrailStart","#botTrailDistance"].forEach(sel => {
       const el = document.querySelector(sel); if (el) el.value = "";
     });
     const hedge = document.querySelector("#botHedge"); if (hedge) hedge.checked = false;
-    const accountSel = document.querySelector("#botAccount");
-    if (accountSel) { accountSel.value = "options"; showBotAccountFields("options"); }
   });
-
-  document.querySelector("#botAccount")?.addEventListener("change", e => showBotAccountFields(e.target.value));
 }
+
+// ─── CFD bots (Synthetic → CFDs, traded on cTrader) ─────────────────────────
+
+function renderCfdBots(bots) {
+  document.querySelector("#cfdBots").innerHTML = bots.length
+    ? bots.map(b => `<tr>
+      <td><span class="bot-dot ${b.enabled ? "active" : "paused"}"></span> <strong>${escapeAttr(b.name)}</strong></td>
+      <td>${number.format(b.lots ?? 0)}</td>
+      <td>${b.default_pair_max_cycles ?? '<span class="subtle">—</span>'}</td>
+      <td>${b.cycles_completed}</td>
+      <td>${statusBadge(b.enabled ? "enabled" : "paused")}</td>
+      <td class="row-actions">
+        <button type="button" class="mini-switch neutral" data-cfd-action="alert" data-bot-id="${b.id}">Copy alert</button>
+        <button type="button" class="mini-switch neutral" data-cfd-action="edit" data-bot-id="${b.id}">Edit</button>
+        <button type="button" class="mini-switch neutral" data-cfd-action="toggle" data-bot-id="${b.id}">${b.enabled ? "Pause" : "Resume"}</button>
+        <button type="button" class="mini-switch" data-cfd-action="delete" data-bot-id="${b.id}">Delete</button>
+      </td>
+    </tr>`).join("")
+    : emptyRow(6, "No CFD bots yet. Click + New Bot to create one.");
+}
+
+document.querySelector("#cfdBotNew").addEventListener("click", () => {
+  const form = document.querySelector("#cfdBotForm");
+  form.hidden = !form.hidden;
+  if (!form.hidden) form.elements.name.focus();
+});
+
+document.querySelector("#cfdBotForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.target;
+  const error = document.querySelector("#cfdBotError");
+  const cycles = parseInt(form.elements.max_cycles.value, 10);
+  error.textContent = "";
+  try {
+    // A CFD bot is sized by lots; size (the Multipliers stake) is unused.
+    await sendJson("POST", "/api/signal-bots", {
+      name: form.elements.name.value.trim(), account: "ctrader", lots: Number(form.elements.lots.value), size: 1,
+      ...(cycles > 0 ? { default_pair_max_cycles: cycles } : {}),
+    });
+  } catch (e) {
+    error.textContent = e.message;
+    return;
+  }
+  form.reset();
+  form.hidden = true;
+  refreshBots();
+});
+
+document.querySelector("#cfdBots").addEventListener("click", async event => {
+  const button = event.target.closest("[data-cfd-action]");
+  if (!button) return;
+  const bot = botsById[button.dataset.botId];
+  if (!bot) return;
+  const url = `/api/signal-bots/${bot.id}`;
+  const action = button.dataset.cfdAction;
+  if (action === "alert") {
+    await navigator.clipboard.writeText(withRealSecret(botTemplate(bot.name)));
+    button.textContent = "Copied!";
+    setTimeout(() => { button.textContent = "Copy alert"; }, 2000);
+  } else if (action === "toggle") {
+    try {
+      await patchJson(url, { enabled: !bot.enabled });
+    } catch (e) {
+      showNotice("CFD bot", e.message);
+    }
+    refreshBots();
+  } else if (action === "edit") {
+    const saved = await openDialog({
+      title: `Edit ${bot.name}`,
+      fields: [
+        { name: "name", label: "Strategy name", value: bot.name },
+        [{ name: "lots", label: "Lots", value: bot.lots },
+         { name: "max_cycles", label: "Max Cycles (per symbol)", value: bot.default_pair_max_cycles ?? "", placeholder: "None" }],
+      ],
+      confirmLabel: "Save",
+      onSubmit: values => sendJson("PATCH", url, {
+        name: values.name, lots: Number(values.lots),
+        default_pair_max_cycles: Number(values.max_cycles) > 0 ? Number(values.max_cycles) : null,
+      }),
+    });
+    if (saved) refreshBots();
+  } else if (action === "delete") {
+    const deleted = await openDialog({
+      title: "Delete CFD bot",
+      message: `Delete ${bot.name}? Its entries will be refused until a bot with this name exists again.`,
+      confirmLabel: "Delete", tone: "danger",
+      onSubmit: () => sendJson("DELETE", url),
+    });
+    if (deleted) refreshBots();
+  }
+});
 
 (function() {
   const webhookUrl = window.location.origin + "/webhook";
@@ -3635,7 +3742,7 @@ getJson("/api/me").then(me => {
   document.querySelector("#signedIn").style.display = "";
 }).catch(() => {});
 
-// ─── cTrader connection (Synthetic Overview) ────────────────────────────────
+// ─── cTrader connection (Synthetic → CFDs → cTrader Account) ────────────────
 
 function escapeText(v) {
   return String(v ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
@@ -3653,7 +3760,16 @@ function ctraderAccountLabel(a) {
   return `${a.broker || "cTrader"} · ${a.login || a.account_id}`;
 }
 
+// The cTrader Account page has the full panel; the Synthetic Overview shows
+// the same status line.
 async function refreshCTrader() {
+  await refreshCTraderPanel();
+  const statusEl = document.querySelector("#ctraderStatus");
+  const overview = document.querySelector("#ctraderOverviewStatus");
+  if (statusEl && overview) overview.textContent = statusEl.textContent;
+}
+
+async function refreshCTraderPanel() {
   const statusEl = document.querySelector("#ctraderStatus");
   const actions = document.querySelector("#ctraderActions");
   const picks = document.querySelector("#ctraderAccounts");

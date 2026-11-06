@@ -219,6 +219,16 @@ body[data-market="crypto"] .sidebar-footer .footer-meta:first-child { display: n
 }
 
 .nav-item svg { flex-shrink: 0; opacity: 0.7; }
+
+/* A sub-group inside a market's pages (Synthetic: Multipliers, CFDs). */
+.nav-group-label {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  padding: 14px 18px 4px;
+  text-transform: uppercase;
+}
 .nav-item.active svg { opacity: 1; }
 
 /* ── Emergency Stop widget ──────────────────────────────────── */
@@ -802,6 +812,11 @@ canvas { display: block; width: 100%; }
 .crypto-setup .panel-label { color: var(--yellow); }
 .crypto-main { display: grid; gap: 10px; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); }
 .crypto-account[hidden] { display: none; }
+.cfd-bot-fields { align-items: end; display: grid; gap: 12px; grid-template-columns: 1.6fr 1fr 1fr auto; }
+.cfd-bot-fields input { width: 100%; }
+#cfdBotForm[hidden] { display: none; }
+.cfd-pending { background: var(--yellow-dim); border: 1px solid rgba(255, 193, 7, 0.25); border-radius: 8px; color: var(--yellow); font-size: 12px; padding: 10px 14px; }
+.risk-panel.ctrader-summary { align-items: center; display: flex; gap: 12px; justify-content: space-between; padding: 14px 22px; }
 .crypto-position-list, .crypto-bot-list { display: grid; padding: 0 18px 8px; }
 .crypto-position-list > .empty, .crypto-bot-list > .empty { padding: 16px 0 20px; }
 .crypto-position-head .badge { justify-self: start; }
@@ -884,7 +899,8 @@ td.wrap-cell { min-width: 260px; white-space: normal; }
   .crypto-position-pnl { grid-column: 3; grid-row: 1; }
   .crypto-position-head .mini-switch { grid-column: 3; grid-row: 2; justify-self: end; }
   .home-markets, .home-risk { grid-template-columns: 1fr; }
-  .crypto-bot-fields, .forex-bot-fields { grid-template-columns: 1fr 1fr; }
+  .crypto-bot-fields, .forex-bot-fields, .cfd-bot-fields { grid-template-columns: 1fr 1fr; }
+  .cfd-bot-fields label:first-child { grid-column: 1 / -1; }
   .forex-bot-fields label:first-child, .forex-pairs-field { grid-column: 1 / -1; }
   .crypto-bot-fields label:first-child, .crypto-bot-fields label:nth-child(4) { grid-column: 1 / -1; }
 }
@@ -1636,6 +1652,7 @@ tr.clickable:hover td, tr.selected td { background: var(--panel-2, #16161e); }
   .nav-section { flex-direction: row; }
   .nav-section-head, .sidebar-footer { display: none; }
   .nav-item { flex-shrink: 0; margin: 0 2px; white-space: nowrap; width: auto; }
+  .nav-group-label { align-self: center; flex-shrink: 0; padding: 0 6px 0 12px; }
   .nav-item.active::before { display: none; }
   .charts-row, .analytics-grid, .risk-grid,
   .risk-status-grid, .integration-cards { grid-template-columns: 1fr; }

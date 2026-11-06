@@ -313,5 +313,7 @@ class TradeOut(BaseModel):
     trail_distance: float | None = None
     manual_tpsl: bool | None = None
     close_reason: str | None = None
+    # "options" (Multipliers) or "ctrader" (CFDs) - which Synthetic pages list it.
+    account: str = "options"
 
     model_config = {"from_attributes": True}
