@@ -820,15 +820,52 @@
           </div>
           <div class="page-body">
             <p class="settings-error crypto-error" role="alert"></p>
-            <div class="crypto-stats">
-              <div class="risk-panel"><p class="panel-label">Wallet balance</p><p class="panel-title" id="cryptoBalance">—</p></div>
-              <div class="risk-panel"><p class="panel-label">Available</p><p class="panel-title" id="cryptoAvailable">—</p></div>
-              <div class="risk-panel"><p class="panel-label">Unrealized P/L</p><p class="panel-title" id="cryptoUnrealized">—</p></div>
-              <div class="risk-panel"><p class="panel-label">Open · Bots</p><p class="panel-title" id="cryptoCounts">—</p></div>
+            <div class="crypto-setup risk-panel" id="cryptoSetup" hidden>
+              <div>
+                <p class="panel-label">Not connected</p>
+                <p class="panel-title" id="cryptoSetupTitle">Connect BloFin</p>
+              </div>
+              <p class="subtle settings-hint" id="cryptoSetupText"></p>
+            </div>
+            <div class="crypto-account" id="cryptoAccount">
+              <div class="crypto-figure">
+                <span class="crypto-figure-label">Equity</span>
+                <span class="crypto-figure-value" id="cryptoBalance">—</span>
+              </div>
+              <div class="crypto-figure">
+                <span class="crypto-figure-label">Available</span>
+                <span class="crypto-figure-value" id="cryptoAvailable">—</span>
+              </div>
+              <div class="crypto-figure">
+                <span class="crypto-figure-label">Unrealized P/L</span>
+                <span class="crypto-figure-value" id="cryptoUnrealized">—</span>
+                <span class="crypto-figure-sub" id="cryptoUnrealizedPct"></span>
+              </div>
+              <div class="crypto-figure">
+                <span class="crypto-figure-label">Margin in use</span>
+                <span class="crypto-figure-value" id="cryptoMarginUsed">—</span>
+                <div class="home-meter" title="Share of equity held as margin"><b id="cryptoMarginMeter"></b></div>
+              </div>
+            </div>
+            <div class="crypto-main">
+              <div class="chart-panel">
+                <div class="chart-header">
+                  <span class="chart-title" id="cryptoOpenTitle">Open Positions</span>
+                  <button type="button" class="nav-link-btn" data-page="crypto-positions">View all →</button>
+                </div>
+                <div class="crypto-position-list" id="cryptoOverviewPositions"></div>
+              </div>
+              <div class="chart-panel">
+                <div class="chart-header">
+                  <span class="chart-title" id="cryptoBotsTitle">Bots</span>
+                  <button type="button" class="nav-link-btn" data-page="crypto-bots">Manage →</button>
+                </div>
+                <div class="crypto-bot-list" id="cryptoOverviewBots"></div>
+              </div>
             </div>
             <div class="chart-panel">
               <div class="chart-header">
-                <span class="chart-title">Latest Signals</span>
+                <span class="chart-title">Recent Activity</span>
                 <button type="button" class="nav-link-btn" data-page="crypto-history">Trade History →</button>
               </div>
               <div class="table-wrap">
@@ -840,24 +877,36 @@
                 </table>
               </div>
             </div>
-            <div class="risk-grid">
-              <div class="risk-panel">
-                <div>
-                  <p class="panel-label">Webhook</p>
-                  <p class="panel-title">TradingView Alerts</p>
+            <div class="webhook-panel crypto-webhooks">
+              <div class="webhook-section" style="border-right:0;border-bottom:1px solid var(--border)">
+                <span class="webhook-label">CRYPTO WEBHOOK URL</span>
+                <div class="url-row">
+                  <code id="cryptoWebhookUrl" class="url-display">/webhook/blofin</code>
+                  <button type="button" class="copy-btn" data-crypto-copy="cryptoWebhookUrl">Copy</button>
                 </div>
-                <p class="subtle settings-hint">Send alerts to <code id="cryptoWebhookUrl">/webhook/blofin</code>, in the same format as the Synthetic webhook. Tickers like BTCUSDT or BTCUSDT.P trade BloFin's BTC-USDT perpetual future.</p>
-                <p class="subtle settings-hint">The alert's strategy must match a crypto bot, which sets the margin and leverage. take_profit and stop_loss are prices, held on BloFin.</p>
               </div>
-              <div class="risk-panel">
-                <div>
-                  <p class="panel-label">Demo / live</p>
-                  <p class="panel-title">How It Applies</p>
+              <div class="webhook-section" style="border-right:0;border-bottom:1px solid var(--border)">
+                <span class="webhook-label">STRATEGY ALERT PAYLOAD <span class="dim">(entries and exits from a TradingView strategy)</span></span>
+                <div class="url-row">
+                  <code id="cryptoStrategyPayload" class="url-display dim">{"secret":"YOUR_SECRET","strategy":"{{strategy.title}}","symbol":"{{ticker}}","action":"{{strategy.order.action}}","market_position":"{{strategy.market_position}}","price":{{close}}}</code>
+                  <button type="button" class="copy-btn" data-crypto-copy="cryptoStrategyPayload">Copy</button>
                 </div>
-                <p class="subtle settings-hint">Crypto follows the demo/live switch: demo trades BloFin's demo-trading account, live trades real money. Each mode has its own BloFin API key, and this page only shows the current mode.</p>
-                <p class="subtle settings-hint">Emergency Stop blocks crypto entries too. Exits always go through. An entry against an open opposite position closes it first; a second entry the same way is refused.</p>
+              </div>
+              <div class="webhook-section" style="border-right:0">
+                <span class="webhook-label">PRICE ALERT ENTRY PAYLOAD <span class="dim">(set your bot name and long or short; take_profit and stop_loss are optional prices)</span></span>
+                <div class="url-row">
+                  <code id="cryptoPricePayload" class="url-display dim">{"secret":"YOUR_SECRET","strategy":"YOUR_BOT_NAME","symbol":"{{ticker}}","action":"entry","direction":"long","price":{{close}}}</code>
+                  <button type="button" class="copy-btn" data-crypto-copy="cryptoPricePayload">Copy</button>
+                </div>
               </div>
             </div>
+            <details class="crypto-help">
+              <summary>How crypto alerts work</summary>
+              <p class="subtle settings-hint">Alerts use the same format as the Synthetic webhook. Tickers like BTCUSDT or BTCUSDT.P trade BloFin's BTC-USDT perpetual future.</p>
+              <p class="subtle settings-hint">The alert's strategy must match a crypto bot's name exactly. The bot sets the margin and leverage. take_profit and stop_loss are prices, held on BloFin.</p>
+              <p class="subtle settings-hint">Crypto follows the demo/live switch: demo trades BloFin's demo-trading account, live trades real money. Each mode has its own BloFin API key, and this page only shows the current mode.</p>
+              <p class="subtle settings-hint">Emergency Stop blocks crypto entries too. Exits always go through. An entry against an open opposite position closes it first; a second entry the same way is refused.</p>
+            </details>
           </div>
         </div>
 

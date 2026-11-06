@@ -784,7 +784,47 @@ canvas { display: block; width: 100%; }
   .fx-progress { grid-column: 1 / -1; grid-row: 2; }
 }
 
-.crypto-stats { display: grid; gap: 10px; grid-template-columns: repeat(4, 1fr); }
+.crypto-account {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+}
+.crypto-figure { display: grid; gap: 6px; align-content: start; padding: 18px 22px; border-right: 1px solid var(--border); }
+.crypto-figure:last-child { border-right: 0; }
+.crypto-figure-label { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+.crypto-figure-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.crypto-figure-sub { color: var(--muted); font-size: 11px; font-weight: 600; }
+.crypto-figure .home-meter { margin-top: 2px; }
+.crypto-setup { border-color: rgba(255, 193, 7, 0.3); gap: 8px; }
+.crypto-setup[hidden] { display: none; }
+.crypto-setup .panel-label { color: var(--yellow); }
+.crypto-main { display: grid; gap: 10px; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); }
+.crypto-account[hidden] { display: none; }
+.crypto-position-list, .crypto-bot-list { display: grid; padding: 0 18px 8px; }
+.crypto-position-list > .empty, .crypto-bot-list > .empty { padding: 16px 0 20px; }
+.crypto-position-head .badge { justify-self: start; }
+.webhook-panel.crypto-webhooks { grid-template-columns: minmax(0, 1fr); }
+.crypto-webhooks .webhook-section, .crypto-webhooks .url-row { min-width: 0; }
+.crypto-position { border-top: 1px solid var(--border); display: grid; gap: 8px; padding: 12px 0; }
+.crypto-position:first-child { border-top: 0; padding-top: 4px; }
+.crypto-position-head { align-items: center; display: grid; gap: 10px; grid-template-columns: auto auto 1fr auto auto; }
+.crypto-position-prices { color: var(--muted); font-family: monospace; font-size: 12px; text-align: right; }
+.crypto-position-pnl { font-family: monospace; min-width: 84px; text-align: right; }
+.crypto-liq { align-items: center; color: var(--muted); display: grid; font-size: 11px; gap: 10px; grid-template-columns: minmax(90px, auto) 1fr minmax(64px, auto); }
+.crypto-liq span:last-child { text-align: right; }
+.crypto-bot { align-items: center; border-top: 1px solid var(--border); display: grid; gap: 4px 10px; grid-template-columns: auto 1fr auto; padding: 10px 0; }
+.crypto-bot:first-child { border-top: 0; padding-top: 4px; }
+.crypto-bot-dot { background: var(--green); border-radius: 50%; height: 8px; width: 8px; }
+.crypto-bot.paused .crypto-bot-dot { background: var(--muted); }
+.crypto-bot.paused strong { color: var(--muted); }
+.crypto-bot-size { font-family: monospace; font-size: 12px; }
+.crypto-bot-last { color: var(--muted); font-size: 11px; grid-column: 2 / -1; }
+.crypto-help { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 22px; }
+.crypto-help summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.crypto-help[open] summary { margin-bottom: 10px; }
+.crypto-help .settings-hint + .settings-hint { margin-top: 8px; }
 .crypto-bot-fields { align-items: end; display: grid; gap: 12px; grid-template-columns: 1.4fr 1fr 1fr 1.6fr auto; }
 .crypto-bot-fields input { width: 100%; }
 #cryptoBotForm[hidden], #forexBotForm[hidden] { display: none; }
@@ -835,7 +875,14 @@ td.wrap-cell { min-width: 260px; white-space: normal; }
 .home-meter b.danger { background: var(--red); }
 
 @media (max-width: 760px) {
-  .crypto-stats { grid-template-columns: repeat(2, 1fr); }
+  .crypto-account { grid-template-columns: repeat(2, 1fr); }
+  .crypto-figure:nth-child(2) { border-right: 0; }
+  .crypto-figure:nth-child(-n+2) { border-bottom: 1px solid var(--border); }
+  .crypto-main { grid-template-columns: minmax(0, 1fr); }
+  .crypto-position-head { grid-template-columns: auto 1fr auto; }
+  .crypto-position-prices { grid-column: 1 / 3; grid-row: 2; text-align: left; }
+  .crypto-position-pnl { grid-column: 3; grid-row: 1; }
+  .crypto-position-head .mini-switch { grid-column: 3; grid-row: 2; justify-self: end; }
   .home-markets, .home-risk { grid-template-columns: 1fr; }
   .crypto-bot-fields, .forex-bot-fields { grid-template-columns: 1fr 1fr; }
   .forex-bot-fields label:first-child, .forex-pairs-field { grid-column: 1 / -1; }

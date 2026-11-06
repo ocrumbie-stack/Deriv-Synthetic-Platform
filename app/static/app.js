@@ -661,6 +661,114 @@ function cryptoSignalAction(s) {
   return `${escapeAttr(s.action)}${s.direction ? ` ${escapeAttr(s.direction)}` : ""}`;
 }
 
+function cryptoPrice(v) {
+  return v == null ? "—" : number.format(v);
+}
+
+function cryptoSince(dateStr) {
+  const s = Math.max(0, Math.floor((Date.now() - new Date(utc(dateStr))) / 1000));
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+// How much of the room between entry and liquidation is left at the mark
+// price (100% at entry, 0% at liquidation), and the price move that would
+// liquidate the position from here.
+function cryptoLiquidation(p) {
+  const { entry_price: entry, mark_price: mark, liquidation_price: liq } = p;
+  if (!entry || !mark || !liq) return null;
+  const long = p.side === "LONG";
+  const room = long ? entry - liq : liq - entry;
+  if (room <= 0) return null;
+  const left = long ? mark - liq : liq - mark;
+  return { buffer: clamp(left / room, 0, 1), move: Math.max(0, left) / mark };
+}
+
+function renderCryptoOverview(data) {
+  const setup = document.querySelector("#cryptoSetup");
+  setup.hidden = data.connected;
+  document.querySelector("#cryptoAccount").hidden = !data.connected;
+  if (!data.connected) {
+    document.querySelector("#cryptoSetupTitle").textContent = `Connect BloFin ${data.mode === "live" ? "live" : "demo"}`;
+    document.querySelector("#cryptoSetupText").innerHTML =
+      `Set ${data.missing.map(m => `<code>${escapeAttr(m)}</code>`).join(", ")} on the server, then restart it. ` +
+      `Until then, crypto alerts in ${escapeAttr(data.mode)} mode are refused.`;
+  }
+
+  const b = data.balance || {};
+  const equity = b.equity == null ? null : Number(b.equity);
+  const available = b.available == null ? null : Number(b.available);
+  document.querySelector("#cryptoBalance").textContent = cryptoMoney(equity);
+  document.querySelector("#cryptoAvailable").textContent = cryptoMoney(available);
+
+  const unrealized = document.querySelector("#cryptoUnrealized");
+  const upl = b.unrealized_pnl == null ? null : Number(b.unrealized_pnl);
+  unrealized.textContent = upl == null ? "—" : `${upl > 0 ? "+" : ""}${cryptoMoney(upl)}`;
+  unrealized.className = `crypto-figure-value ${upl == null ? "" : pnlClass(upl)}`;
+  document.querySelector("#cryptoUnrealizedPct").textContent =
+    upl != null && equity ? `${upl > 0 ? "+" : ""}${(upl / equity * 100).toFixed(2)}% of equity` : "";
+
+  const used = equity != null && available != null ? Math.max(0, equity - available) : null;
+  const share = used != null && equity > 0 ? clamp(used / equity, 0, 1) : null;
+  document.querySelector("#cryptoMarginUsed").innerHTML = used == null ? "—"
+    : `${cryptoMoney(used)}${share == null ? "" : ` <span class="crypto-figure-sub">${Math.round(share * 100)}%</span>`}`;
+  const meter = document.querySelector("#cryptoMarginMeter");
+  meter.style.width = `${(share || 0) * 100}%`;
+  meter.className = share >= 0.8 ? "danger" : share >= 0.5 ? "warn" : "";
+
+  document.querySelector("#cryptoOpenTitle").textContent = `Open Positions (${data.positions.length})`;
+  document.querySelector("#cryptoOverviewPositions").innerHTML = data.positions.length
+    ? data.positions.map(p => {
+      const liq = cryptoLiquidation(p);
+      const pnl = Number(p.unrealized_pnl || 0);
+      const tone = !liq ? "" : liq.buffer < 0.25 ? "danger" : liq.buffer < 0.5 ? "warn" : "";
+      return `<div class="crypto-position">
+        <div class="crypto-position-head">
+          <strong>${cryptoPair(p.symbol)}</strong>
+          <span class="badge ${p.side === "LONG" ? "ok" : "bad"}">${escapeAttr(p.side)}${p.leverage == null ? "" : ` ${escapeAttr(p.leverage)}x`}</span>
+          <span class="crypto-position-prices">${cryptoPrice(p.entry_price)} → ${cryptoPrice(p.mark_price)}</span>
+          <span class="crypto-position-pnl ${pnlClass(pnl)}">${pnl > 0 ? "+" : ""}${cryptoMoney(p.unrealized_pnl)}</span>
+          <button type="button" class="mini-switch" style="background:var(--red-dim);color:var(--red)" data-crypto-close="${escapeAttr(p.symbol)}" data-side="${escapeAttr(p.side)}">Close</button>
+        </div>
+        <div class="crypto-liq">
+          <span>Liq ${p.liquidation_price ? cryptoPrice(p.liquidation_price) : "—"}</span>
+          <div class="home-meter" title="Room left before liquidation"><b class="${tone}" style="width:${liq ? liq.buffer * 100 : 0}%"></b></div>
+          <span>${liq ? `${(liq.move * 100).toFixed(1)}% away` : ""}</span>
+        </div>
+      </div>`;
+    }).join("")
+    : `<p class="empty">${data.connected ? "No open positions" : "Connect BloFin to see positions"}</p>`;
+
+  const lastSignal = {};
+  for (const s of data.signals) if (!(s.strategy_name in lastSignal)) lastSignal[s.strategy_name] = s;
+  const activeBots = data.bots.filter(bot => bot.enabled).length;
+  document.querySelector("#cryptoBotsTitle").textContent = `Bots (${activeBots} active)`;
+  document.querySelector("#cryptoOverviewBots").innerHTML = data.bots.length
+    ? data.bots.map(bot => {
+      const last = lastSignal[bot.name];
+      return `<div class="crypto-bot${bot.enabled ? "" : " paused"}">
+        <span class="crypto-bot-dot" title="${bot.enabled ? "Active" : "Paused"}"></span>
+        <strong>${escapeAttr(bot.name)}</strong>
+        <span class="crypto-bot-size">${bot.enabled ? `${cryptoMoney(bot.margin)} · ${bot.leverage}x` : "paused"}</span>
+        <span class="crypto-bot-last">${last ? `${escapeAttr(last.action)} ${cryptoSince(last.created_at)}` : "no recent signals"}</span>
+      </div>`;
+    }).join("")
+    : `<p class="empty">No crypto bots yet. <button type="button" class="nav-link-btn" data-page="crypto-bots">Create one →</button></p>`;
+
+  document.querySelector("#cryptoRecent").innerHTML = data.signals.length
+    ? data.signals.slice(0, 8).map(s => `<tr>
+      <td>${fmtDate(s.created_at)}</td>
+      <td>${escapeAttr(s.strategy_name)}</td>
+      <td>${cryptoPair(s.symbol)}</td>
+      <td>${cryptoSignalAction(s)}</td>
+      <td>${statusBadge(s.status)}</td>
+      <td class="subtle wrap-cell">${escapeAttr(s.reason || "")}</td>
+    </tr>`).join("")
+    : emptyRow(6, "No crypto signals yet");
+}
+
 function renderCrypto(data) {
   const badge = document.querySelector("#cryptoConnection");
   badge.textContent = data.connected ? (data.error ? "BloFin error" : "Connected") : "Not connected";
@@ -672,25 +780,7 @@ function renderCrypto(data) {
   });
   document.querySelector("#cryptoPositionsSub").textContent = `${live ? "Live" : "Demo"} on BloFin`;
 
-  const b = data.balance || {};
-  document.querySelector("#cryptoBalance").textContent = cryptoMoney(b.equity);
-  document.querySelector("#cryptoAvailable").textContent = cryptoMoney(b.available);
-  const unrealized = document.querySelector("#cryptoUnrealized");
-  unrealized.textContent = cryptoMoney(b.unrealized_pnl);
-  unrealized.className = `panel-title ${pnlClass(Number(b.unrealized_pnl || 0))}`;
-  const activeBots = data.bots.filter(bot => bot.enabled).length;
-  document.querySelector("#cryptoCounts").textContent = `${data.positions.length} open · ${activeBots} active bot${activeBots === 1 ? "" : "s"}`;
-
-  document.querySelector("#cryptoRecent").innerHTML = data.signals.length
-    ? data.signals.slice(0, 5).map(s => `<tr>
-      <td>${fmtDate(s.created_at)}</td>
-      <td>${escapeAttr(s.strategy_name)}</td>
-      <td>${cryptoPair(s.symbol)}</td>
-      <td>${cryptoSignalAction(s)}</td>
-      <td>${statusBadge(s.status)}</td>
-      <td class="subtle wrap-cell">${escapeAttr(s.reason || "")}</td>
-    </tr>`).join("")
-    : emptyRow(6, "No crypto signals yet");
+  renderCryptoOverview(data);
 
   document.querySelector("#cryptoPositionCount").textContent = `${data.positions.length} open`;
   document.querySelector("#cryptoPositions").innerHTML = data.positions.length
@@ -829,7 +919,7 @@ document.querySelector("#cryptoBots").addEventListener("click", async event => {
   }
 });
 
-document.querySelector("#cryptoPositions").addEventListener("click", async event => {
+document.querySelectorAll("#cryptoPositions, #cryptoOverviewPositions").forEach(list => list.addEventListener("click", async event => {
   const button = event.target.closest("[data-crypto-close]");
   if (!button) return;
   const { cryptoClose: symbol, side } = button.dataset;
@@ -843,7 +933,21 @@ document.querySelector("#cryptoPositions").addEventListener("click", async event
     },
   });
   if (closed) loadCrypto();
+}));
+
+// The bots list is re-rendered, so its "Create one" link is wired here.
+document.querySelector("#cryptoOverviewBots").addEventListener("click", event => {
+  const link = event.target.closest("[data-page]");
+  if (link) navigate(link.dataset.page);
 });
+
+document.querySelectorAll("[data-crypto-copy]").forEach(btn => btn.addEventListener("click", () => {
+  const text = document.getElementById(btn.dataset.cryptoCopy).textContent;
+  navigator.clipboard.writeText(withRealSecret(text)).then(() => {
+    btn.textContent = "Copied!";
+    setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+  });
+}));
 
 // ─── Forex bots ──────────────────────────────────────────────────────────────
 
