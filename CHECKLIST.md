@@ -196,6 +196,11 @@ This file and that page list the same items - when adding a fix, update both.
 | M5 | Exits, pause and Emergency Stop | Pause the bot and send an entry, then an exit. Turn Emergency Stop on and repeat. | Entries are rejected (paused / emergency stop); exits still close the position. | 8745e0e (3 Nov) |
 | M6 | Demo and live kept apart | Send a demo signal, switch to live, open Crypto. | The demo signal, positions and balance don't show in live, and back in demo they're there. A live signal with no live keys is rejected naming the missing BLOFIN_API_* settings. | 8745e0e (3 Nov) |
 | M7 | Close from Open Positions | Click Close on a crypto position. | The dialog names the mode and pair (BTCUSDT); the position closes at market on BloFin and disappears from the table. | 8745e0e (3 Nov) |
+| M8 | Crypto Overview account strip | Open Crypto with BloFin connected and a position open. | Equity and Available match BloFin. Unrealized P/L is green/yellow with "% of equity" under it. Margin in use is equity minus available, with a % and a bar that turns yellow at 50% and red at 80%. | a5f1506 (5 Nov) |
+| M9 | Positions on the Overview | Open a long and a short. | Each shows pair, side and leverage, entry → mark, P/L, and "Liq <price>" with a bar and "% away". The bar is full at entry, shrinks toward liquidation, turns yellow under half and red under a quarter. Close works here as on Open Positions. | a5f1506 (5 Nov) |
+| M10 | Bots panel | Have one active and one paused bot; send a signal for one. | Active bots have a green dot with margin · leverage; paused ones are grey and say paused. Each shows its last action and how long ago, or "no recent signals". Manage → opens Signal Bots. | a5f1506 (5 Nov) |
+| M11 | Not connected state | Remove the current mode's BloFin keys and open Crypto. | A Not connected panel names the missing BLOFIN_* settings; the account strip is hidden, positions say "Connect BloFin to see positions". Bots and Recent Activity still show. | a5f1506 (5 Nov) |
+| M12 | Webhook copy boxes | Click Copy on the URL, strategy payload and price alert payload. | The full URL ends /webhook/blofin; copied payloads have the real secret in place of YOUR_SECRET. Copy buttons stay visible however long the payload is. "How crypto alerts work" is collapsed until clicked. | a5f1506 (5 Nov) |
 
 ## N. Home
 
