@@ -1,6 +1,7 @@
 import asyncio
 import json
 import unittest
+from datetime import datetime
 
 from pydantic import ValidationError
 from sqlalchemy import create_engine
@@ -147,6 +148,62 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
             return "token"
 
         return CTraderClient(account_id=42, live=False, connect=server.connect, token=token or default_token)
+
+    async def test_account_summary_covers_every_position(self):
+        def respond(message):
+            kind = message["payloadType"]
+            if kind == ctrader.TRADER_REQ:
+                return [reply(message, ctrader.TRADER_RES, {"trader": {
+                    "balance": 1000000, "moneyDigits": 2, "depositAssetId": 7, "accountType": 0,
+                    "leverageInCents": 50000, "brokerName": "fusionmarkets", "traderLogin": 10151676,
+                }})]
+            if kind == ctrader.RECONCILE_REQ:
+                # One opened by a bot, one opened by hand in the cTrader app.
+                return [reply(message, ctrader.RECONCILE_RES, {"position": [
+                    {"positionId": 1, "moneyDigits": 2, "usedMargin": 20000, "tradeData": {"symbolId": 1, "volume": 100000, "tradeSide": 1, "label": "bot"}},
+                    {"positionId": 2, "moneyDigits": 2, "usedMargin": 5000, "tradeData": {"symbolId": 2, "volume": 100000, "tradeSide": 2}},
+                ]})]
+            if kind == ctrader.UNREALIZED_PNL_REQ:
+                return [reply(message, ctrader.UNREALIZED_PNL_RES, {"moneyDigits": 2, "positionUnrealizedPnL": [
+                    {"positionId": 1, "grossUnrealizedPnL": 1600, "netUnrealizedPnL": 1500},
+                    {"positionId": 2, "grossUnrealizedPnL": -400, "netUnrealizedPnL": -500},
+                ]})]
+            if kind == ctrader.DEAL_LIST_REQ:
+                return [reply(message, ctrader.DEAL_LIST_RES, {"deal": [
+                    {"positionId": 3, "closePositionDetail": {"grossProfit": 2500, "swap": 0, "commission": -50, "moneyDigits": 2}},
+                    {"positionId": 4, "closePositionDetail": {"grossProfit": -1000, "swap": 0, "commission": -50, "moneyDigits": 2}},
+                    {"positionId": 5},  # an opening deal - not counted
+                ]})]
+            if kind == ctrader.ASSET_LIST_REQ:
+                return [reply(message, ctrader.ASSET_LIST_RES, {"asset": [{"assetId": 7, "name": "USD", "displayName": "USD"}]})]
+            return standard_responses(message)
+
+        CTraderClient._deposit_assets.clear()
+        out = await self.client(FakeServer(respond)).account_summary(datetime(2026, 11, 9))
+        self.assertEqual((out["balance"], out["unrealized_pnl"], out["equity"]), (10000.0, 10.0, 10010.0))
+        self.assertEqual((out["margin_used"], out["free_margin"], out["margin_level"]), (250.0, 9760.0, 4004.0))
+        self.assertEqual((out["open_positions"], out["longs"], out["shorts"]), (2, 1, 1))
+        self.assertEqual(out["today"], {"trades": 2, "wins": 1, "net": 14.0})
+        self.assertEqual((out["currency"], out["leverage"], out["hedging"]), ("USD", 500.0, True))
+
+    async def test_account_summary_without_unrealized_pnl(self):
+        def respond(message):
+            kind = message["payloadType"]
+            if kind == ctrader.TRADER_REQ:
+                return [reply(message, ctrader.TRADER_RES, {"trader": {"balance": 50000, "moneyDigits": 2}})]
+            if kind == ctrader.RECONCILE_REQ:
+                return [reply(message, ctrader.RECONCILE_RES, {})]
+            if kind in (ctrader.UNREALIZED_PNL_REQ, ctrader.DEAL_LIST_REQ, ctrader.ASSET_LIST_REQ):
+                return [reply(message, ctrader.OA_ERROR_RES, {"errorCode": "UNSUPPORTED", "description": "nope"})]
+            return standard_responses(message)
+
+        CTraderClient._deposit_assets.clear()
+        out = await self.client(FakeServer(respond)).account_summary(datetime(2026, 11, 9))
+        self.assertEqual(out["balance"], 500.0)
+        self.assertIsNone(out["equity"])
+        self.assertIsNone(out["free_margin"])
+        self.assertIsNone(out["today"])
+        self.assertIsNone(out["currency"])
 
     async def test_market_order_waits_for_the_fill(self):
         def events(message):

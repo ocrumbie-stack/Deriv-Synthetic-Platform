@@ -3981,6 +3981,7 @@ function wireCTraderPanel(panel, flash) {
       ctraderMessage(panel, err.message, true);
     }
     refreshCTrader(panel);
+    refreshCTraderSummary(panel);
   };
   ctraderEl(panel, "DemoAccount")?.addEventListener("change", e => save("demo_account_id", e.target.value));
   ctraderEl(panel, "LiveAccount")?.addEventListener("change", e => save("live_account_id", e.target.value));
@@ -3997,10 +3998,83 @@ function wireCTraderPanel(panel, flash) {
       await fetch(`/api/ctrader/disconnect?${q}`, { method: "POST" });
       ctraderMessage(panel, "Disconnected.", false);
       refreshCTrader(panel);
+      refreshCTraderSummary(panel);
     }
   });
   refreshCTrader(panel);
   setInterval(() => refreshCTrader(panel), 60000);
+  // The summary moves with prices, so it refreshes often - but only while
+  // its Overview is on screen.
+  refreshCTraderSummary(panel);
+  setInterval(() => { if (ctraderEl(panel, "Summary")?.offsetParent) refreshCTraderSummary(panel); }, 10000);
+}
+
+// ─── cTrader account summary (CFDs and Forex Overviews) ────────────────────
+// Every position on the account counts, whatever opened it.
+
+function acctMoney(v, cur) {
+  if (v == null) return "—";
+  const text = currency.format(Number(v));
+  return cur && cur !== "USD" ? `${text.replace("$", "")} ${cur}` : text;
+}
+function signedMoney(v, cur) { return v == null ? "—" : `${v > 0 ? "+" : ""}${acctMoney(v, cur)}`; }
+
+async function refreshCTraderSummary(panel) {
+  const head = ctraderEl(panel, "SummaryHead");
+  const figures = ctraderEl(panel, "SummaryFigures");
+  if (!head || !figures) return;
+  let data;
+  try {
+    data = await getJson(`/api/ctrader/summary?market=${panel.market}`);
+  } catch {
+    head.className = "ctrader-summary-head error";
+    head.textContent = "Couldn't load the account summary.";
+    return;
+  }
+  const mode = data.mode === "live" ? "live" : "demo";
+  if (!data.connected) {
+    head.className = "ctrader-summary-head";
+    head.textContent = `No cTrader ${mode} account picked yet - connect and pick one in the cTrader account panel ${panel.market === "forex" ? "further down" : "below"}.`;
+    figures.hidden = true;
+    return;
+  }
+  if (data.error || !data.account) {
+    head.className = "ctrader-summary-head error";
+    head.textContent = `Couldn't read the ${mode} account from cTrader: ${data.error || "no data"}`;
+    figures.hidden = true;
+    return;
+  }
+  const a = data.account, cur = a.currency;
+  head.className = "ctrader-summary-head";
+  head.innerHTML = `<b>${mode.toUpperCase()}</b> · ${escapeText(a.broker || "cTrader")} ${escapeText(a.login || "")} · ${a.hedging ? "hedging" : "netting"}` +
+    `${a.leverage ? ` · 1:${number.format(a.leverage)}` : ""}${cur ? ` · ${escapeText(cur)}` : ""}` +
+    ` · <span title="Includes positions opened in the cTrader app or anywhere else">whole account</span>`;
+
+  const upl = a.unrealized_pnl, eq = a.equity;
+  const marginShare = eq > 0 ? clamp(a.margin_used / eq, 0, 1) : (a.margin_used > 0 ? 1 : 0);
+  const meterCls = marginShare >= 0.8 ? "danger" : marginShare >= 0.5 ? "warn" : "";
+  const t = a.today;
+  const running = t && upl != null ? t.net + upl : null;
+  const fig = (label, value, sub = "", cls = "") => `<div class="crypto-figure">
+      <span class="crypto-figure-label">${label}</span>
+      <span class="crypto-figure-value ${cls}">${value}</span>${sub}</div>`;
+  const sub = text => text ? `<span class="crypto-figure-sub">${text}</span>` : "";
+  const openText = `${a.open_positions} open${a.open_positions ? ` · ${a.longs} long / ${a.shorts} short` : ""}` +
+    `${upl != null && eq ? ` · ${(upl / eq * 100).toFixed(2)}% of equity` : ""}`;
+  const todayText = t
+    ? `${t.trades} closed${t.trades ? ` · ${Math.round(t.wins / t.trades * 100)}% won` : ""}${running != null ? ` · running ${signedMoney(running, cur)}` : ""}`
+    : "closed deals unavailable";
+  figures.innerHTML = [
+    fig("Balance", acctMoney(a.balance, cur), sub("closed trades only")),
+    fig("Equity", acctMoney(eq, cur), sub(upl == null ? "open P/L unavailable" : "balance + open P/L")),
+    fig("Open P/L", signedMoney(upl, cur), sub(openText), upl == null ? "" : pnlClass(upl)),
+    fig("Margin in use", acctMoney(a.margin_used, cur),
+      sub(a.margin_level != null ? `margin level ${number.format(Math.round(a.margin_level))}%` : "no margin held") +
+      `<div class="home-meter" title="Share of equity held as margin"><b class="${meterCls}" style="width:${marginShare * 100}%"></b></div>`),
+    fig("Free margin", acctMoney(a.free_margin, cur), sub("equity − margin in use")),
+    fig("Today's P/L", t ? signedMoney(t.net, cur) : "—", sub(todayText), t ? pnlClass(t.net) : ""),
+  ].join("");
+  figures.hidden = false;
 }
 
 function wireCTrader() {

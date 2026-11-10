@@ -18,6 +18,8 @@ money (balance, swap, commission, P/L) is an integer scaled by
 10^moneyDigits.
 
 Not yet confirmed against a live call (check on the first demo order):
+the account summary's unrealized P/L request (2187) and usedMargin on
+reconciled positions (both read from the docs, not yet seen live);
 whether JSON enums are numbers (sent as numbers here), whether
 relativeStopLoss/TakeProfit are accepted on MARKET orders (the docs only
 rule out the absolute stopLoss/takeProfit), and the sign of commission and
@@ -54,6 +56,7 @@ HEARTBEAT = 51
 APP_AUTH_REQ, APP_AUTH_RES = 2100, 2101
 ACCOUNT_AUTH_REQ, ACCOUNT_AUTH_RES = 2102, 2103
 NEW_ORDER_REQ = 2106
+ASSET_LIST_REQ, ASSET_LIST_RES = 2112, 2113
 AMEND_SLTP_REQ = 2110
 CLOSE_POSITION_REQ = 2111
 SYMBOLS_LIST_REQ, SYMBOLS_LIST_RES = 2114, 2115
@@ -68,6 +71,7 @@ TOKEN_INVALIDATED_EVENT = 2147
 CLIENT_DISCONNECT_EVENT = 2148
 ACCOUNT_LIST_REQ, ACCOUNT_LIST_RES = 2149, 2150
 ACCOUNT_DISCONNECT_EVENT = 2164
+UNREALIZED_PNL_REQ, UNREALIZED_PNL_RES = 2187, 2188
 
 ORDER_TYPE_MARKET = 1
 SIDE_BUY, SIDE_SELL = 1, 2
@@ -338,6 +342,7 @@ def position_out(position: dict) -> dict:
         "trailing_stop": bool(position.get("trailingStopLoss")),
         "swap": money(position.get("swap"), digits),
         "commission": money(position.get("commission"), digits),
+        "used_margin": money(position.get("usedMargin"), digits),
         "label": trade.get("label"),
         "opened_at": datetime.utcfromtimestamp(int(opened) / 1000) if opened else None,
     }
@@ -802,6 +807,79 @@ class CTraderClient:
     async def positions(self) -> list[dict]:
         payload = await self._call(RECONCILE_REQ, {}, RECONCILE_RES)
         return [position_out(p) for p in payload.get("position") or []]
+
+    async def unrealized_pnl(self) -> dict[int, float]:
+        """Net unrealized P/L (after swap and commission) by position id."""
+        payload = await self._call(UNREALIZED_PNL_REQ, {}, UNREALIZED_PNL_RES)
+        digits = payload.get("moneyDigits")
+        return {
+            int(p["positionId"]): money(p.get("netUnrealizedPnL"), digits)
+            for p in payload.get("positionUnrealizedPnL") or []
+        }
+
+    # Deposit currency per account, e.g. "USD" (assets don't change).
+    _deposit_assets: dict[int, str] = {}
+
+    async def deposit_currency(self, asset_id: Any) -> str | None:
+        if self.account_id not in CTraderClient._deposit_assets:
+            payload = await self._call(ASSET_LIST_REQ, {}, ASSET_LIST_RES)
+            for asset in payload.get("asset") or []:
+                if int(asset.get("assetId") or -1) == int(asset_id or -2):
+                    CTraderClient._deposit_assets[self.account_id] = asset.get("displayName") or asset.get("name") or ""
+                    break
+        return CTraderClient._deposit_assets.get(self.account_id) or None
+
+    async def account_summary(self, day_start: datetime) -> dict:
+        """The account as a whole - every position on it, whether the
+        platform, the cTrader app or anything else opened it: balance,
+        equity, margin, open P/L and today's closed P/L (day_start is naive
+        UTC). Figures cTrader won't give are None, never guessed."""
+        trader = (await self._call(TRADER_REQ, {}, TRADER_RES)).get("trader") or {}
+        digits = trader.get("moneyDigits")
+        balance = money(trader.get("balance"), digits)
+        positions = await self.positions()
+        margin = round(sum(p["used_margin"] for p in positions), 8)
+        try:
+            pnl = await self.unrealized_pnl()
+            unrealized = round(sum(pnl.get(p["position_id"], 0.0) for p in positions), 8)
+        except CTraderError as exc:
+            logger.warning("cTrader unrealized P/L unavailable: %s", exc)
+            unrealized = None
+        equity = round(balance + unrealized, 8) if unrealized is not None else None
+        try:
+            closed = await self.closing_deals(day_start)
+            today = {
+                "trades": len(closed),
+                "wins": sum(1 for d in closed if d["net_profit"] > 0),
+                "net": round(sum(d["net_profit"] for d in closed), 8),
+            }
+        except CTraderError as exc:
+            logger.warning("cTrader closed deals unavailable: %s", exc)
+            today = None
+        try:
+            currency = await self.deposit_currency(trader.get("depositAssetId"))
+        except CTraderError:
+            currency = None
+        return {
+            "account_id": self.account_id,
+            "login": trader.get("traderLogin"),
+            "broker": trader.get("brokerName") or "",
+            "live": self.live,
+            "currency": currency,
+            # ProtoOAAccountType: HEDGED 0, NETTED 1
+            "hedging": int(trader.get("accountType") or 0) == 0,
+            "leverage": (int(trader["leverageInCents"]) / 100) if trader.get("leverageInCents") else None,
+            "balance": balance,
+            "equity": equity,
+            "unrealized_pnl": unrealized,
+            "margin_used": margin,
+            "free_margin": round(equity - margin, 8) if equity is not None else None,
+            "margin_level": round(equity / margin * 100, 2) if equity is not None and margin > 0 else None,
+            "open_positions": len(positions),
+            "longs": sum(1 for p in positions if p["direction"] == "long"),
+            "shorts": sum(1 for p in positions if p["direction"] == "short"),
+            "today": today,
+        }
 
     async def closing_deals(self, since: datetime, until: datetime | None = None) -> list[dict]:
         """Closing deals (with P/L) between two UTC times."""

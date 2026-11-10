@@ -829,6 +829,13 @@ canvas { display: block; width: 100%; }
 .crypto-setup .panel-label { color: var(--yellow); }
 .crypto-main { display: grid; gap: 10px; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); }
 .crypto-account[hidden] { display: none; }
+.ctrader-summary { display: grid; gap: 8px; }
+.ctrader-summary-head { color: var(--muted); font-size: 12px; margin: 0; }
+.ctrader-summary-head b { color: var(--text); font-weight: 600; }
+.ctrader-summary-head.error { color: var(--red); }
+.ctrader-account { grid-template-columns: repeat(3, 1fr); }
+.ctrader-account .crypto-figure:nth-child(3n) { border-right: 0; }
+.ctrader-account .crypto-figure:nth-child(-n+3) { border-bottom: 1px solid var(--border); }
 .cfd-bot-fields { align-items: end; display: grid; gap: 12px; grid-template-columns: 1.6fr 1fr 1fr auto; }
 .cfd-bot-fields input { width: 100%; }
 #cfdBotForm[hidden] { display: none; }
@@ -938,6 +945,9 @@ td.wrap-cell { min-width: 260px; white-space: normal; }
   .crypto-account { grid-template-columns: repeat(2, 1fr); }
   .crypto-figure:nth-child(2) { border-right: 0; }
   .crypto-figure:nth-child(-n+2) { border-bottom: 1px solid var(--border); }
+  .ctrader-account .crypto-figure { border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+  .ctrader-account .crypto-figure:nth-child(2n) { border-right: 0; }
+  .ctrader-account .crypto-figure:nth-last-child(-n+2) { border-bottom: 0; }
   .crypto-main { grid-template-columns: minmax(0, 1fr); }
   .crypto-position-head { grid-template-columns: auto 1fr auto; }
   .crypto-position-prices { grid-column: 1 / 3; grid-row: 2; text-align: left; }

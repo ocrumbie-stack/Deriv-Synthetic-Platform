@@ -259,6 +259,29 @@ async def account(mode: str | None = None, market: str | None = None) -> dict:
         raise HTTPException(status_code=502, detail=str(exc))
 
 
+@router.get("/api/ctrader/summary")
+async def summary(market: str | None = None, db: Session = Depends(get_db)) -> dict:
+    """The market's account in the current mode, for its Overview: balance,
+    equity, margin and P/L across every position on the account. Never an
+    error status - a page that can't reach cTrader says why instead."""
+    from app.services import get_risk_settings, local_period_start
+
+    market = _market(market)
+    get_risk_settings(db)  # applies the dashboard's demo/live switch
+    mode = settings.execution_mode.lower()
+    out = {"market": market, "mode": mode, "connected": False, "account": None, "error": None}
+    row = db.get(CTraderConnection, ctrader.MARKETS[market])
+    picked = (row.live_account_id if mode == "live" else row.demo_account_id) if row and row.access_token else None
+    if not picked:
+        return out
+    out["connected"] = True
+    try:
+        out["account"] = await ctrader.CTraderClient(live=mode == "live", market=market).account_summary(local_period_start("today"))
+    except ctrader.CTraderError as exc:
+        out["error"] = str(exc)
+    return out
+
+
 @router.get("/api/ctrader/symbol")
 async def symbol(symbol: str, mode: str | None = None, market: str | None = None) -> dict:
     """Which symbol on the market's account an alert's symbol trades, and its lot size."""

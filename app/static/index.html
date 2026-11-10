@@ -694,6 +694,10 @@
           </div>
           <div class="page-body">
             <p class="cfd-pending">cTrader orders aren't switched on yet, so CFD bots' entries are refused for now. You can connect and set up bots ahead of time.</p>
+            <div class="ctrader-summary" id="ctraderSummary">
+              <p class="ctrader-summary-head" id="ctraderSummaryHead">Loading the account…</p>
+              <div class="crypto-account ctrader-account" id="ctraderSummaryFigures" hidden></div>
+            </div>
             <div class="crypto-account cfd-stats">
               <button type="button" class="crypto-figure" data-page="cfd-bots">
                 <span class="crypto-figure-label">Active bots</span>
@@ -751,6 +755,10 @@
           </div>
           <div class="page-body">
             <p class="settings-error" id="forexError" role="alert"></p>
+            <div class="ctrader-summary" id="fxCtraderSummary">
+              <p class="ctrader-summary-head" id="fxCtraderSummaryHead">Loading the account…</p>
+              <div class="crypto-account ctrader-account" id="fxCtraderSummaryFigures" hidden></div>
+            </div>
             <div class="fx-hero">
               <div class="fx-dial-card">
                 <svg class="fx-dial" id="forexDial" viewBox="0 0 300 300" role="img" aria-label="Today's trading sessions"></svg>
