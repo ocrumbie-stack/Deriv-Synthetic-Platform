@@ -1089,7 +1089,7 @@ document.querySelectorAll("[data-crypto-copy]").forEach(btn => btn.addEventListe
 
 let forexBots = [];
 
-function fxPair(symbol) { return escapeAttr(symbol.replace("_", "/")); }
+function fxPair(symbol) { return escapeAttr(`${symbol.slice(0, 3)}/${symbol.slice(3)}`); }
 
 function fxPips(v) { return v == null ? '<span class="subtle">—</span>' : `${number.format(v)} pips`; }
 
@@ -1131,7 +1131,7 @@ async function loadForexBots() {
         <button type="button" class="mini-switch" data-bot-action="delete" data-bot-id="${bot.id}">Delete</button>
       </td>
     </tr>`).join("")
-    : emptyRow(8, "No forex bots yet. Create one for each strategy that should trade forex on OANDA.");
+    : emptyRow(8, "No forex bots yet. Create one for each strategy that should trade forex on cTrader.");
 }
 
 document.querySelector("#forexBotNew").addEventListener("click", () => {
@@ -1185,7 +1185,7 @@ document.querySelector("#forexBots").addEventListener("click", async event => {
         [{ name: "stop_loss_pips", label: "Stop loss (pips)", value: bot.stop_loss_pips, placeholder: "none" },
          { name: "take_profit_pips", label: "Take profit (pips)", value: bot.take_profit_pips, placeholder: "none" }],
         [{ name: "trailing_stop_pips", label: "Trailing stop (pips)", value: bot.trailing_stop_pips, placeholder: "none" },
-         { name: "symbols", label: "Allowed pairs", value: bot.symbols.map(s => s.replace("_", "")).join(", "), placeholder: "All pairs" }],
+         { name: "symbols", label: "Allowed pairs", value: bot.symbols.join(", "), placeholder: "All pairs" }],
       ],
       note: "Leave a pip field empty for no stop. 1 lot = 100,000 units.",
       confirmLabel: "Save",
@@ -3882,14 +3882,22 @@ getJson("/api/me").then(me => {
   document.querySelector("#signedIn").style.display = "";
 }).catch(() => {});
 
-// ─── cTrader connection (Synthetic → CFDs → Overview) ───────────────────────
+// ─── cTrader connections (Synthetic → CFDs and Forex Overviews) ───────────────────────
 
 function escapeText(v) {
   return String(v ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
-function ctraderMessage(text, isError) {
-  const el = document.querySelector("#ctraderMessage");
+// Each market has its own panel and login: Synthetic → CFDs (Deriv accounts
+// only, element ids "ctrader…") and Forex (other brokers, "fxCtrader…").
+const CTRADER_PANELS = [
+  { market: "synthetic", prefix: "ctrader" },
+  { market: "forex", prefix: "fxCtrader" },
+];
+const ctraderEl = (panel, name) => document.querySelector(`#${panel.prefix}${name}`);
+
+function ctraderMessage(panel, text, isError) {
+  const el = ctraderEl(panel, "Message");
   if (!el) return;
   el.textContent = text || "";
   el.style.display = text ? "" : "none";
@@ -3900,14 +3908,15 @@ function ctraderAccountLabel(a) {
   return `${a.broker || "cTrader"} · ${a.login || a.account_id}`;
 }
 
-async function refreshCTrader() {
-  const statusEl = document.querySelector("#ctraderStatus");
-  const actions = document.querySelector("#ctraderActions");
-  const picks = document.querySelector("#ctraderAccounts");
+async function refreshCTrader(panel) {
+  const statusEl = ctraderEl(panel, "Status");
+  const actions = ctraderEl(panel, "Actions");
+  const picks = ctraderEl(panel, "Accounts");
   if (!statusEl || !actions || !picks) return;
+  const q = `market=${panel.market}`;
   let st;
   try {
-    st = await getJson("/api/ctrader/status");
+    st = await getJson(`/api/ctrader/status?${q}`);
   } catch {
     statusEl.textContent = "Couldn't load the cTrader status.";
     return;
@@ -3919,25 +3928,33 @@ async function refreshCTrader() {
     return;
   }
   if (!st.connected) {
-    statusEl.textContent = "Not connected - log in with your cTrader ID to trade lot-sized positions.";
-    actions.innerHTML = `<a class="copy-btn" href="/ctrader/connect" style="text-decoration:none">Connect cTrader</a>`;
+    statusEl.textContent = panel.market === "synthetic"
+      ? "Not connected - log in with the cTrader ID that holds your Deriv cTrader account."
+      : "Not connected - log in with your forex broker's cTrader ID.";
+    actions.innerHTML = `<a class="copy-btn" href="/ctrader/connect?${q}" style="text-decoration:none">Connect cTrader</a>`;
     picks.style.display = "none";
     return;
   }
 
-  const fill = (sel, live, current) => {
-    const el = document.querySelector(sel);
+  const fill = (name, live, current) => {
+    const el = ctraderEl(panel, name);
     const options = st.accounts.filter(a => a.live === live);
     el.innerHTML = `<option value="">${options.length ? "Choose an account" : "None linked"}</option>` +
       options.map(a => `<option value="${a.account_id}" ${a.account_id === current ? "selected" : ""}>${escapeText(ctraderAccountLabel(a))}</option>`).join("");
   };
-  fill("#ctraderDemoAccount", false, st.demo_account_id);
-  fill("#ctraderLiveAccount", true, st.live_account_id);
+  fill("DemoAccount", false, st.demo_account_id);
+  fill("LiveAccount", true, st.live_account_id);
   picks.style.display = "grid";
   actions.innerHTML = `
-    <button class="nav-link-btn" id="ctraderRefreshAccounts">Refresh accounts</button>
-    <button class="mini-switch" id="ctraderDisconnect" style="background:var(--red-dim);color:var(--red)">Disconnect</button>`;
+    <button class="nav-link-btn" data-ctrader="refresh">Refresh accounts</button>
+    <button class="mini-switch" data-ctrader="disconnect" style="background:var(--red-dim);color:var(--red)">Disconnect</button>`;
 
+  if (!st.accounts.length) {
+    statusEl.textContent = panel.market === "synthetic"
+      ? "Connected, but this cTrader ID has no Deriv accounts. Disconnect and log in with the one that holds your Deriv cTrader account."
+      : "Connected, but this cTrader ID only has Deriv accounts (those trade under Synthetic → CFDs). Disconnect and log in with your forex broker's cTrader ID.";
+    return;
+  }
   const mode = st.mode === "live" ? "live" : "demo";
   const picked = mode === "live" ? st.live_account_id : st.demo_account_id;
   if (!picked) {
@@ -3945,7 +3962,7 @@ async function refreshCTrader() {
     return;
   }
   try {
-    const info = await getJson(`/api/ctrader/account?mode=${mode}`);
+    const info = await getJson(`/api/ctrader/account?mode=${mode}&${q}`);
     const kind = info.hedging ? "hedging" : "netting";
     statusEl.textContent = `Connected · ${mode.toUpperCase()} ${info.broker || ""} ${info.login || ""} (${kind}) · balance ${currency.format(info.balance)}`;
   } catch {
@@ -3953,39 +3970,48 @@ async function refreshCTrader() {
   }
 }
 
-function wireCTrader() {
-  const params = new URLSearchParams(location.search);
-  if (params.has("ctrader")) {
-    const ok = params.get("ctrader") === "connected";
-    ctraderMessage(ok ? "cTrader connected." : (params.get("detail") || "The cTrader login failed."), !ok);
-    history.replaceState(null, "", location.pathname + location.hash);
-  }
+function wireCTraderPanel(panel, flash) {
+  const q = `market=${panel.market}`;
+  if (flash) ctraderMessage(panel, flash.text, flash.isError);
   const save = async (field, value) => {
     try {
-      await patchJson("/api/ctrader/accounts", { [field]: value ? Number(value) : null });
-      ctraderMessage("Saved.", false);
+      await patchJson(`/api/ctrader/accounts?${q}`, { [field]: value ? Number(value) : null });
+      ctraderMessage(panel, "Saved.", false);
     } catch (err) {
-      ctraderMessage(err.message, true);
+      ctraderMessage(panel, err.message, true);
     }
-    refreshCTrader();
+    refreshCTrader(panel);
   };
-  document.querySelector("#ctraderDemoAccount")?.addEventListener("change", e => save("demo_account_id", e.target.value));
-  document.querySelector("#ctraderLiveAccount")?.addEventListener("change", e => save("live_account_id", e.target.value));
-  document.querySelector("#ctraderActions")?.addEventListener("click", async e => {
-    if (e.target.id === "ctraderRefreshAccounts") {
-      const r = await fetch("/api/ctrader/refresh-accounts", { method: "POST" });
+  ctraderEl(panel, "DemoAccount")?.addEventListener("change", e => save("demo_account_id", e.target.value));
+  ctraderEl(panel, "LiveAccount")?.addEventListener("change", e => save("live_account_id", e.target.value));
+  ctraderEl(panel, "Actions")?.addEventListener("click", async e => {
+    const action = e.target.dataset?.ctrader;
+    if (action === "refresh") {
+      const r = await fetch(`/api/ctrader/refresh-accounts?${q}`, { method: "POST" });
       const data = await r.json().catch(() => ({}));
-      ctraderMessage(r.ok ? "Accounts refreshed." : (data.detail || "Couldn't refresh the accounts."), !r.ok);
-      refreshCTrader();
-    } else if (e.target.id === "ctraderDisconnect") {
-      if (!confirm("Disconnect cTrader? cTrader bots can't trade until you connect again.")) return;
-      await fetch("/api/ctrader/disconnect", { method: "POST" });
-      ctraderMessage("Disconnected.", false);
-      refreshCTrader();
+      ctraderMessage(panel, r.ok ? "Accounts refreshed." : (data.detail || "Couldn't refresh the accounts."), !r.ok);
+      refreshCTrader(panel);
+    } else if (action === "disconnect") {
+      const who = panel.market === "synthetic" ? "CFD bots" : "Forex bots";
+      if (!confirm(`Disconnect this cTrader login? ${who} can't trade until you connect again.`)) return;
+      await fetch(`/api/ctrader/disconnect?${q}`, { method: "POST" });
+      ctraderMessage(panel, "Disconnected.", false);
+      refreshCTrader(panel);
     }
   });
-  refreshCTrader();
-  setInterval(refreshCTrader, 60000);
+  refreshCTrader(panel);
+  setInterval(() => refreshCTrader(panel), 60000);
+}
+
+function wireCTrader() {
+  const params = new URLSearchParams(location.search);
+  let flash = null;
+  if (params.has("ctrader")) {
+    const ok = params.get("ctrader") === "connected";
+    flash = { market: params.get("market") || "synthetic", text: ok ? "cTrader connected." : (params.get("detail") || "The cTrader login failed."), isError: !ok };
+    history.replaceState(null, "", location.pathname + location.hash);
+  }
+  for (const panel of CTRADER_PANELS) wireCTraderPanel(panel, flash && flash.market === panel.market ? flash : null);
 }
 
 wireCTrader();

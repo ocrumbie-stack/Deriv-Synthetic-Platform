@@ -59,29 +59,29 @@ class MarketHoursTests(unittest.TestCase):
 
 class PairStatusTests(ForexTestCase):
     def test_entry_allowed_inside_the_window(self):
-        self.assertIsNone(forex.entry_block_reason(self.db, "EUR_USD", ny(2026, 11, 4, 9)))
+        self.assertIsNone(forex.entry_block_reason(self.db, "EURUSD", ny(2026, 11, 4, 9)))
 
     def test_entry_blocked_outside_the_window(self):
-        reason = forex.entry_block_reason(self.db, "EUR_USD", ny(2026, 11, 4, 20))
+        reason = forex.entry_block_reason(self.db, "EURUSD", ny(2026, 11, 4, 20))
         self.assertEqual(reason, "EUR/USD closed: outside its London + New York trading window.")
 
     def test_entry_blocked_on_the_weekend(self):
-        self.assertIn("weekend", forex.entry_block_reason(self.db, "AUD_USD", ny(2026, 11, 7, 12)))
+        self.assertIn("weekend", forex.entry_block_reason(self.db, "AUDUSD", ny(2026, 11, 7, 12)))
 
     def test_entry_blocked_around_rollover(self):
-        self.assertIn("rollover", forex.entry_block_reason(self.db, "AUD_USD", ny(2026, 11, 4, 16, 58)))
-        self.assertIn("rollover", forex.entry_block_reason(self.db, "AUD_USD", ny(2026, 11, 4, 17, 4)))
+        self.assertIn("rollover", forex.entry_block_reason(self.db, "AUDUSD", ny(2026, 11, 4, 16, 58)))
+        self.assertIn("rollover", forex.entry_block_reason(self.db, "AUDUSD", ny(2026, 11, 4, 17, 4)))
 
     def test_unknown_pair_is_refused(self):
-        self.assertIn("not a configured", forex.entry_block_reason(self.db, "XAU_USD", ny(2026, 11, 4, 9)))
+        self.assertIn("not a configured", forex.entry_block_reason(self.db, "XAUUSD", ny(2026, 11, 4, 9)))
 
     def test_changed_window_overrides_the_default(self):
         moment = ny(2026, 11, 4, 20)  # Tokyo hours, outside EUR/USD's default window
-        forex.set_pair_sessions(self.db, "EUR_USD", ["tokyo"])
-        self.assertIsNone(forex.entry_block_reason(self.db, "EUR_USD", moment))
+        forex.set_pair_sessions(self.db, "EURUSD", ["tokyo"])
+        self.assertIsNone(forex.entry_block_reason(self.db, "EURUSD", moment))
 
     def test_next_change_when_closed_is_the_next_open(self):
-        status = forex.pair_status("EUR_USD", forex.DEFAULT_PAIRS["EUR_USD"], ny(2026, 11, 4, 20))
+        status = forex.pair_status("EURUSD", forex.DEFAULT_PAIRS["EURUSD"], ny(2026, 11, 4, 20))
         self.assertEqual(status["next_change"], ny(2026, 11, 5, 3))
 
 
@@ -98,15 +98,15 @@ class OverviewTests(ForexTestCase):
         self.assertEqual(forex.overview(self.db, "Not/AZone", ny(2026, 11, 4, 9))["timezone"], "UTC")
 
     def test_update_route_saves_in_session_order(self):
-        out = main.update_forex_pair("EUR_USD", ForexPairUpdate(sessions=["new_york", "tokyo"]), self.db)
+        out = main.update_forex_pair("EURUSD", ForexPairUpdate(sessions=["new_york", "tokyo"]), self.db)
         self.assertEqual(out["sessions"], ["tokyo", "new_york"])
 
     def test_update_route_refuses_unknown_pair_and_session(self):
         with self.assertRaises(HTTPException) as pair:
-            main.update_forex_pair("XAU_USD", ForexPairUpdate(sessions=["tokyo"]), self.db)
+            main.update_forex_pair("XAUUSD", ForexPairUpdate(sessions=["tokyo"]), self.db)
         self.assertEqual(pair.exception.status_code, 404)
         with self.assertRaises(HTTPException) as session:
-            main.update_forex_pair("EUR_USD", ForexPairUpdate(sessions=["moon"]), self.db)
+            main.update_forex_pair("EURUSD", ForexPairUpdate(sessions=["moon"]), self.db)
         self.assertEqual(session.exception.status_code, 422)
 
 
@@ -119,18 +119,18 @@ class RolloverTests(unittest.TestCase):
 
 class ForexBotTests(ForexTestCase):
     def test_pip_size(self):
-        self.assertEqual(forex.pip_size("EUR_USD"), 0.0001)
-        self.assertEqual(forex.pip_size("USD_JPY"), 0.01)
+        self.assertEqual(forex.pip_size("EURUSD"), 0.0001)
+        self.assertEqual(forex.pip_size("USDJPY"), 0.01)
 
     def test_pairs_accept_tradingview_spellings(self):
-        self.assertEqual(forex.normalize_pairs("eurusd, GBP/USD, OANDA:EURUSD, usd_jpy"), "EUR_USD,GBP_USD,USD_JPY")
+        self.assertEqual(forex.normalize_pairs("eurusd, GBP/USD, FX:EURUSD, usd_jpy"), "EURUSD,GBPUSD,USDJPY")
         self.assertIsNone(forex.normalize_pairs(" "))
         with self.assertRaises(ValueError):
             forex.normalize_pairs("XAUUSD")
 
     def test_bot_crud(self):
         bot = main.create_forex_bot(ForexBotCreate(name="London Breakout", lots=0.1, stop_loss_pips=15, symbols="eurusd"), self.db)
-        self.assertEqual((bot["units"], bot["symbols"]), (10000, ["EUR_USD"]))
+        self.assertEqual((bot["units"], bot["symbols"]), (10000, ["EURUSD"]))
         with self.assertRaises(HTTPException) as dup:
             main.create_forex_bot(ForexBotCreate(name="London Breakout"), self.db)
         self.assertEqual(dup.exception.status_code, 409)
@@ -138,6 +138,19 @@ class ForexBotTests(ForexTestCase):
         self.assertEqual((bot["stop_loss_pips"], bot["enabled"]), (None, False))
         main.delete_forex_bot(bot["id"], self.db)
         self.assertEqual(main.list_forex_bots(self.db), [])
+
+
+class OandaRenameTests(ForexTestCase):
+    def test_stored_oanda_names_become_ctrader_names(self):
+        from app.models import ForexBot, ForexPair
+
+        self.db.add_all([ForexPair(symbol="EUR_USD", sessions="tokyo"), ForexBot(name="Bot", symbols="EUR_USD,USD_JPY")])
+        self.db.commit()
+        forex.rename_oanda_pairs(self.db)
+        self.db.commit()
+        self.assertEqual(self.db.query(ForexPair).one().symbol, "EURUSD")
+        self.assertEqual(forex.get_bot(self.db, "Bot").symbols, "EURUSD,USDJPY")
+        self.assertEqual(forex.pair_sessions(self.db)["EURUSD"], ("tokyo",))
 
 
 if __name__ == "__main__":

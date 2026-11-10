@@ -154,25 +154,55 @@ async def refresh_tokens(refresh_token: str) -> dict:
     return await _token_request({"grant_type": "refresh_token", "refresh_token": refresh_token})
 
 
-# --- Token store (the single CTraderConnection row) ---------------------
+# --- Markets --------------------------------------------------------------
 
-def _load_row():
+# Each market has its own cTrader ID login and its own demo/live pick, kept
+# in the CTraderConnection row with this id. Synthetic trades Deriv's
+# synthetic indices, so it only offers Deriv accounts; Forex offers every
+# other broker's accounts (Fusion Markets, IC Markets, Pepperstone, ...).
+MARKETS = {"synthetic": 1, "forex": 2}
+MARKET_LABELS = {"synthetic": "Synthetic → CFDs", "forex": "Forex"}
+
+
+def market_id(market: str) -> int:
+    try:
+        return MARKETS[market]
+    except KeyError:
+        raise CTraderError(f"Unknown cTrader market {market!r}.") from None
+
+
+def is_deriv(account: dict) -> bool:
+    text = f"{account.get('broker') or ''} {account.get('broker_name') or ''}".lower()
+    return "deriv" in text
+
+
+def accounts_for_market(market: str, accounts: list[dict]) -> list[dict]:
+    """The linked accounts a market may trade on."""
+    if market == "synthetic":
+        return [a for a in accounts if is_deriv(a)]
+    return [a for a in accounts if not is_deriv(a)]
+
+
+# --- Token store (one CTraderConnection row per market) -------------------
+
+def _load_row(market: str = "synthetic"):
     from app.database import SessionLocal
     from app.models import CTraderConnection
 
     with SessionLocal() as db:
-        row = db.get(CTraderConnection, 1)
+        row = db.get(CTraderConnection, market_id(market))
         if row:
             db.expunge(row)
         return row
 
 
-def _save_tokens(tokens: dict) -> None:
+def _save_tokens(tokens: dict, market: str = "synthetic") -> None:
     from app.database import SessionLocal
     from app.models import CTraderConnection
 
+    row_id = market_id(market)
     with SessionLocal() as db:
-        row = db.get(CTraderConnection, 1) or CTraderConnection(id=1)
+        row = db.get(CTraderConnection, row_id) or CTraderConnection(id=row_id)
         row.access_token = tokens["access_token"]
         row.refresh_token = tokens.get("refresh_token") or row.refresh_token
         row.expires_at = tokens["expires_at"]
@@ -180,34 +210,35 @@ def _save_tokens(tokens: dict) -> None:
         db.commit()
 
 
-_refresh_lock = asyncio.Lock()
+_refresh_locks: dict[str, asyncio.Lock] = {}
 
 
-async def stored_access_token(force_refresh: bool = False) -> str:
-    """The saved access token, refreshed first when it is close to running
-    out (or when cTrader just rejected it). Refreshing invalidates the old
-    pair, so only one refresh runs at a time."""
-    async with _refresh_lock:
-        row = _load_row()
+async def stored_access_token(force_refresh: bool = False, market: str = "synthetic") -> str:
+    """The market's saved access token, refreshed first when it is close to
+    running out (or when cTrader just rejected it). Refreshing invalidates
+    the old pair, so only one refresh per market runs at a time."""
+    lock = _refresh_locks.setdefault(market, asyncio.Lock())
+    async with lock:
+        row = _load_row(market)
         if not row or not row.access_token:
-            raise CTraderError("cTrader is not connected - log in with your cTrader ID on the Synthetic Overview first.")
+            raise CTraderError(f"cTrader is not connected for {MARKET_LABELS.get(market, market)} - log in with your cTrader ID on its Overview first.")
         due = row.expires_at is None or row.expires_at - TOKEN_REFRESH_MARGIN <= datetime.utcnow()
         if (force_refresh or due) and row.refresh_token:
             tokens = await refresh_tokens(row.refresh_token)
-            _save_tokens(tokens)
+            _save_tokens(tokens, market)
             return tokens["access_token"]
         return row.access_token
 
 
-def account_id_for_mode(mode: str | None = None) -> int:
-    """The cTrader account picked for demo or live (the current mode by
-    default). Anything but exactly "live" is demo, as everywhere else."""
+def account_id_for_mode(mode: str | None = None, market: str = "synthetic") -> int:
+    """The market's cTrader account picked for demo or live (the current
+    mode by default). Anything but exactly "live" is demo, as everywhere else."""
     live = (mode or settings.execution_mode).lower() == "live"
-    row = _load_row()
+    row = _load_row(market)
     account_id = (row.live_account_id if live else row.demo_account_id) if row else None
     if not account_id:
         label = "live" if live else "demo"
-        raise CTraderError(f"No cTrader {label} account is selected - pick one on the Synthetic Overview.")
+        raise CTraderError(f"No cTrader {label} account is selected - pick one on the {MARKET_LABELS.get(market, market)} Overview.")
     return int(account_id)
 
 
@@ -538,7 +569,8 @@ class _Session:
 
 class CTraderClient:
     """Trading on one cTrader account. `account_id` defaults to the account
-    picked for the current demo/live mode; `live` says which host it is on."""
+    the market picked for the current demo/live mode; `live` says which
+    host it is on; `market` says whose login (tokens) to use."""
 
     # Per account: light symbol list, and full details by symbol id.
     _symbol_lists: dict[int, tuple[float, list[dict]]] = {}
@@ -550,20 +582,23 @@ class CTraderClient:
         account_id: int | None = None,
         live: bool | None = None,
         *,
+        market: str = "synthetic",
         connect: Connector = _open_socket,
         token: Callable[[bool], Awaitable[str]] | None = None,
     ) -> None:
         if live is None:
             live = settings.execution_mode.lower() == "live"
+        market_id(market)
         self.live = live
+        self.market = market
         self._account_id = account_id
         self._connect = connect
-        self._token = token or (lambda force=False: stored_access_token(force))
+        self._token = token or (lambda force=False: stored_access_token(force, market))
 
     @property
     def account_id(self) -> int:
         if self._account_id is None:
-            self._account_id = account_id_for_mode("live" if self.live else "demo")
+            self._account_id = account_id_for_mode("live" if self.live else "demo", self.market)
         return self._account_id
 
     @property
@@ -623,6 +658,7 @@ class CTraderClient:
                 "login": a.get("traderLogin"),
                 "live": bool(a.get("isLive")),
                 "broker": a.get("brokerTitleShort") or "",
+                "broker_name": a.get("brokerName") or "",
             }
             for a in payload.get("ctidTraderAccount") or []
         ]

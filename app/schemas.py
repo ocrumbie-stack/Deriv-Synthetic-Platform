@@ -20,7 +20,7 @@ class ForexPairUpdate(BaseModel):
 class ForexBotCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     symbols: str | None = Field(default=None, max_length=400)
-    # 0.01 is a micro lot (1,000 units), OANDA's usual smallest step here.
+    # 0.01 is a micro lot (1,000 units), the usual smallest step on cTrader.
     lots: float = Field(default=0.01, ge=0.01, le=100)
     stop_loss_pips: float | None = Field(default=None, gt=0)
     take_profit_pips: float | None = Field(default=None, gt=0)

@@ -9,7 +9,9 @@ from sqlalchemy.orm import sessionmaker
 from app import ctrader
 from app.config import settings
 from app.ctrader import CTraderClient, CTraderError, close_out, lots_to_volume, match_symbol, money, position_out, relative_distance
-from app.ctrader_routes import pick_default_accounts
+from fastapi import HTTPException
+
+from app.ctrader_routes import AccountPick, move_forex_login_off_synthetic, pick_accounts, pick_default_accounts, status_out
 from app.database import Base
 from app.models import CTraderConnection, RiskSettings, SignalBot, Strategy
 from app.schemas import SignalBotCreate, WebhookSignal
@@ -238,6 +240,62 @@ class AccountPickTests(unittest.TestCase):
         ]
         pick_default_accounts(row, accounts)
         self.assertEqual((row.demo_account_id, row.live_account_id), (None, 1))
+
+
+class MarketTests(unittest.TestCase):
+    ACCOUNTS = [
+        {"account_id": 1, "live": True, "login": 1228815, "broker": "Deriv"},
+        {"account_id": 2, "live": False, "login": 555, "broker": "", "broker_name": "deriv"},
+        {"account_id": 3, "live": False, "login": 10151676, "broker": "Fusion Markets"},
+    ]
+
+    def setUp(self):
+        engine = create_engine("sqlite://")
+        Base.metadata.create_all(engine)
+        self.db = sessionmaker(bind=engine)()
+
+    def tearDown(self):
+        self.db.close()
+
+    def test_synthetic_gets_deriv_and_forex_gets_the_rest(self):
+        ids = lambda market: [a["account_id"] for a in ctrader.accounts_for_market(market, self.ACCOUNTS)]
+        self.assertEqual(ids("synthetic"), [1, 2])
+        self.assertEqual(ids("forex"), [3])
+
+    def test_status_only_lists_the_markets_accounts(self):
+        row = CTraderConnection(id=1, access_token="t", accounts=json.dumps(self.ACCOUNTS), demo_account_id=2)
+        out = status_out(row, "synthetic")
+        self.assertEqual([a["account_id"] for a in out["accounts"]], [1, 2])
+        self.assertEqual(out["other_accounts"], 1)
+
+    def test_picking_another_markets_account_is_refused(self):
+        self.db.add(CTraderConnection(id=1, access_token="t", accounts=json.dumps(self.ACCOUNTS)))
+        self.db.commit()
+        with self.assertRaises(HTTPException):
+            pick_accounts(AccountPick(demo_account_id=3), "synthetic", self.db)
+        self.assertEqual(pick_accounts(AccountPick(demo_account_id=2), "synthetic", self.db)["demo_account_id"], 2)
+
+    def test_a_non_deriv_login_moves_to_forex_once(self):
+        fusion = [self.ACCOUNTS[2]]
+        self.db.add(CTraderConnection(id=1, access_token="t", refresh_token="r", accounts=json.dumps(fusion), demo_account_id=3))
+        self.db.commit()
+        move_forex_login_off_synthetic(self.db)
+        self.db.commit()
+        synthetic, forex_row = self.db.get(CTraderConnection, 1), self.db.get(CTraderConnection, 2)
+        self.assertIsNone(synthetic.access_token)
+        self.assertIsNone(synthetic.demo_account_id)
+        self.assertEqual((forex_row.access_token, forex_row.refresh_token, forex_row.demo_account_id), ("t", "r", 3))
+
+    def test_a_deriv_login_stays_on_synthetic(self):
+        self.db.add(CTraderConnection(id=1, access_token="t", accounts=json.dumps(self.ACCOUNTS)))
+        self.db.commit()
+        move_forex_login_off_synthetic(self.db)
+        self.assertIsNone(self.db.get(CTraderConnection, 2))
+        self.assertEqual(self.db.get(CTraderConnection, 1).access_token, "t")
+
+    def test_unknown_market(self):
+        with self.assertRaises(CTraderError):
+            CTraderClient(account_id=1, live=False, market="stocks")
 
 
 class BotAccountTests(unittest.TestCase):

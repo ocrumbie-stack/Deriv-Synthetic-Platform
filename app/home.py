@@ -99,9 +99,17 @@ async def _crypto(db: Session, mode: str) -> dict:
     return market
 
 
-def _forex() -> dict:
-    # No forex broker is wired up yet.
-    return _market("forex", "Forex", None)
+def _forex(db: Session, mode: str) -> dict:
+    # Connected once the Forex cTrader login has an account picked for this
+    # mode. Equity waits on forex positions (unrealized P/L) being read.
+    from app import ctrader
+    from app.models import CTraderConnection
+
+    market = _market("forex", "Forex", "USD")
+    row = db.get(CTraderConnection, ctrader.MARKETS["forex"])
+    picked = (row.live_account_id if mode == "live" else row.demo_account_id) if row else None
+    market["connected"] = bool(row and row.access_token and picked)
+    return market
 
 
 def _risk(db: Session) -> dict:
@@ -162,7 +170,7 @@ async def summary(db: Session, synthetic_balance: Callable[[], Awaitable[dict]])
     synthetic, crypto_market = await asyncio.gather(_synthetic(db, mode, synthetic_balance), _crypto(db, mode))
     return {
         "mode": mode,
-        "markets": [synthetic, _forex(), crypto_market],
+        "markets": [synthetic, _forex(db, mode), crypto_market],
         "risk": risk,
         "activity": activity,
     }

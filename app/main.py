@@ -143,6 +143,10 @@ with SessionLocal() as startup_db:
     _backfill_deriv_close_signals(startup_db)
     startup_db.flush()
     _backfill_trade_close_reasons(startup_db)
+    # A non-Deriv cTrader login saved before Forex had its own moves there.
+    ctrader_routes.move_forex_login_off_synthetic(startup_db)
+    # Forex pairs were stored by OANDA name (EUR_USD) before cTrader.
+    forex.rename_oanda_pairs(startup_db)
     # Apply any dashboard-toggled execution mode saved from a previous run,
     # since settings.execution_mode otherwise only reflects .env on boot.
     get_risk_settings(startup_db)

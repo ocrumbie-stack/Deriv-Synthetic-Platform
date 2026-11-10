@@ -130,7 +130,7 @@
           <div class="nav-section" data-market="forex">
             <div class="nav-section-head">
               <span class="nav-section-label">Forex</span>
-              <span class="nav-section-sub">Not connected</span>
+              <span class="nav-section-sub">Currency pairs</span>
             </div>
             <button class="nav-item" data-page="forex-overview">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="5" height="5" rx="1" fill="currentColor"/><rect x="8" y="1" width="5" height="5" rx="1" fill="currentColor"/><rect x="1" y="8" width="5" height="5" rx="1" fill="currentColor"/><rect x="8" y="8" width="5" height="5" rx="1" fill="currentColor"/></svg>
@@ -720,19 +720,19 @@
                 </div>
                 <div id="ctraderActions" style="display:flex;gap:8px;align-items:center"></div>
               </div>
-              <div id="ctraderAccounts" style="display:none;margin-top:14px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">
+              <div id="ctraderAccounts" class="ctrader-picks" style="display:none">
                 <div>
                   <label class="bot-field-label">Demo account</label>
-                  <select id="ctraderDemoAccount" class="inline-input"></select>
+                  <select id="ctraderDemoAccount" class="inline-input ctrader-select"></select>
                 </div>
                 <div>
                   <label class="bot-field-label">Live account</label>
-                  <select id="ctraderLiveAccount" class="inline-input"></select>
+                  <select id="ctraderLiveAccount" class="inline-input ctrader-select"></select>
                 </div>
               </div>
               <div id="ctraderMessage" style="display:none;margin-top:10px;font-size:12px"></div>
             </div>
-            <p class="subtle settings-hint">Log in once with your cTrader ID, then pick which linked account trades in demo mode and which in live. CFD bots follow the demo/live switch, like everything else.</p>
+            <p class="subtle settings-hint">Log in with the cTrader ID that holds your Deriv cTrader account, then pick which Deriv account trades in demo mode and which in live. Only Deriv accounts are offered here; other brokers' accounts go on the Forex page. CFD bots follow the demo/live switch, like everything else.</p>
           </div>
         </div>
 
@@ -742,7 +742,7 @@
           <div class="page-header">
             <div>
               <h1 class="page-title">Forex</h1>
-              <p class="subtle">Currency pairs through OANDA</p>
+              <p class="subtle">Currency pairs through cTrader</p>
             </div>
             <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
               <span class="header-badge" id="forexClock">--:--</span>
@@ -782,25 +782,36 @@
               </table>
             </div>
             <div class="risk-grid">
-              <div class="risk-panel">
-                <div>
-                  <p class="panel-label">Connections</p>
-                  <p class="panel-title">OANDA Accounts</p>
+              <div class="risk-panel" id="fxCtraderPanel">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                  <div>
+                    <p class="panel-label">Connection</p>
+                    <p class="panel-title" style="margin-bottom:2px">cTrader account</p>
+                    <p id="fxCtraderStatus" style="font-size:12px;color:var(--muted)">Loading…</p>
+                  </div>
+                  <div id="fxCtraderActions" style="display:flex;gap:8px;align-items:center"></div>
                 </div>
-                <div class="settings-rows">
-                  <div class="settings-row"><div>OANDA practice<span class="sub">Virtual money</span></div><span class="badge warn">Not connected</span></div>
-                  <div class="settings-row"><div>OANDA live<span class="sub">Real money</span></div><span class="badge warn">Not connected</span></div>
+                <div id="fxCtraderAccounts" class="ctrader-picks" style="display:none">
+                  <div>
+                    <label class="bot-field-label">Demo account</label>
+                    <select id="fxCtraderDemoAccount" class="inline-input ctrader-select"></select>
+                  </div>
+                  <div>
+                    <label class="bot-field-label">Live account</label>
+                    <select id="fxCtraderLiveAccount" class="inline-input ctrader-select"></select>
+                  </div>
                 </div>
-                <p class="subtle settings-hint">This platform can't place OANDA orders yet, so there are no forex prices, positions or history to show. Bots can be set up now and will trade once it's connected.</p>
+                <div id="fxCtraderMessage" style="display:none;margin-top:10px;font-size:12px"></div>
+                <p class="subtle settings-hint">Log in with your forex broker's cTrader ID (e.g. Fusion Markets), then pick which account trades in demo mode and which in live. Deriv accounts belong under Synthetic → CFDs and aren't offered here.</p>
               </div>
               <div class="risk-panel">
                 <div>
-                  <p class="panel-label">Until then</p>
+                  <p class="panel-label">For now</p>
                   <p class="panel-title">Where Things Apply</p>
                 </div>
-                <p class="subtle settings-hint">Trading windows will block OANDA entries once it's connected. Forex tickers sent to the current webhook URL, such as EURUSD, still trade on Deriv at any hour and appear under Synthetic.</p>
+                <p class="subtle settings-hint">Forex orders on cTrader aren't switched on yet, so there are no positions or history to show. Bots can be set up now and will trade once it is.</p>
+                <p class="subtle settings-hint">Trading windows will block forex entries once orders are on. Forex tickers sent to the current webhook URL, such as EURUSD, still trade on Deriv at any hour and appear under Synthetic.</p>
                 <p class="subtle settings-hint">Windows pause entries for 5 minutes either side of the 5pm New York rollover. Market holidays aren't included.</p>
-                <p class="subtle settings-hint">The demo/live switch and Risk Controls only cover Deriv for now. Emergency Stop will block forex entries too once OANDA is connected.</p>
               </div>
             </div>
           </div>
@@ -810,10 +821,10 @@
           <div class="page-header">
             <div>
               <h1 class="page-title">Signal Bots</h1>
-              <p class="subtle">One bot per TradingView strategy trading forex on OANDA</p>
+              <p class="subtle">One bot per TradingView strategy trading forex on cTrader</p>
             </div>
             <div style="display:flex;align-items:center;gap:12px">
-              <span class="badge warn">OANDA not connected</span>
+              <span class="badge warn">Orders not on yet</span>
               <button id="forexBotNew" class="copy-btn">+ New Bot</button>
             </div>
           </div>
@@ -844,12 +855,12 @@
               <div class="risk-panel">
                 <div><p class="panel-label">Sizing</p><p class="panel-title">Lots and Pips</p></div>
                 <p class="subtle settings-hint">1 lot = 100,000 units of the first currency in the pair; 0.1 is a mini lot and 0.01 a micro lot. A pip is 0.0001, or 0.01 on yen pairs.</p>
-                <p class="subtle settings-hint">Leverage isn't set per bot: OANDA sets the margin needed for each pair on your account.</p>
+                <p class="subtle settings-hint">Leverage isn't set per bot: your broker sets the margin needed for each pair on your cTrader account.</p>
               </div>
               <div class="risk-panel">
                 <div><p class="panel-label">Once connected</p><p class="panel-title">How Bots Will Trade</p></div>
                 <p class="subtle settings-hint">Alerts will go to their own forex webhook. Entries are refused outside each pair's trading window on the Overview page; exits always go through.</p>
-                <p class="subtle settings-hint">Stops are placed on OANDA with the order. Until OANDA is connected, bots are saved but nothing trades.</p>
+                <p class="subtle settings-hint">Stops are placed on cTrader with the order. Until forex orders are switched on, bots are saved but nothing trades.</p>
               </div>
             </div>
           </div>
@@ -857,8 +868,8 @@
 
         <div class="page" id="page-forex-positions">
           <div class="page-header">
-            <div><h1 class="page-title">Open Positions</h1><p class="subtle">Forex positions on OANDA</p></div>
-            <span class="badge warn">OANDA not connected</span>
+            <div><h1 class="page-title">Open Positions</h1><p class="subtle">Forex positions on cTrader</p></div>
+            <span class="badge warn">Orders not on yet</span>
           </div>
           <div class="page-body">
             <div class="table-wrap">
@@ -866,7 +877,7 @@
                 <thead><tr>
                   <th>Pair</th><th>Side</th><th>Size</th><th>Entry</th><th>Current</th><th>Pips</th><th>Stop loss</th><th>Take profit</th><th>Margin used</th><th>Swap</th><th>Unrealized P/L</th><th>Opened</th>
                 </tr></thead>
-                <tbody><tr><td colspan="12" class="empty">No forex positions. Open OANDA trades will show here once it's connected.</td></tr></tbody>
+                <tbody><tr><td colspan="12" class="empty">No forex positions. Open cTrader positions will show here once forex orders are switched on.</td></tr></tbody>
               </table>
             </div>
             <p class="subtle settings-hint">Forex tickers sent to the Synthetic webhook, such as EURUSD, still trade on Deriv and show under Synthetic.</p>
@@ -875,8 +886,8 @@
 
         <div class="page" id="page-forex-history">
           <div class="page-header">
-            <div><h1 class="page-title">Trade History</h1><p class="subtle">Closed forex trades on OANDA</p></div>
-            <span class="badge warn">OANDA not connected</span>
+            <div><h1 class="page-title">Trade History</h1><p class="subtle">Closed forex trades on cTrader</p></div>
+            <span class="badge warn">Orders not on yet</span>
           </div>
           <div class="page-body">
             <div class="table-wrap">
@@ -884,7 +895,7 @@
                 <thead><tr>
                   <th>Strategy</th><th>Pair</th><th>Side</th><th>Size</th><th>Entry</th><th>Exit</th><th>Pips</th><th>Swap</th><th>Net P/L</th><th>Reason</th><th>Opened</th><th>Closed</th><th>Duration</th>
                 </tr></thead>
-                <tbody><tr><td colspan="13" class="empty">No forex trades yet. Closed OANDA trades will be listed here once it's connected.</td></tr></tbody>
+                <tbody><tr><td colspan="13" class="empty">No forex trades yet. Closed cTrader trades will be listed here once forex orders are switched on.</td></tr></tbody>
               </table>
             </div>
           </div>

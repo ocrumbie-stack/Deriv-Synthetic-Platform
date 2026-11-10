@@ -1144,6 +1144,8 @@ tr.clickable:hover td, tr.selected td { background: var(--panel-2, #16161e); }
 .mini-switch.on { background: var(--green-dim); border-color: rgba(0, 230, 118, 0.35); color: var(--green); }
 
 .inline-input { min-height: 30px; width: 110px; }
+.ctrader-picks { margin-top: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.inline-input.ctrader-select { width: 100%; max-width: 340px; }
 
 /* ── Webhook info panel ─────────────────────────────────────── */
 

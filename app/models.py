@@ -81,15 +81,15 @@ class ForexPair(Base):
 
 
 class ForexBot(Base):
-    """A strategy allowed to trade forex on OANDA. Sized in lots (1 lot =
-    100,000 units of the base currency); stops are in pips. Leverage isn't
-    per bot - OANDA sets the margin rate for each pair on the account."""
+    """A strategy allowed to trade forex on the Forex page's cTrader account.
+    Sized in lots (1 lot = 100,000 units of the base currency); stops are in
+    pips. Leverage isn't per bot - the broker sets the margin for each pair."""
 
     __tablename__ = "forex_bots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
-    # Comma-separated keys of app.forex.DEFAULT_PAIRS (EUR_USD,...); NULL allows all.
+    # Comma-separated keys of app.forex.DEFAULT_PAIRS (EURUSD,...); NULL allows all.
     symbols: Mapped[str | None] = mapped_column(String(400), nullable=True)
     lots: Mapped[float] = mapped_column(Float, default=0.01)
     stop_loss_pips: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -142,9 +142,10 @@ class CryptoSignal(Base):
 
 
 class CTraderConnection(Base):
-    """The cTrader ID login (a single row, id 1): its OAuth tokens, the
-    trading accounts linked to it, and which one trades in demo and in live
-    mode. The tokens grant trading on those accounts - never shown or sent
+    """One market's cTrader ID login (id 1 = Synthetic → CFDs, Deriv
+    accounts only; id 2 = Forex, other brokers - see ctrader.MARKETS): its
+    OAuth tokens, the trading accounts linked to it, and which one trades in
+    demo and in live mode. The tokens grant trading on those accounts - never shown or sent
     back to the dashboard."""
 
     __tablename__ = "ctrader_connection"

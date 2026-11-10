@@ -2,7 +2,7 @@
 
 Every time here is a timezone-aware datetime, and each session is defined in
 its own city's local hours so daylight saving moves it the way the real market
-moves. entry_block_reason is the rule the OANDA order path will call - nothing
+moves. entry_block_reason is the rule the cTrader forex order path will call - nothing
 here touches Deriv, so forex tickers sent to Deriv are not affected.
 """
 
@@ -39,18 +39,18 @@ SESSIONS = {
     "new_york": FxSession("New York", "America/New_York", 8, 17),
 }
 
-# OANDA instrument name -> the sessions that pair trades in by default.
+# Pair (cTrader's name, e.g. EURUSD) -> the sessions it trades in by default.
 DEFAULT_PAIRS = {
-    "EUR_USD": ("london", "new_york"),
-    "GBP_USD": ("london", "new_york"),
-    "EUR_GBP": ("london", "new_york"),
-    "USD_CHF": ("london", "new_york"),
-    "USD_JPY": ("tokyo", "london", "new_york"),
-    "EUR_JPY": ("tokyo", "london"),
-    "GBP_JPY": ("tokyo", "london"),
-    "AUD_USD": ("sydney", "tokyo"),
-    "NZD_USD": ("sydney", "tokyo"),
-    "USD_CAD": ("new_york",),
+    "EURUSD": ("london", "new_york"),
+    "GBPUSD": ("london", "new_york"),
+    "EURGBP": ("london", "new_york"),
+    "USDCHF": ("london", "new_york"),
+    "USDJPY": ("tokyo", "london", "new_york"),
+    "EURJPY": ("tokyo", "london"),
+    "GBPJPY": ("tokyo", "london"),
+    "AUDUSD": ("sydney", "tokyo"),
+    "NZDUSD": ("sydney", "tokyo"),
+    "USDCAD": ("new_york",),
 }
 
 
@@ -59,14 +59,13 @@ LOT_UNITS = 100_000
 
 def pip_size(symbol: str) -> float:
     """A pip is the 4th decimal place, or the 2nd for yen pairs."""
-    return 0.01 if symbol.endswith("_JPY") else 0.0001
+    return 0.01 if symbol.endswith("JPY") else 0.0001
 
 
 def pair_symbol(value: str) -> str:
-    """EURUSD, EUR/USD, eur_usd or OANDA:EURUSD as the OANDA name EUR_USD."""
-    letters = "".join(ch for ch in value.split(":")[-1].upper() if ch.isalpha())
-    symbol = f"{letters[:3]}_{letters[3:]}"
-    if len(letters) != 6 or symbol not in DEFAULT_PAIRS:
+    """EURUSD, EUR/USD, eur_usd or FX:EURUSD as the pair name EURUSD."""
+    symbol = "".join(ch for ch in value.split(":")[-1].upper() if ch.isalpha())
+    if len(symbol) != 6 or symbol not in DEFAULT_PAIRS:
         raise ValueError(f"{value.strip()} isn't one of the forex pairs on the Overview page.")
     return symbol
 
@@ -199,7 +198,7 @@ def window_label(keys) -> str:
 
 
 def pair_label(symbol: str) -> str:
-    return symbol.replace("_", "/")
+    return f"{symbol[:3]}/{symbol[3:]}"
 
 
 def pair_status(symbol: str, keys, now: datetime) -> dict:
@@ -308,3 +307,12 @@ def overview(db: Session, zone_name: str, now: datetime | None = None) -> dict:
         "overlaps": _periods_out(overlaps),
         "pairs": pairs,
     }
+
+
+def rename_oanda_pairs(db: Session) -> None:
+    """One-off: pairs used to be stored by OANDA name (EUR_USD); they are now
+    the bare name cTrader brokers use (EURUSD)."""
+    for row in db.scalars(select(ForexPair).where(ForexPair.symbol.contains("_"))):
+        row.symbol = row.symbol.replace("_", "")
+    for bot in db.scalars(select(ForexBot).where(ForexBot.symbols.contains("_"))):
+        bot.symbols = bot.symbols.replace("_", "")
