@@ -24,7 +24,8 @@ class ForexBotCreate(BaseModel):
     lots: float = Field(default=0.01, ge=0.01, le=100)
     stop_loss_pips: float | None = Field(default=None, gt=0)
     take_profit_pips: float | None = Field(default=None, gt=0)
-    trailing_stop_pips: float | None = Field(default=None, ge=5)
+    # cTrader trails the stop loss at its own distance, so it needs one.
+    trailing_stop: bool = False
 
 
 class ForexBotUpdate(BaseModel):
@@ -33,7 +34,7 @@ class ForexBotUpdate(BaseModel):
     lots: float | None = Field(default=None, ge=0.01, le=100)
     stop_loss_pips: float | None = Field(default=None, gt=0)
     take_profit_pips: float | None = Field(default=None, gt=0)
-    trailing_stop_pips: float | None = Field(default=None, ge=5)
+    trailing_stop: bool | None = None
     enabled: bool | None = None
 
 

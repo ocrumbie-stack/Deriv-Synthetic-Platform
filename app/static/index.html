@@ -815,12 +815,35 @@
               </div>
               <div class="risk-panel">
                 <div>
-                  <p class="panel-label">For now</p>
+                  <p class="panel-label">Orders</p>
                   <p class="panel-title">Where Things Apply</p>
                 </div>
-                <p class="subtle settings-hint">Forex orders on cTrader aren't switched on yet, so there are no positions or history to show. Bots can be set up now and will trade once it is.</p>
-                <p class="subtle settings-hint">Trading windows will block forex entries once orders are on. Forex tickers sent to the current webhook URL, such as EURUSD, still trade on Deriv at any hour and appear under Synthetic.</p>
+                <p class="subtle settings-hint">Alerts sent to the forex webhook below trade on the cTrader account picked for the current mode. Entries are refused outside each pair's trading window; exits always go through.</p>
+                <p class="subtle settings-hint">Forex tickers sent to the Synthetic webhook URL, such as EURUSD, still trade on Deriv at any hour and appear under Synthetic.</p>
                 <p class="subtle settings-hint">Windows pause entries for 5 minutes either side of the 5pm New York rollover. Market holidays aren't included.</p>
+              </div>
+            </div>
+            <div class="webhook-panel crypto-webhooks">
+              <div class="webhook-section" style="border-right:0;border-bottom:1px solid var(--border)">
+                <span class="webhook-label">FOREX WEBHOOK URL</span>
+                <div class="url-row">
+                  <code id="forexWebhookUrl" class="url-display">/webhook/forex</code>
+                  <button type="button" class="copy-btn" data-forex-copy="forexWebhookUrl">Copy</button>
+                </div>
+              </div>
+              <div class="webhook-section" style="border-right:0;border-bottom:1px solid var(--border)">
+                <span class="webhook-label">STRATEGY ALERT PAYLOAD <span class="dim">(entries and exits from a TradingView strategy)</span></span>
+                <div class="url-row">
+                  <code id="forexStrategyPayload" class="url-display dim">{"secret":"YOUR_SECRET","strategy":"{{strategy.title}}","symbol":"{{ticker}}","action":"{{strategy.order.action}}","market_position":"{{strategy.market_position}}","price":{{close}}}</code>
+                  <button type="button" class="copy-btn" data-forex-copy="forexStrategyPayload">Copy</button>
+                </div>
+              </div>
+              <div class="webhook-section" style="border-right:0">
+                <span class="webhook-label">TEST ENTRY PAYLOAD <span class="dim">(set your bot name and long or short)</span></span>
+                <div class="url-row">
+                  <code id="forexPricePayload" class="url-display dim">{"secret":"YOUR_SECRET","strategy":"YOUR_BOT_NAME","symbol":"EURUSD","action":"entry","direction":"long"}</code>
+                  <button type="button" class="copy-btn" data-forex-copy="forexPricePayload">Copy</button>
+                </div>
               </div>
             </div>
           </div>
@@ -833,7 +856,6 @@
               <p class="subtle">One bot per TradingView strategy trading forex on cTrader</p>
             </div>
             <div style="display:flex;align-items:center;gap:12px">
-              <span class="badge warn">Orders not on yet</span>
               <button id="forexBotNew" class="copy-btn">+ New Bot</button>
             </div>
           </div>
@@ -845,7 +867,7 @@
                 <label><span class="bot-field-label">Size (lots)</span><input name="lots" type="number" min="0.01" max="100" step="0.01" value="0.01" required /></label>
                 <label><span class="bot-field-label">Stop loss (pips)</span><input name="stop_loss_pips" type="number" min="0.1" step="0.1" placeholder="optional" /></label>
                 <label><span class="bot-field-label">Take profit (pips)</span><input name="take_profit_pips" type="number" min="0.1" step="0.1" placeholder="optional" /></label>
-                <label><span class="bot-field-label">Trailing stop (pips)</span><input name="trailing_stop_pips" type="number" min="5" step="0.1" placeholder="optional, 5+" /></label>
+                <label class="cfd-bot-check"><input name="trailing_stop" type="checkbox" /> <span>Trailing stop</span></label>
                 <label class="forex-pairs-field"><span class="bot-field-label">Allowed pairs</span><input name="symbols" type="text" placeholder="All pairs — or EURUSD, GBPUSD" /></label>
                 <button type="submit" class="dialog-btn primary">Create</button>
               </div>
@@ -867,9 +889,9 @@
                 <p class="subtle settings-hint">Leverage isn't set per bot: your broker sets the margin needed for each pair on your cTrader account.</p>
               </div>
               <div class="risk-panel">
-                <div><p class="panel-label">Once connected</p><p class="panel-title">How Bots Will Trade</p></div>
-                <p class="subtle settings-hint">Alerts will go to their own forex webhook. Entries are refused outside each pair's trading window on the Overview page; exits always go through.</p>
-                <p class="subtle settings-hint">Stops are placed on cTrader with the order. Until forex orders are switched on, bots are saved but nothing trades.</p>
+                <div><p class="panel-label">Orders</p><p class="panel-title">How Bots Trade</p></div>
+                <p class="subtle settings-hint">Alerts go to the forex webhook on the Overview page. Entries are refused outside each pair's trading window; exits always go through. An opposite entry closes the open position first.</p>
+                <p class="subtle settings-hint">Stops are placed on cTrader with the order. A trailing stop is cTrader's own: it follows the price at the stop loss distance, so it needs a stop loss.</p>
               </div>
             </div>
           </div>
@@ -877,26 +899,27 @@
 
         <div class="page" id="page-forex-positions">
           <div class="page-header">
-            <div><h1 class="page-title">Open Positions</h1><p class="subtle">Forex positions on cTrader</p></div>
-            <span class="badge warn">Orders not on yet</span>
+            <div><h1 class="page-title">Open Positions</h1><p class="subtle" id="forexPositionsSub">Forex positions on cTrader</p></div>
+            <span class="header-badge" id="forexPositionCount">0 open</span>
           </div>
           <div class="page-body">
             <div class="table-wrap">
               <table>
                 <thead><tr>
-                  <th>Pair</th><th>Side</th><th>Size</th><th>Entry</th><th>Current</th><th>Pips</th><th>Stop loss</th><th>Take profit</th><th>Margin used</th><th>Swap</th><th>Unrealized P/L</th><th>Opened</th>
+                  <th>Strategy</th><th>Pair</th><th>Side</th><th>Size</th><th>Entry</th><th>Stop loss</th><th>Take profit</th><th>Margin used</th><th>Swap</th><th>Unrealized P/L</th><th>Opened</th><th></th>
                 </tr></thead>
-                <tbody><tr><td colspan="12" class="empty">No forex positions. Open cTrader positions will show here once forex orders are switched on.</td></tr></tbody>
+                <tbody id="forexPositions"><tr><td colspan="12" class="empty">Loading…</td></tr></tbody>
               </table>
             </div>
-            <p class="subtle settings-hint">Forex tickers sent to the Synthetic webhook, such as EURUSD, still trade on Deriv and show under Synthetic.</p>
+            <p class="settings-error" id="forexPositionsError" role="alert"></p>
+            <p class="subtle settings-hint">Every position on the account is listed, including ones opened in the cTrader app. Forex tickers sent to the Synthetic webhook, such as EURUSD, still trade on Deriv and show under Synthetic.</p>
           </div>
         </div>
 
         <div class="page" id="page-forex-history">
           <div class="page-header">
-            <div><h1 class="page-title">Trade History</h1><p class="subtle">Closed forex trades on cTrader</p></div>
-            <span class="badge warn">Orders not on yet</span>
+            <div><h1 class="page-title">Trade History</h1><p class="subtle" id="forexHistorySub">Closed forex trades on cTrader</p></div>
+            <span class="header-badge" id="forexHistoryCount">0 trades</span>
           </div>
           <div class="page-body">
             <div class="table-wrap">
@@ -904,9 +927,20 @@
                 <thead><tr>
                   <th>Strategy</th><th>Pair</th><th>Side</th><th>Size</th><th>Entry</th><th>Exit</th><th>Pips</th><th>Swap</th><th>Net P/L</th><th>Reason</th><th>Opened</th><th>Closed</th><th>Duration</th>
                 </tr></thead>
-                <tbody><tr><td colspan="13" class="empty">No forex trades yet. Closed cTrader trades will be listed here once forex orders are switched on.</td></tr></tbody>
+                <tbody id="forexHistory"><tr><td colspan="13" class="empty">Loading…</td></tr></tbody>
               </table>
             </div>
+            <p class="settings-error" id="forexHistoryError" role="alert"></p>
+            <div class="fx-journal-head"><div><p class="panel-label">Webhook</p><p class="panel-title">Signal Journal</p></div><span class="header-badge" id="forexSignalCount">0 signals</span></div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr>
+                  <th>Time</th><th>Strategy</th><th>Pair</th><th>Action</th><th>Size</th><th>Fill</th><th>P/L</th><th>Status</th><th>Detail</th>
+                </tr></thead>
+                <tbody id="forexSignals"></tbody>
+              </table>
+            </div>
+            <p class="subtle settings-hint">Every alert sent to /webhook/forex in the current mode, and what the platform did. History covers the last 7 days of closes on cTrader.</p>
           </div>
         </div>
 

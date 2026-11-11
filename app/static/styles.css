@@ -899,6 +899,9 @@ canvas { display: block; width: 100%; }
 #cryptoBotForm[hidden], #forexBotForm[hidden] { display: none; }
 .forex-bot-fields { align-items: end; display: grid; gap: 12px; grid-template-columns: 1.4fr repeat(4, 1fr) 1.4fr auto; }
 .forex-bot-fields input { width: 100%; }
+.forex-bot-fields .cfd-bot-check input { width: auto; }
+.fx-journal-head { align-items: end; display: flex; gap: 12px; justify-content: space-between; margin: 24px 0 10px; }
+#page-forex-overview .webhook-panel { margin-top: 16px; }
 .sub-line { color: var(--muted); display: block; font-size: 11px; }
 .row-actions { text-align: right; white-space: nowrap; }
 .row-actions .mini-switch + .mini-switch { margin-left: 6px; }

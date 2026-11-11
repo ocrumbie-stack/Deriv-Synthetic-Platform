@@ -83,7 +83,10 @@ class ForexPair(Base):
 class ForexBot(Base):
     """A strategy allowed to trade forex on the Forex page's cTrader account.
     Sized in lots (1 lot = 100,000 units of the base currency); stops are in
-    pips. Leverage isn't per bot - the broker sets the margin for each pair."""
+    pips. Leverage isn't per bot - the broker sets the margin for each pair.
+    trailing_stop has cTrader trail the stop loss at its own distance;
+    trailing_stop_pips is no longer used (cTrader can't trail at a separate
+    distance) and is moved onto the stop loss at startup."""
 
     __tablename__ = "forex_bots"
 
@@ -95,8 +98,41 @@ class ForexBot(Base):
     stop_loss_pips: Mapped[float | None] = mapped_column(Float, nullable=True)
     take_profit_pips: Mapped[float | None] = mapped_column(Float, nullable=True)
     trailing_stop_pips: Mapped[float | None] = mapped_column(Float, nullable=True)
+    trailing_stop: Mapped[bool] = mapped_column(Boolean, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ForexSignal(Base):
+    """A webhook sent to /webhook/forex and what became of it. Kept apart
+    from Signal/Trade like CryptoSignal: the cTrader account holds the
+    positions, and the Deriv reconcile, trailing and audit loops must never
+    see them. An executed entry records the position it opened, so exits and
+    history know which strategy a position belongs to."""
+
+    __tablename__ = "forex_signals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    strategy_name: Mapped[str] = mapped_column(String(120), index=True)
+    symbol: Mapped[str] = mapped_column(String(40), index=True)
+    action: Mapped[SignalAction] = mapped_column(SqlEnum(SignalAction))
+    direction: Mapped[Direction | None] = mapped_column(SqlEnum(Direction), nullable=True)
+    lots: Mapped[float | None] = mapped_column(Float, nullable=True)
+    price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stop_loss: Mapped[float | None] = mapped_column(Float, nullable=True)
+    take_profit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    signal_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    status: Mapped[ExecutionStatus] = mapped_column(SqlEnum(ExecutionStatus), default=ExecutionStatus.received)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # cTrader account and position: the one opened by an entry, or the ones
+    # (comma-separated) closed by an exit or a reversal.
+    account_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    position_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    closed_positions: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    entry_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    net_profit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    execution_mode: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
 class CryptoBot(Base):

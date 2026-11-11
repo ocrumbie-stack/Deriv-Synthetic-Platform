@@ -21,8 +21,9 @@ from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, CryptoBot, ExecutionStatus, ForexBot, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
 from app.schemas import BotPairOut, BotPairUpdate, CloseAllTarget, CryptoBotCreate, CryptoBotUpdate, ForexBotCreate, ForexBotUpdate, ForexPairUpdate, ManualExitSignal, PositionAction, PositionStopAction, PositionTpSl, PositionTpSlAction, PositionTpSlDetail, PositionTrailAction, SecretQuery, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, SignalStatusQuery, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
 from app.services import PAIR_DEFAULT_FIELDS, account_exposure, close_all_open_trades, close_all_target, get_app_settings, local_period_start, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, preview_chart_trade, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal, trade_execution_lock
-from app import auth, crypto, ctrader_routes, forex, home, notify, trade_audit
+from app import auth, crypto, ctrader_routes, forex, forex_trading, home, notify, trade_audit
 from app.blofin import BlofinError, missing_settings as blofin_missing
+from app.ctrader import CTraderError
 from app.trade_audit import trade_audit_scheduler
 from app.trailing import trailing_monitor
 
@@ -147,6 +148,8 @@ with SessionLocal() as startup_db:
     ctrader_routes.move_forex_login_off_synthetic(startup_db)
     # Forex pairs were stored by OANDA name (EUR_USD) before cTrader.
     forex.rename_oanda_pairs(startup_db)
+    # Forex bots' separate trailing pips became a trailing stop checkbox.
+    forex.move_trailing_pips_to_stop(startup_db)
     # Apply any dashboard-toggled execution mode saved from a previous run,
     # since settings.execution_mode otherwise only reflects .env on boot.
     get_risk_settings(startup_db)
@@ -298,6 +301,26 @@ async def receive_blofin_webhook(payload: WebhookSignal, background_tasks: Backg
     # Its own URL so the same alert format trades BloFin instead of Deriv,
     # without the strategy knowing which broker it's on.
     background_tasks.add_task(_process_crypto_in_background, payload)
+    return {"status": "received"}
+
+
+async def _process_forex_in_background(payload: WebhookSignal) -> None:
+    async with forex_trading.order_lock:
+        db = SessionLocal()
+        try:
+            await forex_trading.process_signal(db, payload)
+        except Exception:
+            db.rollback()
+            logger.exception("Failed to process forex webhook: %s", payload.model_dump(mode="json", exclude={"secret"}))
+        finally:
+            db.close()
+
+
+@app.post("/webhook/forex", status_code=202)
+async def receive_forex_webhook(payload: WebhookSignal, background_tasks: BackgroundTasks) -> dict:
+    # Its own URL so the same alert format trades forex on the Forex page's
+    # cTrader account, while forex tickers sent to /webhook still go to Deriv.
+    background_tasks.add_task(_process_forex_in_background, payload)
     return {"status": "received"}
 
 
@@ -875,6 +898,23 @@ def _forex_bot_fields(fields: dict, db: Session, bot_id: int | None = None) -> d
         if other and other.id != bot_id:
             raise HTTPException(status_code=409, detail="A forex bot with this strategy name already exists.")
     return fields
+
+
+@app.get("/api/forex/trading")
+async def forex_trading_data(db: Session = Depends(get_db)) -> dict:
+    get_risk_settings(db)  # applies the dashboard's demo/live switch
+    return await forex_trading.trading(db)
+
+
+@app.post("/api/forex/positions/{position_id}/close")
+async def close_forex_position(position_id: int, db: Session = Depends(get_db)) -> dict:
+    get_risk_settings(db)
+    async with forex_trading.order_lock:
+        try:
+            signal = await forex_trading.close_position(db, position_id)
+        except CTraderError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+    return {"status": "closed", "net_profit": signal.net_profit}
 
 
 @app.get("/api/forex/bots")

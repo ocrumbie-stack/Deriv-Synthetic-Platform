@@ -377,6 +377,7 @@ def position_out(position: dict) -> dict:
         "commission": money(position.get("commission"), digits),
         "used_margin": money(position.get("usedMargin"), digits),
         "label": trade.get("label"),
+        "comment": trade.get("comment"),
         "opened_at": datetime.utcfromtimestamp(int(opened) / 1000) if opened else None,
     }
 
@@ -389,8 +390,14 @@ def close_out(deal: dict) -> dict:
     gross = money(detail.get("grossProfit"), digits)
     swap = money(detail.get("swap"), digits)
     commission = money(detail.get("commission"), digits)
+    executed = deal.get("executionTimestamp") or deal.get("createTimestamp")
     return {
         "position_id": int(deal.get("positionId") or 0),
+        "symbol_id": int(deal.get("symbolId") or 0),
+        # A closing deal trades against the position, so a sell closes a long.
+        "direction": "short" if int(deal.get("tradeSide") or SIDE_SELL) == SIDE_BUY else "long",
+        "volume": int(detail.get("closedVolume") or deal.get("filledVolume") or deal.get("volume") or 0),
+        "closed_at": datetime.utcfromtimestamp(int(executed) / 1000) if executed else None,
         "exit_price": float(deal.get("executionPrice") or 0) or None,
         "entry_price": float(detail.get("entryPrice") or 0) or None,
         "gross_profit": gross,
@@ -915,7 +922,9 @@ class CTraderClient:
         }
 
     async def closing_deals(self, since: datetime, until: datetime | None = None) -> list[dict]:
-        """Closing deals (with P/L) between two UTC times."""
+        """Closing deals (with P/L) between two UTC times - cTrader allows at
+        most a week per request. opened_at is set when the position's
+        opening deal falls in the same range."""
         def ms(value: datetime) -> int:
             return int((value - datetime(1970, 1, 1)).total_seconds() * 1000)
 
@@ -924,4 +933,19 @@ class CTraderClient:
             {"fromTimestamp": ms(since), "toTimestamp": ms(until or datetime.utcnow())},
             DEAL_LIST_RES,
         )
-        return [close_out(d) for d in payload.get("deal") or [] if d.get("closePositionDetail")]
+        deals = payload.get("deal") or []
+        # When each position opened, where its opening deal is in the range.
+        opened: dict[int, datetime] = {}
+        for deal in deals:
+            stamp = deal.get("executionTimestamp") or deal.get("createTimestamp")
+            if not deal.get("closePositionDetail") and stamp and deal.get("positionId"):
+                at = datetime.utcfromtimestamp(int(stamp) / 1000)
+                position = int(deal["positionId"])
+                opened[position] = min(opened.get(position, at), at)
+        out = []
+        for deal in deals:
+            if deal.get("closePositionDetail"):
+                closed = close_out(deal)
+                closed["opened_at"] = opened.get(closed["position_id"])
+                out.append(closed)
+        return out

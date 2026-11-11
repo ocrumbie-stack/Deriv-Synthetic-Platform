@@ -2,8 +2,8 @@
 
 Every time here is a timezone-aware datetime, and each session is defined in
 its own city's local hours so daylight saving moves it the way the real market
-moves. entry_block_reason is the rule the cTrader forex order path will call - nothing
-here touches Deriv, so forex tickers sent to Deriv are not affected.
+moves. entry_block_reason is the rule forex_trading checks before each entry -
+nothing here touches Deriv, so forex tickers sent to Deriv are not affected.
 """
 
 from dataclasses import dataclass
@@ -89,7 +89,7 @@ def bot_out(bot: ForexBot) -> dict:
         "units": round(bot.lots * LOT_UNITS),
         "stop_loss_pips": bot.stop_loss_pips,
         "take_profit_pips": bot.take_profit_pips,
-        "trailing_stop_pips": bot.trailing_stop_pips,
+        "trailing_stop": bool(bot.trailing_stop),
         "enabled": bot.enabled,
         "created_at": bot.created_at.isoformat(),
     }
@@ -316,3 +316,13 @@ def rename_oanda_pairs(db: Session) -> None:
         row.symbol = row.symbol.replace("_", "")
     for bot in db.scalars(select(ForexBot).where(ForexBot.symbols.contains("_"))):
         bot.symbols = bot.symbols.replace("_", "")
+
+
+def move_trailing_pips_to_stop(db: Session) -> None:
+    """One-off: bots used to have a trailing stop in its own pips, but
+    cTrader can only trail the stop loss at its own distance. A bot with
+    trailing pips trails, starting from those pips when it had no stop loss."""
+    for bot in db.scalars(select(ForexBot).where(ForexBot.trailing_stop_pips.is_not(None))):
+        bot.trailing_stop = True
+        bot.stop_loss_pips = bot.stop_loss_pips or bot.trailing_stop_pips
+        bot.trailing_stop_pips = None

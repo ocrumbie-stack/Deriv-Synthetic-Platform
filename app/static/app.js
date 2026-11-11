@@ -246,6 +246,7 @@ const pageAliases = { "cfd-account": "cfd-overview" };
 const lastMarketPage = {};
 const lastSubPage = {};
 const forexView = { data: null, timer: null, refetchAt: 0, loading: false };
+const forexTradingView = { data: null, timer: null, loading: false };
 const cryptoView = { data: null, market: null, timer: null, loading: false };
 const homeView = { timer: null, loading: false };
 
@@ -290,6 +291,8 @@ function navigate(pageId, updateUrl = true) {
   if (pageId === "forex-overview") startForexView();
   else stopForexView();
   if (pageId === "forex-bots") loadForexBots();
+  if (pageId === "forex-positions" || pageId === "forex-history") startForexTrading();
+  else stopForexTrading();
   if (market === "crypto") startCryptoView();
   else stopCryptoView();
   if (pageId === "home") startHomeView();
@@ -445,6 +448,7 @@ document.querySelector("#homeMarkets").addEventListener("click", e => {
 // ─── Forex page ──────────────────────────────────────────────────────────────
 
 function startForexView() {
+  document.querySelector("#forexWebhookUrl").textContent = `${window.location.origin}/webhook/forex`;
   loadForex();
   if (!forexView.timer) forexView.timer = setInterval(tickForex, 1000);
 }
@@ -643,6 +647,145 @@ document.querySelector("#forexPairs").addEventListener("click", async event => {
     showNotice("Trading window", e.message);
   }
 });
+
+// ─── Forex positions and history ─────────────────────────────────────────────
+
+function startForexTrading() {
+  loadForexTrading();
+  if (!forexTradingView.timer) forexTradingView.timer = setInterval(loadForexTrading, 10000);
+}
+
+function stopForexTrading() {
+  clearInterval(forexTradingView.timer);
+  forexTradingView.timer = null;
+}
+
+// Amounts are in the cTrader account's own currency, so no symbol is shown.
+function fxMoney(v, signed = false) {
+  if (v == null) return '<span class="subtle">—</span>';
+  const text = Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return signed && v > 0 ? `+${text}` : text;
+}
+
+function fxPrice(v) { return v == null || v === 0 ? '<span class="subtle">—</span>' : escapeAttr(v); }
+
+function fxSide(direction) {
+  return `<span class="badge ${direction === "long" ? "ok" : "bad"}">${direction === "long" ? "BUY" : "SELL"}</span>`;
+}
+
+function fxDuration(from, to) {
+  if (!from || !to) return '<span class="subtle">—</span>';
+  const minutes = Math.max(0, Math.round((new Date(to) - new Date(from)) / 60000));
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 48 ? `${hours}h ${minutes % 60}m` : `${Math.floor(hours / 24)}d ${hours % 24}h`;
+}
+
+function fxSymbol(symbol) {
+  return /^[A-Z]{6}$/.test(symbol || "") ? fxPair(symbol) : escapeAttr(symbol || "—");
+}
+
+function fxSignalAction(s) {
+  if (s.manual) return "Close (dashboard)";
+  if (s.action === "exit") return `Exit${s.direction ? ` ${s.direction}` : ""}`;
+  return `Entry ${s.direction || ""}`;
+}
+
+async function loadForexTrading() {
+  if (forexTradingView.loading) return;
+  forexTradingView.loading = true;
+  try {
+    forexTradingView.data = await getJson("/api/forex/trading", 30000);
+    renderForexTrading(forexTradingView.data);
+  } catch {
+    document.querySelector("#forexPositionsError").textContent = "Couldn't load forex positions. Retrying…";
+  } finally {
+    forexTradingView.loading = false;
+  }
+}
+
+function renderForexTrading(data) {
+  const where = `${data.mode === "live" ? "Live" : "Demo"} on cTrader${data.account_id ? ` · account ${data.account_id}` : ""}`;
+  document.querySelector("#forexPositionsSub").textContent = where;
+  document.querySelector("#forexHistorySub").textContent = `${where} · last ${data.history_days} days`;
+  const error = data.error ? escapeAttr(data.error) : "";
+  document.querySelector("#forexPositionsError").innerHTML = error;
+  document.querySelector("#forexHistoryError").innerHTML = error;
+  const unavailable = data.connected ? "cTrader is unavailable right now" : "Pick a cTrader account on the Forex Overview";
+
+  document.querySelector("#forexPositionCount").textContent = `${data.positions.length} open`;
+  document.querySelector("#forexPositions").innerHTML = data.positions.length
+    ? data.positions.map(p => `<tr>
+      <td>${p.strategy ? escapeAttr(p.strategy) : '<span class="subtle">cTrader</span>'}</td>
+      <td><strong>${fxSymbol(p.symbol)}</strong></td>
+      <td>${fxSide(p.direction)}</td>
+      <td>${p.lots == null ? "—" : fxLots(p.lots)}</td>
+      <td>${fxPrice(p.entry_price)}</td>
+      <td>${fxPrice(p.stop_loss)}${p.trailing_stop ? '<span class="sub-line">Trailing</span>' : ""}</td>
+      <td>${fxPrice(p.take_profit)}</td>
+      <td>${fxMoney(p.used_margin)}</td>
+      <td>${fxMoney(p.swap)}</td>
+      <td class="${pnlClass(Number(p.unrealized_pnl || 0))}">${fxMoney(p.unrealized_pnl, true)}</td>
+      <td>${p.opened_at ? fmtDate(p.opened_at) : "—"}</td>
+      <td><button type="button" class="mini-switch" style="background:var(--red-dim);color:var(--red)" data-fx-close="${p.position_id}">Close</button></td>
+    </tr>`).join("")
+    : emptyRow(12, data.error ? unavailable : "No open forex positions");
+
+  document.querySelector("#forexHistoryCount").textContent = `${data.history.length} trade${data.history.length === 1 ? "" : "s"}`;
+  document.querySelector("#forexHistory").innerHTML = data.history.length
+    ? data.history.map(t => `<tr>
+      <td>${t.strategy ? escapeAttr(t.strategy) : '<span class="subtle">cTrader</span>'}</td>
+      <td><strong>${fxSymbol(t.symbol)}</strong></td>
+      <td>${fxSide(t.direction)}</td>
+      <td>${t.lots == null ? "—" : fxLots(t.lots)}</td>
+      <td>${fxPrice(t.entry_price)}</td>
+      <td>${fxPrice(t.exit_price)}</td>
+      <td class="${pnlClass(Number(t.pips || 0))}">${t.pips == null ? "—" : `${t.pips > 0 ? "+" : ""}${number.format(t.pips)}`}</td>
+      <td>${fxMoney(t.swap)}</td>
+      <td class="${pnlClass(Number(t.net_profit || 0))}">${fxMoney(t.net_profit, true)}</td>
+      <td>${escapeAttr(t.reason)}</td>
+      <td>${t.opened_at ? fmtDate(t.opened_at) : "—"}</td>
+      <td>${t.closed_at ? fmtDate(t.closed_at) : "—"}</td>
+      <td>${fxDuration(t.opened_at, t.closed_at)}</td>
+    </tr>`).join("")
+    : emptyRow(13, data.error ? unavailable : `No forex trades closed in the last ${data.history_days} days`);
+
+  document.querySelector("#forexSignalCount").textContent = `${data.signals.length} signal${data.signals.length === 1 ? "" : "s"}`;
+  document.querySelector("#forexSignals").innerHTML = data.signals.length
+    ? data.signals.map(s => `<tr>
+      <td>${fmtDate(s.created_at)}</td>
+      <td>${escapeAttr(s.strategy_name || "—")}</td>
+      <td>${fxSymbol(s.symbol)}</td>
+      <td>${escapeAttr(fxSignalAction(s))}</td>
+      <td>${s.action === "entry" && s.lots ? fxLots(s.lots) : "—"}</td>
+      <td>${fxPrice(s.entry_price)}</td>
+      <td class="${pnlClass(Number(s.net_profit || 0))}">${s.net_profit == null ? "—" : fxMoney(s.net_profit, true)}</td>
+      <td>${statusBadge(s.status)}</td>
+      <td class="subtle wrap-cell">${escapeAttr(s.reason || "")}</td>
+    </tr>`).join("")
+    : emptyRow(9, "No forex signals yet");
+}
+
+document.querySelector("#forexPositions").addEventListener("click", async event => {
+  const button = event.target.closest("[data-fx-close]");
+  if (!button) return;
+  const position = forexTradingView.data.positions.find(p => p.position_id === Number(button.dataset.fxClose));
+  const closed = await openDialog({
+    title: "Close position",
+    message: `Close the ${position.direction === "long" ? "buy" : "sell"} ${position.symbol || ""} position at market on your ${forexTradingView.data.mode} cTrader account?`,
+    confirmLabel: "Close", tone: "danger",
+    onSubmit: () => sendJson("POST", `/api/forex/positions/${position.position_id}/close`),
+  });
+  if (closed) loadForexTrading();
+});
+
+document.querySelectorAll("[data-forex-copy]").forEach(btn => btn.addEventListener("click", () => {
+  const text = document.getElementById(btn.dataset.forexCopy).textContent;
+  navigator.clipboard.writeText(withRealSecret(text)).then(() => {
+    btn.textContent = "Copied!";
+    setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+  });
+}));
 
 // ─── Crypto page ─────────────────────────────────────────────────────────────
 
@@ -1098,16 +1241,18 @@ function fxLots(lots) {
 }
 
 // Blank pip fields mean "no stop", sent as null.
-function fxBotBody(get) {
+function fxBotBody(get, trailing) {
   const pips = name => (get(name) === "" ? null : Number(get(name)));
-  return {
+  const body = {
     name: get("name"),
     lots: Number(get("lots")),
     stop_loss_pips: pips("stop_loss_pips"),
     take_profit_pips: pips("take_profit_pips"),
-    trailing_stop_pips: pips("trailing_stop_pips"),
+    trailing_stop: trailing,
     symbols: get("symbols") || null,
   };
+  if (body.trailing_stop && body.stop_loss_pips === null) throw new Error("A trailing stop needs a stop loss - cTrader trails it at the stop loss distance.");
+  return body;
 }
 
 async function loadForexBots() {
@@ -1122,7 +1267,7 @@ async function loadForexBots() {
       <td>${fxLots(bot.lots)}<span class="sub-line">${number.format(bot.units)} units</span></td>
       <td>${fxPips(bot.stop_loss_pips)}</td>
       <td>${fxPips(bot.take_profit_pips)}</td>
-      <td>${fxPips(bot.trailing_stop_pips)}</td>
+      <td>${bot.trailing_stop ? "On" : '<span class="subtle">—</span>'}</td>
       <td>${bot.symbols.length ? bot.symbols.map(fxPair).join(", ") : '<span class="subtle">All pairs</span>'}</td>
       <td>${statusBadge(bot.enabled ? "enabled" : "paused")}</td>
       <td class="row-actions">
@@ -1153,7 +1298,7 @@ document.querySelector("#forexBotForm").addEventListener("submit", async event =
   const form = event.target;
   const error = document.querySelector("#forexBotError");
   try {
-    await sendJson("POST", "/api/forex/bots", fxBotBody(name => form.elements[name].value.trim()));
+    await sendJson("POST", "/api/forex/bots", fxBotBody(name => form.elements[name].value.trim(), form.elements.trailing_stop.checked));
     form.reset();
     form.hidden = true;
     error.textContent = "";
@@ -1184,12 +1329,13 @@ document.querySelector("#forexBots").addEventListener("click", async event => {
          { name: "lots", label: "Size (lots)", value: bot.lots }],
         [{ name: "stop_loss_pips", label: "Stop loss (pips)", value: bot.stop_loss_pips, placeholder: "none" },
          { name: "take_profit_pips", label: "Take profit (pips)", value: bot.take_profit_pips, placeholder: "none" }],
-        [{ name: "trailing_stop_pips", label: "Trailing stop (pips)", value: bot.trailing_stop_pips, placeholder: "none" },
-         { name: "symbols", label: "Allowed pairs", value: bot.symbols.join(", "), placeholder: "All pairs" }],
+        { name: "symbols", label: "Allowed pairs", value: bot.symbols.join(", "), placeholder: "All pairs" },
+        { name: "trailing_stop", type: "checkbox", label: "Trailing stop", value: bot.trailing_stop,
+          hint: "cTrader trails the stop loss at its own distance, so this needs a stop loss." },
       ],
       note: "Leave a pip field empty for no stop. 1 lot = 100,000 units.",
       confirmLabel: "Save",
-      onSubmit: values => sendJson("PATCH", url, fxBotBody(name => values[name])),
+      onSubmit: values => sendJson("PATCH", url, fxBotBody(name => values[name], values.trailing_stop)),
     });
     if (saved) loadForexBots();
   } else if (action === "delete") {
