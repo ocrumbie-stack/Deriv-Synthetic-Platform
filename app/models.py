@@ -254,6 +254,9 @@ class Trade(Base):
     # Which Synthetic account holds it (see SignalBot.account). For cTrader,
     # exchange_order_id is the position id and size is in lots.
     account: Mapped[str] = mapped_column(String(10), default="options", index=True)
+    # The cTrader account a CFD trade was opened on, so it is always closed
+    # there - even after demo/live is switched or a different account picked.
+    ctrader_account_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     strategy: Mapped[Strategy] = relationship(back_populates="trades")
 
@@ -291,6 +294,12 @@ class SignalBot(Base):
     # CFDs on the picked cTrader account, sized by `lots`).
     account: Mapped[str] = mapped_column(String(10), default="options")
     lots: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # CFD bots only: take profit / stop loss in dollars per trade, turned into
+    # price distances from the lots and attached to each cTrader order, and
+    # whether cTrader trails that stop loss on its own servers.
+    tp_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sl_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    trailing_stop: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     pairs: Mapped[list["BotPair"]] = relationship(back_populates="bot", cascade="all, delete-orphan")

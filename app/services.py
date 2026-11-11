@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -8,8 +9,9 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
-from app import notify
+from app import ctrader, notify
 from app.config import ENV_EXECUTION_MODE, ENV_MAX_MULTIPLIER_FLOOR, ENV_TIMEZONE, settings
+from app.ctrader import CTraderClient, CTraderError
 from app.deriv import DerivClient, DerivExecutionError, chart_tpsl_amounts
 from app.models import AppSettings, BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
 from app.schemas import ManualExitSignal, WebhookSignal
@@ -127,11 +129,13 @@ def daily_account_net(db: Session) -> float:
 
 def account_exposure(db: Session) -> float:
     """Scoped to the currently active execution mode, for the same reason
-    as daily_account_net."""
+    as daily_account_net. Multipliers stakes only: a CFD trade's size is in
+    lots, not dollars, so it never mixes into this sum."""
     total = db.scalar(
         select(func.coalesce(func.sum(Trade.size), 0.0)).where(
             Trade.status == PositionStatus.open,
             Trade.execution_mode == settings.execution_mode.lower(),
+            Trade.account == "options",
         )
     )
     return float(total or 0.0)
@@ -240,11 +244,8 @@ def validate_signal(db: Session, payload: WebhookSignal, strategy: Strategy, bot
     # strategy's own exit signal for it.
     if bot and not bot.enabled and payload.action == SignalAction.entry:
         return "Signal bot is disabled."
-    # cTrader bots are saved now but their orders go through /webhook's
-    # cTrader path once it is built - until then they must never fall
-    # through to a Deriv Multiplier on the Options account.
-    if bot and bot.account == "ctrader" and payload.action == SignalAction.entry:
-        return "This bot trades on cTrader, and cTrader execution isn't switched on yet."
+    # A CFD bot's size is lots, so the stake-dollar limits below don't apply.
+    cfd = bool(bot and bot.account == "ctrader")
     if bot and bot.symbol:
         allowed = [s.strip().upper() for s in bot.symbol.split(",")]
         if payload.symbol.upper() not in allowed:
@@ -273,7 +274,7 @@ def validate_signal(db: Session, payload: WebhookSignal, strategy: Strategy, bot
                 return f"Stop loss {payload.stop_loss} is on the wrong side of the {payload.direction.value} entry at {payload.price}."
         if payload.size <= 0:
             return "Entry signals require size greater than zero."
-        if strategy.max_position_size and payload.size > strategy.max_position_size:
+        if not cfd and strategy.max_position_size and payload.size > strategy.max_position_size:
             return "Signal size exceeds the strategy maximum position size."
         if risk.account_daily_loss_limit and daily_account_net(db) <= -abs(risk.account_daily_loss_limit):
             return "Account daily loss limit has been reached."
@@ -284,7 +285,7 @@ def validate_signal(db: Session, payload: WebhookSignal, strategy: Strategy, bot
         # so that position's stake is freed up rather than added to.
         released = existing.size if existing and existing.direction != payload.direction else 0.0
         projected_exposure = account_exposure(db) - released + payload.size
-        if risk.max_account_exposure and projected_exposure > risk.max_account_exposure:
+        if not cfd and risk.max_account_exposure and projected_exposure > risk.max_account_exposure:
             return "Signal would exceed max account exposure."
         # An entry in the same direction as an already-open position is a
         # duplicate/pyramiding attempt and stays rejected. An entry in the
@@ -359,6 +360,170 @@ def record_close_pnl(trade: Trade, profit) -> None:
     trade.profit_loss = round(trade.net_result + trade.fees, 8)
 
 
+# --- CFDs on the Deriv cTrader account (Synthetic → CFDs) -----------------
+
+class CTraderExecutionError(DerivExecutionError):
+    """A cTrader order or close failed. A DerivExecutionError, so every path
+    that records a failed Deriv order (journal, Telegram, HTTP 502) records
+    this one the same way."""
+
+
+def ctrader_client(live: bool, account_id: int | None = None) -> CTraderClient:
+    return CTraderClient(account_id, live=live, market="synthetic")
+
+
+def _trade_ctrader_client(trade: Trade) -> CTraderClient:
+    """The client for the account the trade was opened on - never the one
+    picked for the current mode, which may have changed since."""
+    return ctrader_client(trade.execution_mode == "live", trade.ctrader_account_id)
+
+
+# Open positions by account, so a dashboard poll reconciling several CFD
+# trades asks cTrader once rather than once per trade.
+POSITIONS_TTL = 3.0
+_ctrader_positions: dict[int, tuple[float, dict[int, dict]]] = {}
+
+
+async def ctrader_open_positions(client: CTraderClient, fresh: bool = False) -> dict[int, dict]:
+    account = client.account_id
+    cached = _ctrader_positions.get(account)
+    if cached and not fresh and time.monotonic() - cached[0] < POSITIONS_TTL:
+        return cached[1]
+    positions = {p["position_id"]: p for p in await client.positions()}
+    _ctrader_positions[account] = (time.monotonic(), positions)
+    return positions
+
+
+def ctrader_stop_distances(payload: WebhookSignal, bot: SignalBot, volume: int, symbol: dict) -> tuple[float | None, float | None]:
+    """(stop loss, take profit) as price distances from the fill. A drawn
+    trade's levels win (measured from its entry price); otherwise the bot's
+    dollars per trade are converted for this position's size."""
+    digits = int(symbol.get("digits") if symbol.get("digits") is not None else 5)
+
+    def side(level: float | None, dollars: float | None) -> float | None:
+        if payload.price and level:
+            return round(abs(payload.price - level), digits) or None
+        if dollars:
+            return ctrader.dollars_to_distance(dollars, volume, symbol)
+        return None
+
+    return side(payload.stop_loss, bot.sl_usd), side(payload.take_profit, bot.tp_usd)
+
+
+async def open_ctrader_trade(trade: Trade, payload: WebhookSignal, bot: SignalBot) -> None:
+    """Open the trade's position on the cTrader account picked for its mode
+    and fill in the trade from the fill. Raises CTraderExecutionError."""
+    live = trade.execution_mode == "live"
+    try:
+        client = ctrader_client(live)
+        account_id = client.account_id
+        ctrader.verify_account_mode(account_id, live)
+        symbol = await client.resolve_symbol(payload.symbol)
+        volume = ctrader.lots_to_volume(bot.lots or 0, symbol)
+        stop_loss, take_profit = ctrader_stop_distances(payload, bot, volume, symbol)
+        position = await client.open_market(
+            symbol,
+            payload.direction.value,
+            bot.lots,
+            stop_loss_distance=stop_loss,
+            take_profit_distance=take_profit,
+            trailing_stop=bool(bot.trailing_stop and stop_loss),
+            # Lets a position whose fill reply was lost be traced to this trade.
+            label=f"wp-trade-{trade.id}",
+            comment=trade.strategy_name,
+        )
+    except CTraderError as exc:
+        raise CTraderExecutionError(str(exc)) from exc
+    _ctrader_positions.pop(account_id, None)
+    trade.ctrader_account_id = account_id
+    trade.exchange_order_id = str(position["position_id"])
+    trade.entry_price = position["entry_price"] or trade.entry_price
+    trade.size = ctrader.volume_to_lots(position["volume"], symbol) or bot.lots
+    trade.leverage = 1
+
+
+def apply_ctrader_close(trade: Trade, deal: dict, exit_price_hint: float | None = None) -> None:
+    """P/L from cTrader's closing deal: net after commission and swap,
+    gross before them, the difference recorded as fees."""
+    trade.exit_price = deal.get("exit_price") or exit_price_hint or trade.entry_price
+    if deal.get("entry_price"):
+        trade.entry_price = deal["entry_price"]
+    trade.net_result = round(deal["net_profit"], 8)
+    trade.profit_loss = round(deal["gross_profit"], 8)
+    trade.fees = round(deal["gross_profit"] - deal["net_profit"], 8)
+
+
+async def close_ctrader_position(trade: Trade) -> dict | None:
+    """Close the trade's whole position on cTrader. Returns the closing deal,
+    or None when the position is already gone (closed by its SL/TP or in the
+    cTrader app). Raises CTraderExecutionError."""
+    client = _trade_ctrader_client(trade)
+    try:
+        positions = await ctrader_open_positions(client, fresh=True)
+        position = positions.get(int(trade.exchange_order_id or 0))
+        if position is None:
+            return None
+        deal = await client.close_position(position["position_id"], position["volume"])
+    except CTraderError as exc:
+        raise CTraderExecutionError(str(exc)) from exc
+    _ctrader_positions.pop(client.account_id, None)
+    return deal
+
+
+# cTrader answers deal lists for at most a week at a time.
+DEAL_LOOKBACK_LIMIT = timedelta(days=6, hours=23)
+
+
+async def reconcile_ctrader_trade(db: Session, trade: Trade) -> bool:
+    """Close a CFD trade whose position cTrader already closed (its SL/TP,
+    trailing stop, stop-out or the cTrader app), from the closing deal.
+    Returns True if the trade was closed by this check."""
+    if not trade.exchange_order_id:
+        return False
+    position_id = int(trade.exchange_order_id)
+    client = _trade_ctrader_client(trade)
+    try:
+        if position_id in await ctrader_open_positions(client):
+            return False
+        since = max(trade.opened_at - timedelta(minutes=1), datetime.utcnow() - DEAL_LOOKBACK_LIMIT)
+        deals = await client.closing_deals(since)
+    except CTraderError as exc:
+        logger.warning("Couldn't check CFD trade %s on cTrader: %s", trade.id, exc)
+        return False
+    deal = next((d for d in deals if d["position_id"] == position_id), None)
+    if deal is None:
+        # Gone from the open list but no closing deal yet - check again later
+        # rather than guess its P/L.
+        return False
+    apply_ctrader_close(trade, deal)
+    trade.status = PositionStatus.closed
+    trade.execution_status = ExecutionStatus.closed
+    trade.closed_at = datetime.utcnow()
+    trade.close_reason = "ctrader_close"
+    db.add(
+        Signal(
+            strategy_id=trade.strategy_id,
+            strategy_name=trade.strategy_name,
+            symbol=trade.symbol,
+            action=SignalAction.exit,
+            price=trade.exit_price,
+            status=ExecutionStatus.closed,
+            source="ctrader_close",
+            raw_payload=json.dumps({"trade_id": trade.id, "position_id": position_id, "net_profit": trade.net_result}),
+            execution_mode=trade.execution_mode,
+            created_at=trade.closed_at,
+        )
+    )
+    bot = get_signal_bot(db, trade.strategy_name)
+    if bot:
+        pair = get_or_create_bot_pair(db, bot, trade.symbol)
+        update_pair_session(db, pair, bot, trade.net_result)
+        update_bot_session(db, bot, trade.net_result)
+    db.flush()
+    notify.trade_closed(trade)
+    return True
+
+
 async def get_live_unrealized_pnl(db: Session) -> dict[str, float]:
     """Per-open-trade unrealized P&L, queried directly per contract_id.
 
@@ -370,13 +535,28 @@ async def get_live_unrealized_pnl(db: Session) -> dict[str, float]:
     client = DerivClient()
     open_trades = list(db.scalars(select(Trade).where(Trade.status == PositionStatus.open)))
     result: dict[str, float] = {}
+    cfd: dict[tuple[str, int | None], list[Trade]] = {}
     for trade in open_trades:
         if not trade.exchange_order_id:
+            continue
+        if trade.account == "ctrader":
+            cfd.setdefault((trade.execution_mode, trade.ctrader_account_id), []).append(trade)
             continue
         poc = await client.get_contract_status(trade.exchange_order_id)
         if not poc:
             continue
         result[f"{trade.symbol}_{trade.direction.value}"] = round(float(poc.get("profit") or 0), 8)
+    # cTrader reports every position's P/L on an account in one call.
+    for (mode, account_id), trades in cfd.items():
+        try:
+            pnl = await ctrader_client(mode == "live", account_id).unrealized_pnl()
+        except CTraderError as exc:
+            logger.warning("cTrader unrealized P/L unavailable: %s", exc)
+            continue
+        for trade in trades:
+            value = pnl.get(int(trade.exchange_order_id))
+            if value is not None:
+                result[f"{trade.symbol}_{trade.direction.value}"] = round(value, 8)
     return result
 
 
@@ -389,6 +569,8 @@ async def reconcile_open_trade(db: Session, trade: Trade) -> bool:
     entry signal for that strategy/symbol. Returns True if the trade was
     closed as a result of this check.
     """
+    if trade.account == "ctrader":
+        return await reconcile_ctrader_trade(db, trade)
     if not trade.exchange_order_id:
         return False
     poc = await DerivClient().get_contract_status(trade.exchange_order_id)
@@ -454,21 +636,32 @@ async def close_trade(
 
     Raises DerivExecutionError on failure; callers decide how to record that.
     """
-    # Target the exact contract we already recorded rather than searching
-    # Deriv's portfolio by symbol/direction - that search has been observed
-    # to silently miss genuinely open contracts, which would wrongly
-    # conclude "no position" and leave the real contract running, untracked.
-    # Keep trade.exchange_order_id as the contract id (not the sale's
-    # transaction id) so the closed contract can still be looked up later.
-    result = await DerivClient().close_order(trade.exchange_order_id)
+    if trade.account == "ctrader":
+        deal = await close_ctrader_position(trade)
+        if deal is None:
+            # cTrader already closed it (SL/TP or the cTrader app) - record
+            # that close rather than fail the exit.
+            if await reconcile_ctrader_trade(db, trade):
+                return {}
+            raise CTraderExecutionError("The position isn't open on cTrader any more, and its closing deal hasn't appeared yet - try again shortly.")
+        apply_ctrader_close(trade, deal, exit_price_hint)
+        result = {"deal": deal}
+    else:
+        # Target the exact contract we already recorded rather than searching
+        # Deriv's portfolio by symbol/direction - that search has been observed
+        # to silently miss genuinely open contracts, which would wrongly
+        # conclude "no position" and leave the real contract running, untracked.
+        # Keep trade.exchange_order_id as the contract id (not the sale's
+        # transaction id) so the closed contract can still be looked up later.
+        result = await DerivClient().close_order(trade.exchange_order_id)
 
-    contract = result.get("contract")
-    apply_contract_details(trade, contract)
-    record_close_pnl(trade, result.get("profit"))
-    # Deriv's own exit spot when it reports one, so entry and exit come from
-    # the same price feed rather than mixing in TradingView's alert price.
-    sell_spot = _as_float((contract or {}).get("sell_spot"))
-    trade.exit_price = sell_spot or exit_price_hint or trade.entry_price
+        contract = result.get("contract")
+        apply_contract_details(trade, contract)
+        record_close_pnl(trade, result.get("profit"))
+        # Deriv's own exit spot when it reports one, so entry and exit come from
+        # the same price feed rather than mixing in TradingView's alert price.
+        sell_spot = _as_float((contract or {}).get("sell_spot"))
+        trade.exit_price = sell_spot or exit_price_hint or trade.entry_price
     trade.status = PositionStatus.closed
     trade.execution_status = ExecutionStatus.closed
     trade.closed_at = datetime.utcnow()
@@ -579,6 +772,8 @@ async def preview_chart_trade(db: Session, payload: WebhookSignal) -> dict:
     bot = get_signal_bot(db, payload.strategy)
     if bot is None:
         return {"error": f"No signal bot named {payload.strategy} - create one on the Signal Bots page."}
+    if bot.account == "ctrader":
+        return {"error": "Previews aren't available for CFD bots yet. A drawn trade sent to a CFD bot still uses its drawn stop loss and take profit."}
     if payload.direction is None or not payload.price:
         return {"error": "Pick Long or Short and an entry price."}
 
@@ -631,15 +826,21 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
     get_risk_settings(db)
     strategy = get_or_create_strategy(db, payload.strategy)
     bot = get_signal_bot(db, payload.strategy)
+    # A CFD bot trades lots on the Deriv cTrader account instead of a
+    # Multiplier stake on Deriv's API.
+    cfd = bool(bot and bot.account == "ctrader")
     if bot:
         # Deriv contracts use a stake amount. TradingView's price is recorded for
         # analytics, but it does not determine the stake or contract quantity.
-        payload = payload.model_copy(update={"size": bot.size})
+        payload = payload.model_copy(update={"size": (bot.lots or 0) if cfd else bot.size})
 
     # A bot's own leverage (when explicitly set above 0) overrides the
     # platform default; otherwise every signal - bot or not - inherits
     # whatever's configured on the Leverage page for this symbol.
-    if bot and bot.leverage > 0:
+    if cfd:
+        # The cTrader account's own leverage applies; nothing to choose here.
+        payload = payload.model_copy(update={"leverage": 1})
+    elif bot and bot.leverage > 0:
         payload = payload.model_copy(update={"leverage": bot.leverage})
     else:
         # No row yet means the Leverage page shows the symbol's minimum, and
@@ -725,23 +926,29 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
             leverage=payload.leverage,
             execution_status=ExecutionStatus.accepted,
             execution_mode=settings.execution_mode.lower(),
+            account="ctrader" if cfd else "options",
         )
         db.add(trade)
         db.flush()
 
         try:
-            client = DerivClient()
-            hedge = bot.hedge_mode if bot else False
-            take_profit = stop_loss = None
-            if bot:
-                pair = get_or_create_bot_pair(db, bot, payload.symbol)
-                take_profit, stop_loss = trade_tpsl_amounts(payload.size, pair.tp_pct, pair.sl_pct)
-            result = await client.place_order(payload, hedge_mode=hedge, take_profit=take_profit, stop_loss=stop_loss)
-            trade.exchange_order_id = str(result.get("order_id") or result.get("data", {}).get("orderId") or "")
-            # Record the multiplier the contract actually runs at, not the one
-            # requested - otherwise Open Positions shows e.g. 1x for a 50x trade.
-            trade.leverage = result.get("multiplier") or trade.leverage
-            apply_contract_details(trade, {"entry_spot": result.get("entry_spot"), "commission": result.get("commission")})
+            if cfd:
+                # The pair row still carries the per-symbol cycle count and pause.
+                get_or_create_bot_pair(db, bot, payload.symbol)
+                await open_ctrader_trade(trade, payload, bot)
+            else:
+                client = DerivClient()
+                hedge = bot.hedge_mode if bot else False
+                take_profit = stop_loss = None
+                if bot:
+                    pair = get_or_create_bot_pair(db, bot, payload.symbol)
+                    take_profit, stop_loss = trade_tpsl_amounts(payload.size, pair.tp_pct, pair.sl_pct)
+                result = await client.place_order(payload, hedge_mode=hedge, take_profit=take_profit, stop_loss=stop_loss)
+                trade.exchange_order_id = str(result.get("order_id") or result.get("data", {}).get("orderId") or "")
+                # Record the multiplier the contract actually runs at, not the one
+                # requested - otherwise Open Positions shows e.g. 1x for a 50x trade.
+                trade.leverage = result.get("multiplier") or trade.leverage
+                apply_contract_details(trade, {"entry_spot": result.get("entry_spot"), "commission": result.get("commission")})
             trade.execution_status = ExecutionStatus.executed
             signal.status = ExecutionStatus.executed
             notify.trade_opened(trade)

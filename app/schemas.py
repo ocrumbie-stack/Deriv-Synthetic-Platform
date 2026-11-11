@@ -182,11 +182,17 @@ class SignalBotCreate(BaseModel):
     # "ctrader" trades lot-sized CFDs on the cTrader account, sized by `lots`.
     account: Literal["options", "ctrader"] = "options"
     lots: float | None = Field(default=None, gt=0)
+    # CFD bots: dollars per trade, and cTrader's own trailing stop.
+    tp_usd: float | None = Field(default=None, gt=0)
+    sl_usd: float | None = Field(default=None, gt=0)
+    trailing_stop: bool = False
 
     @model_validator(mode="after")
     def ctrader_needs_lots(self) -> "SignalBotCreate":
         if self.account == "ctrader" and not self.lots:
             raise ValueError("A cTrader bot needs a lot size.")
+        if self.trailing_stop and not self.sl_usd:
+            raise ValueError("A trailing stop needs a stop loss to trail.")
         return self
 
 
@@ -204,6 +210,9 @@ class SignalBotUpdate(BaseModel):
     trail_distance_pct: float | None = Field(default=None, gt=0)
     account: Literal["options", "ctrader"] | None = None
     lots: float | None = Field(default=None, gt=0)
+    tp_usd: float | None = Field(default=None, gt=0)
+    sl_usd: float | None = Field(default=None, gt=0)
+    trailing_stop: bool | None = None
 
 
 class SymbolLeverageOut(BaseModel):
@@ -256,6 +265,9 @@ class SignalBotOut(BaseModel):
     trail_distance_pct: float | None
     account: str = "options"
     lots: float | None = None
+    tp_usd: float | None = None
+    sl_usd: float | None = None
+    trailing_stop: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}

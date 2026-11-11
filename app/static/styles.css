@@ -836,7 +836,9 @@ canvas { display: block; width: 100%; }
 .ctrader-account { grid-template-columns: repeat(3, 1fr); }
 .ctrader-account .crypto-figure:nth-child(3n) { border-right: 0; }
 .ctrader-account .crypto-figure:nth-child(-n+3) { border-bottom: 1px solid var(--border); }
-.cfd-bot-fields { align-items: end; display: grid; gap: 12px; grid-template-columns: 1.6fr 1fr 1fr auto; }
+.cfd-bot-fields { align-items: end; display: grid; gap: 12px; grid-template-columns: 1.6fr 1fr 1fr 1fr 1fr auto auto; }
+.cfd-bot-check { align-items: center; display: flex; gap: 6px; padding-bottom: 8px; white-space: nowrap; }
+.cfd-bot-fields .cfd-bot-check input { width: auto; }
 .cfd-bot-fields input { width: 100%; }
 #cfdBotForm[hidden] { display: none; }
 .cfd-pending { background: var(--yellow-dim); border: 1px solid rgba(255, 193, 7, 0.25); border-radius: 8px; color: var(--yellow); font-size: 12px; padding: 10px 14px; }

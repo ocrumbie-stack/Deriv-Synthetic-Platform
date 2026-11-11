@@ -333,7 +333,9 @@ async def webhook_status(query: SignalStatusQuery, db: Session = Depends(get_db)
         .where(Trade.strategy_id == signal.strategy_id, Trade.symbol == signal.symbol, Trade.opened_at >= signal.created_at)
         .order_by(Trade.id)
     )
-    if signal.status == ExecutionStatus.executed and trade:
+    if signal.status == ExecutionStatus.executed and trade and trade.account == "ctrader":
+        result.update(entry_price=trade.entry_price, lots=trade.size, account="ctrader")
+    elif signal.status == ExecutionStatus.executed and trade:
         poc = await DerivClient().get_contract_status(trade.exchange_order_id, use_cache=False) if trade.exchange_order_id else None
         result.update(
             entry_price=trade.entry_price,
@@ -541,6 +543,7 @@ async def _apply_tpsl_to_open_trade(db: Session, bot: SignalBot, pair: BotPair) 
             Trade.symbol == pair.symbol,
             Trade.status == PositionStatus.open,
             Trade.execution_mode == settings.execution_mode.lower(),
+            Trade.account == "options",
         )
     )
     if not (open_trade and open_trade.exchange_order_id):
@@ -597,6 +600,9 @@ async def update_signal_bot(bot_id: int, updates: SignalBotUpdate, db: Session =
                     tpsl_changed.append(pair)
     for field, value in data.items():
         setattr(bot, field, value)
+    if bot.trailing_stop and not bot.sl_usd:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="A trailing stop needs a stop loss to trail.")
     db.commit()
     db.refresh(bot)
     errors = []
@@ -1012,8 +1018,16 @@ def _get_open_trade(db: Session, trade_id: int) -> Trade:
     return trade
 
 
+def _require_multiplier(trade: Trade) -> None:
+    """Close-at prices, per-trade trails and dollar TP/SL edits work on Deriv
+    Multiplier contracts. A CFD's stops live on cTrader."""
+    if trade.account == "ctrader":
+        raise HTTPException(status_code=409, detail="This is a CFD position on cTrader - change its stops in cTrader for now.")
+
+
 async def _live_contract(db: Session, trade: Trade) -> dict | None:
     """The contract's fresh state, for arming something the monitor watches."""
+    _require_multiplier(trade)
     if not trade.exchange_order_id:
         raise HTTPException(status_code=409, detail="This position has no Deriv contract to watch.")
     poc = await DerivClient().get_contract_status(trade.exchange_order_id, use_cache=False)
@@ -1087,7 +1101,7 @@ async def get_position_tpsl(trade_id: int, db: Session = Depends(get_db)) -> Pos
     """The contract's live TP/SL on Deriv, in dollars and as the prices
     Deriv says they sit at, with the figures to convert between the two."""
     trade = _get_open_trade(db, trade_id)
-    if not trade.exchange_order_id:
+    if not trade.exchange_order_id or trade.account == "ctrader":
         return PositionTpSlDetail()
     return _tpsl_detail(await DerivClient().get_contract_status(trade.exchange_order_id, use_cache=False))
 
@@ -1113,6 +1127,7 @@ async def set_position_tpsl(trade_id: int, data: PositionTpSl, db: Session = Dep
     """Set a dollar TP/SL on one open contract, replacing whatever it opened
     with. Deriv enforces it, so it holds even while this server is down."""
     trade = _get_open_trade(db, trade_id)
+    _require_multiplier(trade)
     if not trade.exchange_order_id:
         raise HTTPException(status_code=409, detail="This position has no Deriv contract to update.")
     try:
@@ -1141,7 +1156,8 @@ async def webhook_positions(query: SecretQuery, db: Session = Depends(get_db)) -
     for trade in await open_positions(db):
         # open_positions just looked each contract up (reconcile), so this
         # is served from the short-lived cache rather than a second call.
-        poc = await client.get_contract_status(trade.exchange_order_id) if trade.exchange_order_id else None
+        multiplier = trade.account != "ctrader"
+        poc = await client.get_contract_status(trade.exchange_order_id) if multiplier and trade.exchange_order_id else None
         positions.append({
             **_tpsl_detail(poc).model_dump(),
             "trade_id": trade.id,
@@ -1158,6 +1174,8 @@ async def webhook_positions(query: SecretQuery, db: Session = Depends(get_db)) -
             "close_at_above": trade.close_at_above,
             "trail_distance": trade.trail_distance,
             "trail_peak": trade.trail_peak,
+            # "ctrader" = a CFD sized in lots (stake holds the lots).
+            "account": trade.account,
         })
     return {"mode": settings.execution_mode.lower(), "positions": positions}
 

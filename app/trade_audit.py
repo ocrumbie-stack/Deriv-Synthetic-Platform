@@ -104,6 +104,8 @@ async def run_audit() -> AuditResult:
                     Trade.status == PositionStatus.closed,
                     Trade.execution_status != ExecutionStatus.failed,
                     Trade.execution_mode == mode,
+                    # Deriv's profit table only holds Multipliers contracts.
+                    Trade.account == "options",
                     Trade.closed_at >= since,
                 ).order_by(Trade.opened_at)
             ))

@@ -1459,6 +1459,7 @@ const EXIT_SOURCE_LABELS = {
   trailing_stop: "Trailing stop",
   close_all_target: "Close-all target",
   deriv_close:   "Closed on Deriv (TP/SL/stop-out)",
+  ctrader_close: "Closed on cTrader (SL/TP/trailing/app)",
 };
 
 function tradeReason(t) {
@@ -2405,7 +2406,6 @@ function renderAll() {
 }
 
 function renderCfdTrades(open, closed) {
-  const pending = "cTrader orders aren't switched on yet";
   document.querySelector("#cfdPositionCount").textContent = `${open.length} open`;
   document.querySelector("#cfdPositions").innerHTML = open.length
     ? open.map(t => `<tr>
@@ -2414,8 +2414,9 @@ function renderCfdTrades(open, closed) {
       <td>${number.format(t.entry_price)}</td>
       <td>${modeBadge(t.execution_mode)}</td>
       <td>${fmtDate(t.opened_at)}</td>
+      <td class="row-actions"><button type="button" class="mini-switch" data-cfd-close="${t.id}">Close</button></td>
     </tr>`).join("")
-    : emptyRow(7, `No open CFD positions. ${pending}.`);
+    : emptyRow(8, "No open CFD positions.");
   document.querySelector("#cfdStatOpen").textContent = open.length;
   document.querySelector("#cfdStatClosed").textContent = closed.length;
   const net = closed.reduce((sum, t) => sum + t.net_result, 0);
@@ -2436,8 +2437,21 @@ function renderCfdTrades(open, closed) {
       <td>${fmtDate(t.closed_at)}</td>
       <td>${t.closed_at ? duration(t.opened_at, t.closed_at) : "—"}</td>
     </tr>`).join("")
-    : emptyRow(12, `No closed CFD trades yet. ${pending}.`);
+    : emptyRow(12, "No closed CFD trades yet.");
 }
+
+document.querySelector("#cfdPositions").addEventListener("click", async event => {
+  const button = event.target.closest("[data-cfd-close]");
+  if (!button) return;
+  const trade = latestState.positions.find(t => String(t.id) === button.dataset.cfdClose);
+  const closed = await openDialog({
+    title: "Close CFD position",
+    message: trade ? `Close ${trade.direction} ${trade.symbol} (${trade.strategy_name}) on cTrader at market?` : "Close this position on cTrader at market?",
+    confirmLabel: "Close", tone: "danger",
+    onSubmit: () => closePositionNow(button.dataset.cfdClose),
+  });
+  if (closed) refresh();
+});
 
 function topRoundRect(ctx, x, y, w, h, r) {
   const rad = Math.min(r, w / 2, h);
@@ -3768,6 +3782,7 @@ function renderCfdBots(bots) {
     ? bots.map(b => `<tr>
       <td><span class="bot-dot ${b.enabled ? "active" : "paused"}"></span> <strong>${escapeAttr(b.name)}</strong></td>
       <td>${number.format(b.lots ?? 0)}</td>
+      <td>${b.tp_usd ? "+" + currency.format(b.tp_usd) : '<span class="subtle">—</span>'} / ${b.sl_usd ? "-" + currency.format(b.sl_usd) : '<span class="subtle">—</span>'}${b.trailing_stop ? '<span class="sub-line">Trailing stop</span>' : ""}</td>
       <td>${b.default_pair_max_cycles ?? '<span class="subtle">—</span>'}</td>
       <td>${b.cycles_completed}</td>
       <td>${statusBadge(b.enabled ? "enabled" : "paused")}</td>
@@ -3778,7 +3793,7 @@ function renderCfdBots(bots) {
         <button type="button" class="mini-switch" data-cfd-action="delete" data-bot-id="${b.id}">Delete</button>
       </td>
     </tr>`).join("")
-    : emptyRow(6, "No CFD bots yet. Click + New Bot to create one.");
+    : emptyRow(7, "No CFD bots yet. Click + New Bot to create one.");
 }
 
 document.querySelector("#cfdBotNew").addEventListener("click", () => {
@@ -3792,11 +3807,16 @@ document.querySelector("#cfdBotForm").addEventListener("submit", async event => 
   const form = event.target;
   const error = document.querySelector("#cfdBotError");
   const cycles = parseInt(form.elements.max_cycles.value, 10);
+  const tp = Number(form.elements.tp_usd.value);
+  const sl = Number(form.elements.sl_usd.value);
   error.textContent = "";
   try {
     // A CFD bot is sized by lots; size (the Multipliers stake) is unused.
     await sendJson("POST", "/api/signal-bots", {
       name: form.elements.name.value.trim(), account: "ctrader", lots: Number(form.elements.lots.value), size: 1,
+      ...(tp > 0 ? { tp_usd: tp } : {}),
+      ...(sl > 0 ? { sl_usd: sl } : {}),
+      trailing_stop: form.elements.trailing_stop.checked,
       ...(cycles > 0 ? { default_pair_max_cycles: cycles } : {}),
     });
   } catch (e) {
@@ -3833,10 +3853,17 @@ document.querySelector("#cfdBots").addEventListener("click", async event => {
         { name: "name", label: "Strategy name", value: bot.name },
         [{ name: "lots", label: "Lots", value: bot.lots },
          { name: "max_cycles", label: "Max Cycles (per symbol)", value: bot.default_pair_max_cycles ?? "", placeholder: "None" }],
+        [{ name: "tp_usd", label: "Take profit ($ per trade)", value: bot.tp_usd ?? "", placeholder: "None", prefix: "$" },
+         { name: "sl_usd", label: "Stop loss ($ per trade)", value: bot.sl_usd ?? "", placeholder: "None", prefix: "$" }],
+        { name: "trailing_stop", type: "checkbox", label: "Trailing stop", value: bot.trailing_stop,
+          hint: "cTrader trails the stop loss behind price on its own servers. Needs a stop loss." },
       ],
       confirmLabel: "Save",
       onSubmit: values => sendJson("PATCH", url, {
         name: values.name, lots: Number(values.lots),
+        tp_usd: Number(values.tp_usd) > 0 ? Number(values.tp_usd) : null,
+        sl_usd: Number(values.sl_usd) > 0 ? Number(values.sl_usd) : null,
+        trailing_stop: values.trailing_stop,
         default_pair_max_cycles: Number(values.max_cycles) > 0 ? Number(values.max_cycles) : null,
       }),
     });

@@ -149,6 +149,8 @@ class TrailingStopMonitor:
                 .where(
                     Trade.status == PositionStatus.open,
                     Trade.execution_mode == mode,
+                    # Deriv contracts only - a CFD's stops and trailing run on cTrader.
+                    Trade.account == "options",
                     Trade.exchange_order_id.is_not(None),
                     Trade.exchange_order_id != "",
                 )

@@ -372,13 +372,21 @@ class BotAccountTests(unittest.TestCase):
         self.assertEqual(SignalBotCreate(name="Bot", account="ctrader", lots=0.5).lots, 0.5)
         self.assertEqual(SignalBotCreate(name="Bot").account, "options")
 
-    def test_ctrader_entries_never_reach_the_options_account(self):
-        strategy = Strategy(name="Bot")
+    def test_trailing_stop_needs_a_stop_loss(self):
+        with self.assertRaises(ValidationError):
+            SignalBotCreate(name="Bot", account="ctrader", lots=0.5, trailing_stop=True)
+        bot = SignalBotCreate(name="Bot", account="ctrader", lots=0.5, sl_usd=20, trailing_stop=True)
+        self.assertTrue(bot.trailing_stop)
+
+    def test_ctrader_entries_pass_validation(self):
+        # Orders go to cTrader now (see test_ctrader_orders); validation
+        # no longer refuses them, and stake-dollar limits don't apply to lots.
+        strategy = Strategy(name="Bot", max_position_size=0.1)
         bot = SignalBot(name="Bot", size=5, account="ctrader", lots=0.5, enabled=True)
         self.db.add_all([strategy, bot])
         self.db.commit()
-        payload = WebhookSignal(secret=settings.webhook_secret, strategy="Bot", symbol="R_75", action="entry", direction="long", size=5)
-        self.assertIn("cTrader", validate_signal(self.db, payload, strategy, bot))
+        payload = WebhookSignal(secret=settings.webhook_secret, strategy="Bot", symbol="R_75", action="entry", direction="long", size=0.5)
+        self.assertIsNone(validate_signal(self.db, payload, strategy, bot))
 
 
 if __name__ == "__main__":

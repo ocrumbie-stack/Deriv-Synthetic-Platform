@@ -246,6 +246,23 @@ def account_id_for_mode(mode: str | None = None, market: str = "synthetic") -> i
     return int(account_id)
 
 
+def verify_account_mode(account_id: int, live: bool, market: str = "synthetic") -> None:
+    """Refuse an order on an account whose demo/live kind isn't the mode's -
+    a live account picked in the demo slot must never take demo signals."""
+    row = _load_row(market)
+    try:
+        accounts = json.loads(row.accounts or "[]") if row else []
+    except ValueError:
+        accounts = []
+    found = next((a for a in accounts if int(a.get("account_id") or 0) == int(account_id)), None)
+    label = MARKET_LABELS.get(market, market)
+    if found is None:
+        raise CTraderError(f"cTrader account {account_id} isn't linked to the {label} login - refresh the accounts on its Overview.")
+    if bool(found.get("live")) != bool(live):
+        kind, mode = ("live", "demo") if found.get("live") else ("demo", "live")
+        raise CTraderError(f"cTrader account {account_id} is a {kind} account but is picked for {mode} - fix the pick on the {label} Overview.")
+
+
 # --- Symbols and sizing ---------------------------------------------------
 
 def symbol_key(value: str) -> str:
@@ -312,6 +329,22 @@ def lots_to_volume(lots: float, symbol: dict) -> int:
 def volume_to_lots(volume: int | float, symbol: dict) -> float:
     lot_size = int(symbol.get("lotSize") or 0)
     return round(float(volume) / lot_size, 8) if lot_size else 0.0
+
+
+def dollars_to_distance(dollars: float, volume: int, symbol: dict) -> float:
+    """The price move that makes or loses `dollars` on a position of
+    `volume` (protocol cents of a unit), rounded to the symbol's digits as
+    cTrader requires for relative SL/TP. One unit of a Deriv synthetic index
+    moves $1 per 1.0 of price, as the account's deposit currency is the
+    index's quote currency (USD) - check against the first demo order."""
+    units = volume / 100
+    if units <= 0:
+        raise CTraderError("Can't size a stop for an empty position.")
+    digits = int(symbol.get("digits") if symbol.get("digits") is not None else 5)
+    distance = round(dollars / units, digits)
+    if distance <= 0:
+        raise CTraderError(f"${dollars:g} is too small a stop for this position size - it rounds to no price move.")
+    return distance
 
 
 def relative_distance(distance: float) -> int:
