@@ -1101,6 +1101,7 @@ function renderCrypto(data) {
       <td>${bot.symbols.length ? bot.symbols.map(cryptoPair).join(", ") : '<span class="subtle">Any</span>'}</td>
       <td>${statusBadge(bot.enabled ? "enabled" : "paused")}</td>
       <td class="row-actions">
+        <button type="button" class="mini-switch neutral" data-bot-action="alert" data-bot-id="${bot.id}">Alerts</button>
         <button type="button" class="mini-switch neutral" data-bot-action="toggle" data-bot-id="${bot.id}">${bot.enabled ? "Pause" : "Resume"}</button>
         <button type="button" class="mini-switch neutral" data-bot-action="edit" data-bot-id="${bot.id}">Edit</button>
         <button type="button" class="mini-switch" data-bot-action="delete" data-bot-id="${bot.id}">Delete</button>
@@ -1164,7 +1165,9 @@ document.querySelector("#cryptoBots").addEventListener("click", async event => {
   const bot = cryptoView.data.bots.find(b => b.id === Number(button.dataset.botId));
   const url = `/api/crypto/bots/${bot.id}`;
   const action = button.dataset.botAction;
-  if (action === "toggle") {
+  if (action === "alert") {
+    showAlertKit(bot.name, "/webhook/blofin");
+  } else if (action === "toggle") {
     try {
       await sendJson("PATCH", url, { enabled: !bot.enabled });
       loadCrypto();
@@ -1228,6 +1231,78 @@ document.querySelectorAll("[data-crypto-copy]").forEach(btn => btn.addEventListe
   });
 }));
 
+// ─── TradingView alert kit (Forex and Crypto bots) ───────────────────────────
+// Everything a bot needs in TradingView: its market's webhook URL and the
+// messages for the alert's Message field. Shown with the placeholder secret;
+// Copy swaps in the real one.
+
+function alertKitHtml(name, path) {
+  const row = (label, text, cls = "dim") => `
+    <div class="modal-field">
+      <span class="webhook-label">${label}</span>
+      <div class="url-row" style="align-items:stretch">
+        <code class="url-display ${cls}">${escapeText(text)}</code>
+        <button type="button" class="copy-btn" data-kit-copy>Copy</button>
+      </div>
+    </div>`;
+  return row("Webhook URL — paste into the alert's Notifications → Webhook URL", window.location.origin + path, "")
+    + row("Strategy alert message — entries and exits from a TradingView strategy", botTemplate(name))
+    + row("Price alert entry — long (plain price / trendline alerts)", priceAlertTemplate(name, "long"))
+    + row("Price alert entry — short", priceAlertTemplate(name, "short"));
+}
+
+document.addEventListener("click", event => {
+  const btn = event.target.closest("[data-kit-copy]");
+  if (!btn) return;
+  navigator.clipboard.writeText(withRealSecret(btn.previousElementSibling.textContent)).then(() => {
+    btn.textContent = "Copied!";
+    setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+  });
+});
+
+function showAlertKit(name, path) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-box alert-kit-box" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <span class="modal-title">TradingView alert — ${escapeText(name)}</span>
+        <button type="button" class="modal-close-x" data-close aria-label="Close">&times;</button>
+      </div>
+      ${alertKitHtml(name, path)}
+      <div class="modal-footer"><button type="button" class="mini-switch" data-close>Close</button></div>
+    </div>`;
+  const close = () => { document.removeEventListener("keydown", onKey); overlay.remove(); };
+  const onKey = e => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  overlay.addEventListener("click", e => { if (e.target === overlay || e.target.closest("[data-close]")) close(); });
+  document.body.appendChild(overlay);
+}
+
+// The New Bot forms' "Generate TradingView Alert Message" button. The kit
+// follows the typed name and goes away when the form is reset.
+document.querySelectorAll("[data-alert-generate]").forEach(btn => {
+  const form = btn.closest("form");
+  const kit = form.querySelector(".alert-kit");
+  const error = form.querySelector(".settings-error");
+  const show = () => { kit.innerHTML = alertKitHtml(form.elements.name.value.trim(), btn.dataset.alertGenerate); kit.hidden = false; };
+  btn.addEventListener("click", () => {
+    if (!form.elements.name.value.trim()) {
+      error.textContent = "Enter a strategy name first.";
+      kit.hidden = true;
+      form.elements.name.focus();
+      return;
+    }
+    error.textContent = "";
+    show();
+  });
+  form.elements.name.addEventListener("input", () => {
+    if (kit.hidden) return;
+    if (form.elements.name.value.trim()) show(); else kit.hidden = true;
+  });
+  form.addEventListener("reset", () => { kit.hidden = true; });
+});
+
 // ─── Forex bots ──────────────────────────────────────────────────────────────
 
 let forexBots = [];
@@ -1271,6 +1346,7 @@ async function loadForexBots() {
       <td>${bot.symbols.length ? bot.symbols.map(fxPair).join(", ") : '<span class="subtle">All pairs</span>'}</td>
       <td>${statusBadge(bot.enabled ? "enabled" : "paused")}</td>
       <td class="row-actions">
+        <button type="button" class="mini-switch neutral" data-bot-action="alert" data-bot-id="${bot.id}">Alerts</button>
         <button type="button" class="mini-switch neutral" data-bot-action="toggle" data-bot-id="${bot.id}">${bot.enabled ? "Pause" : "Resume"}</button>
         <button type="button" class="mini-switch neutral" data-bot-action="edit" data-bot-id="${bot.id}">Edit</button>
         <button type="button" class="mini-switch" data-bot-action="delete" data-bot-id="${bot.id}">Delete</button>
@@ -1314,7 +1390,9 @@ document.querySelector("#forexBots").addEventListener("click", async event => {
   const bot = forexBots.find(b => b.id === Number(button.dataset.botId));
   const url = `/api/forex/bots/${bot.id}`;
   const action = button.dataset.botAction;
-  if (action === "toggle") {
+  if (action === "alert") {
+    showAlertKit(bot.name, "/webhook/forex");
+  } else if (action === "toggle") {
     try {
       await sendJson("PATCH", url, { enabled: !bot.enabled });
       loadForexBots();
@@ -4042,7 +4120,7 @@ document.querySelector("#cfdBots").addEventListener("click", async event => {
   if (tplBtn) tplBtn.addEventListener("click", () => {
     const tplEl = document.querySelector("#botTemplateDisplay");
     if (!tplEl) return;
-    navigator.clipboard.writeText(tplEl.textContent).then(() => {
+    navigator.clipboard.writeText(withRealSecret(tplEl.textContent)).then(() => {
       tplBtn.textContent = "Copied!";
       setTimeout(() => { tplBtn.textContent = "Copy"; }, 2000);
     });

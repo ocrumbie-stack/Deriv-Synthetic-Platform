@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Trading Platform</title>
-    <link rel="stylesheet" href="/static/styles.css?v=5" />
+    <link rel="stylesheet" href="/static/styles.css?v=6" />
   </head>
   <body>
     <div class="app">
@@ -873,6 +873,10 @@
               </div>
               <p class="subtle settings-hint" id="forexBotPreview"></p>
               <p class="settings-error" id="forexBotError" role="alert"></p>
+              <div class="alert-generate">
+                <button type="button" class="nav-link-btn" data-alert-generate="/webhook/forex">Generate TradingView Alert Message</button>
+              </div>
+              <div class="alert-kit" hidden></div>
             </form>
             <div class="table-wrap">
               <table>
@@ -1075,6 +1079,10 @@
               </div>
               <p class="subtle settings-hint" id="cryptoBotPreview"></p>
               <p class="settings-error" id="cryptoBotError" role="alert"></p>
+              <div class="alert-generate">
+                <button type="button" class="nav-link-btn" data-alert-generate="/webhook/blofin">Generate TradingView Alert Message</button>
+              </div>
+              <div class="alert-kit" hidden></div>
             </form>
             <div class="table-wrap">
               <table>
@@ -1298,6 +1306,6 @@
       </div>
     </div>
 
-    <script src="/static/app.js?v=5"></script>
+    <script src="/static/app.js?v=6"></script>
   </body>
 </html>

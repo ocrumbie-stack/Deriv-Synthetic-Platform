@@ -900,6 +900,12 @@ canvas { display: block; width: 100%; }
 .forex-bot-fields { align-items: end; display: grid; gap: 12px; grid-template-columns: 1.4fr repeat(4, 1fr) 1.4fr auto; }
 .forex-bot-fields input { width: 100%; }
 .forex-bot-fields .cfd-bot-check input { width: auto; }
+.alert-generate { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 14px; }
+.alert-generate .nav-link-btn { padding: 9px; text-align: center; width: 100%; }
+.alert-kit { display: grid; gap: 14px; margin-top: 12px; }
+.alert-kit[hidden] { display: none; }
+.alert-kit-box { max-width: 640px; }
+.alert-kit .url-display, .alert-kit-box .url-display { overflow-wrap: anywhere; }
 .fx-journal-head { align-items: end; display: flex; gap: 12px; justify-content: space-between; margin: 24px 0 10px; }
 #page-forex-overview .webhook-panel { margin-top: 16px; }
 .sub-line { color: var(--muted); display: block; font-size: 11px; }
