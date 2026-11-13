@@ -110,6 +110,8 @@ class SignalStatusQuery(BaseModel):
 
     secret: str | None = None
     signal_id: str = Field(..., min_length=1, max_length=160)
+    # Which webhook it was sent to: each market keeps its own journal.
+    market: Literal["synthetic", "forex", "crypto"] = "synthetic"
 
 
 class SecretQuery(BaseModel):

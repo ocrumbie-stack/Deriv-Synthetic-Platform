@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 from app.config import ENV_EXECUTION_MODE, ENV_MAX_MULTIPLIER_FLOOR, ENV_TIMEZONE, deriv_credential_names, settings
 from app.database import Base, SessionLocal, engine, get_db, sync_schema
 from app.deriv import DerivClient, DerivExecutionError
-from app.models import BotPair, CryptoBot, ExecutionStatus, ForexBot, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
+from app.models import BotPair, CryptoBot, CryptoSignal, ExecutionStatus, ForexBot, ForexSignal, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
 from app.schemas import BotPairOut, BotPairUpdate, CloseAllTarget, CryptoBotCreate, CryptoBotUpdate, ForexBotCreate, ForexBotUpdate, ForexPairUpdate, ManualExitSignal, PositionAction, PositionStopAction, PositionTpSl, PositionTpSlAction, PositionTpSlDetail, PositionTrailAction, SecretQuery, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, SignalStatusQuery, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
 from app.services import PAIR_DEFAULT_FIELDS, account_exposure, close_all_open_trades, close_all_target, get_app_settings, local_period_start, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, preview_chart_trade, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal, trade_execution_lock
 from app import auth, crypto, ctrader_routes, forex, forex_trading, home, notify, trade_audit
@@ -334,6 +334,31 @@ async def preview_webhook(payload: WebhookSignal, db: Session = Depends(get_db))
     return preview
 
 
+def _market_signal_status(db: Session, query: SignalStatusQuery) -> dict:
+    """What became of a Forex or Crypto webhook, from that market's own
+    journal. Their take profit and stop loss are prices, not Deriv's dollar
+    amounts, so they go out under their own names."""
+    model = ForexSignal if query.market == "forex" else CryptoSignal
+    signal = db.scalar(select(model).where(model.signal_id == query.signal_id).order_by(model.id.desc()))
+    if signal is None or signal.status in (ExecutionStatus.received, ExecutionStatus.accepted):
+        return {"status": "pending"}
+    result = {
+        "status": signal.status.value,
+        "reason": signal.reason,
+        "symbol": signal.symbol,
+        "direction": signal.direction.value if signal.direction else None,
+        "mode": signal.execution_mode,
+        "market": query.market,
+    }
+    if signal.status == ExecutionStatus.executed:
+        result.update(take_profit_price=signal.take_profit, stop_loss_price=signal.stop_loss)
+        if query.market == "forex":
+            result.update(entry_price=signal.entry_price, lots=signal.lots)
+        else:
+            result.update(margin=signal.margin, leverage=signal.leverage)
+    return result
+
+
 @app.post("/webhook/status")
 async def webhook_status(query: SignalStatusQuery, db: Session = Depends(get_db)) -> dict:
     """What became of a webhook sent with this signal_id. The entry itself
@@ -341,6 +366,8 @@ async def webhook_status(query: SignalStatusQuery, db: Session = Depends(get_db)
     this reports pending."""
     if query.secret != settings.webhook_secret:
         raise HTTPException(status_code=403, detail="Invalid webhook secret.")
+    if query.market != "synthetic":
+        return _market_signal_status(db, query)
     signal = db.scalar(select(Signal).where(Signal.signal_id == query.signal_id).order_by(Signal.id.desc()))
     if signal is None or signal.status in (ExecutionStatus.received, ExecutionStatus.accepted):
         return {"status": "pending"}

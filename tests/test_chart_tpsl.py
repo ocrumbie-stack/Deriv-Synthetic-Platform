@@ -10,7 +10,7 @@ from app import services, trailing
 from app.config import settings
 from app.database import Base
 from app.deriv import DerivClient, chart_tpsl_amounts
-from app.models import ExecutionStatus, RiskSettings, SignalBot
+from app.models import CryptoSignal, ExecutionStatus, ForexSignal, RiskSettings, SignalBot
 from app.schemas import WebhookSignal
 
 
@@ -237,6 +237,52 @@ class SignalStatusEndpointTests(_ChartApiCase):
             (body["entry_spot"], body["stake"], body["multiplier"], body["commission"], body["direction"]),
             (7342.1, 100.0, 750.0, 1.23, "long"),
         )
+
+
+class MarketSignalStatusTests(_ChartApiCase):
+    """A drawn trade sent to Forex or Crypto is looked up in that market's
+    own journal, never the Synthetic one."""
+
+    def _market_status(self, market, signal_id="chart-1"):
+        return self.client.post("/webhook/status", json={"secret": "s", "signal_id": signal_id, "market": market}).json()
+
+    def _add(self, model, **fields):
+        values = dict(strategy_name="Chart Trades", action="entry", direction="long", signal_id="chart-1", execution_mode="demo")
+        self.db.add(model(**{**values, **fields}))
+        self.db.commit()
+
+    def test_forex_entry_reports_lots_and_price_levels(self):
+        self._add(ForexSignal, symbol="EURUSD", status=ExecutionStatus.executed, lots=0.01, entry_price=1.10012,
+                  take_profit=1.105, stop_loss=1.095)
+        body = self._market_status("forex")
+        self.assertEqual((body["status"], body["market"], body["mode"]), ("executed", "forex", "demo"))
+        self.assertEqual((body["entry_price"], body["lots"]), (1.10012, 0.01))
+        self.assertEqual((body["take_profit_price"], body["stop_loss_price"]), (1.105, 1.095))
+
+    def test_crypto_entry_reports_margin_and_leverage(self):
+        self._add(CryptoSignal, symbol="BTC-USDT", status=ExecutionStatus.executed, margin=12.5, leverage=10,
+                  take_profit=70000.0, stop_loss=60000.0)
+        body = self._market_status("crypto")
+        self.assertEqual((body["status"], body["margin"], body["leverage"]), ("executed", 12.5, 10))
+        self.assertEqual((body["take_profit_price"], body["stop_loss_price"]), (70000.0, 60000.0))
+
+    def test_rejection_reports_the_reason(self):
+        self._add(ForexSignal, symbol="EURUSD", status=ExecutionStatus.rejected, reason="Forex bot is paused.")
+        body = self._market_status("forex")
+        self.assertEqual((body["status"], body["reason"]), ("rejected", "Forex bot is paused."))
+
+    def test_pending_while_the_order_is_still_being_placed(self):
+        self._add(CryptoSignal, symbol="BTC-USDT")
+        self.assertEqual(self._market_status("crypto"), {"status": "pending"})
+
+    def test_each_market_only_sees_its_own_journal(self):
+        self._add(ForexSignal, symbol="EURUSD", status=ExecutionStatus.executed, lots=0.01)
+        self.assertEqual(self._market_status("crypto"), {"status": "pending"})
+        self.assertEqual(self._status().json(), {"status": "pending"})
+
+    def test_unknown_market_is_refused(self):
+        r = self.client.post("/webhook/status", json={"secret": "s", "signal_id": "chart-1", "market": "stocks"})
+        self.assertEqual(r.status_code, 422)
 
 
 class ExtensionPositionEndpointTests(_ChartApiCase):
