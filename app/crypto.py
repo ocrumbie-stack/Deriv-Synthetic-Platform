@@ -16,6 +16,7 @@ import asyncio
 import logging
 import time
 import uuid
+from datetime import timezone
 from decimal import Decimal
 
 import httpx
@@ -27,7 +28,7 @@ from app.blofin import BlofinClient, BlofinError, configured, contract_symbol, c
 from app.config import settings
 from app.models import CryptoBot, CryptoSignal, Direction, ExecutionStatus, SignalAction
 from app.schemas import WebhookSignal
-from app.services import get_risk_settings
+from app.services import get_risk_settings, local_period_start
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,28 @@ def stop_prices(bot: CryptoBot, direction: Direction, price: float, tick_size) -
     return at(bot.tp_pct, True), at(bot.sl_pct, False)
 
 
+async def limit_block(client: BlofinClient, risk, other_positions: list[dict], margin: float) -> str | None:
+    """Why the Crypto limits on Risk Controls refuse an entry putting up
+    `margin`, or None. A loss limit that can't be checked refuses the entry
+    rather than letting it through unchecked."""
+    limit = abs(risk.crypto_daily_loss_limit or 0.0)
+    if limit:
+        since = local_period_start("today").replace(tzinfo=timezone.utc)
+        try:
+            closed = await client.closed_positions(int(since.timestamp() * 1000))
+        except (BlofinError, OSError, httpx.HTTPError) as e:
+            return f"Couldn't check the Crypto daily loss limit ({e}), so the entry was refused."
+        net = sum(row["realized_pnl"] for row in closed)
+        if net <= -limit:
+            return f"Crypto daily loss limit reached: today's closed P/L is ${net:,.2f}, limit -${limit:,.2f}."
+    cap = risk.crypto_max_margin or 0.0
+    if cap:
+        in_use = sum(p.get("margin") or 0.0 for p in other_positions)
+        if in_use + margin > cap:
+            return f"Crypto margin limit: ${in_use:,.2f} in open positions plus this bot's ${margin:,.2f} is over ${cap:,.2f}."
+    return None
+
+
 def _client_order_id() -> str:
     # BloFin allows letters and digits only, up to 32.
     return f"wp{uuid.uuid4().hex[:24]}"
@@ -103,9 +126,32 @@ def _finish(db: Session, signal: CryptoSignal, status: ExecutionStatus, reason: 
     signal.status = status
     signal.reason = reason
     db.commit()
-    if status == ExecutionStatus.failed:
-        notify.order_failed(signal.execution_mode, f"BloFin {signal.action.value} {signal.symbol}", reason)
+    _alert(signal)
     return signal
+
+
+def _label(symbol: str) -> str:
+    """BTCUSDT for a BloFin id; the ticker as sent when it never resolved."""
+    return pair_label(symbol) if "-" in symbol else symbol
+
+
+def _alert(signal: CryptoSignal) -> None:
+    """The Telegram message for a finished signal."""
+    mode, pair, status = signal.execution_mode, _label(signal.symbol), signal.status
+    direction = signal.direction.value if signal.direction else ""
+    if status == ExecutionStatus.failed:
+        notify.order_failed(mode, f"Crypto {signal.action.value} {pair}", signal.reason)
+    elif status == ExecutionStatus.rejected:
+        notify.market_rejected(mode, "Crypto", f"{signal.action.value} {direction}".strip(), pair, signal.strategy_name, signal.reason)
+    elif status == ExecutionStatus.executed:
+        detail = f"${signal.margin:.2f} margin · {signal.leverage}x"
+        if signal.take_profit or signal.stop_loss:
+            detail += f" · TP {signal.take_profit or '—'} / SL {signal.stop_loss or '—'}"
+        if signal.reason:
+            detail += f" · {signal.reason}"
+        notify.market_opened(mode, "Crypto", direction, pair, signal.strategy_name, detail)
+    elif status == ExecutionStatus.closed:
+        notify.market_closed(mode, "Crypto", pair, signal.strategy_name, "strategy exit")
 
 
 async def process_signal(db: Session, payload: WebhookSignal, client: BlofinClient | None = None) -> CryptoSignal:
@@ -134,6 +180,11 @@ async def process_signal(db: Session, payload: WebhookSignal, client: BlofinClie
     except BlofinError as e:
         return _finish(db, signal, ExecutionStatus.rejected, str(e))
     signal.symbol = symbol
+    risk = get_risk_settings(db)
+    if risk.duplicate_blocking and payload.signal_id:
+        seen = db.scalar(select(CryptoSignal.id).where(CryptoSignal.signal_id == payload.signal_id, CryptoSignal.id != signal.id))
+        if seen:
+            return _finish(db, signal, ExecutionStatus.rejected, "Duplicate signal_id.")
     if not configured(mode):
         return _finish(db, signal, ExecutionStatus.rejected, f"BloFin {mode} isn't connected - set {', '.join(missing_settings(mode))}.")
 
@@ -142,7 +193,6 @@ async def process_signal(db: Session, payload: WebhookSignal, client: BlofinClie
 
     if payload.direction is None:
         return _finish(db, signal, ExecutionStatus.rejected, "Entry needs a direction (long or short).")
-    risk = get_risk_settings(db)
     if settings.emergency_stop or risk.emergency_stop:
         return _finish(db, signal, ExecutionStatus.rejected, "Emergency stop is active.")
     if bot is None:
@@ -164,9 +214,15 @@ async def process_signal(db: Session, payload: WebhookSignal, client: BlofinClie
             return _finish(db, signal, ExecutionStatus.rejected,
                            f"${value:,.2f} is under BloFin's smallest {pair_label(symbol)} position (about ${smallest:,.2f}) - raise the bot's margin or leverage.")
 
-        open_positions = await client.positions(symbol)
+        account_positions = await client.positions()
+        open_positions = [p for p in account_positions if p["symbol"] == symbol]
         if any(p["side"] == POSITION_SIDE[payload.direction] for p in open_positions):
             return _finish(db, signal, ExecutionStatus.rejected, f"A {payload.direction.value} {pair_label(symbol)} position is already open.")
+        # A reversal closes this pair's position first, freeing its margin.
+        others = [p for p in account_positions if p["symbol"] != symbol]
+        blocked = await limit_block(client, risk, others, bot.margin)
+        if blocked:
+            return _finish(db, signal, ExecutionStatus.rejected, blocked)
         for position in open_positions:
             await client.close_position(position, _client_order_id())
         hedge = await client.hedge_mode()
@@ -365,3 +421,4 @@ async def close_position(symbol: str, side: str, client: BlofinClient | None = N
             raise BlofinError(f"No open {side.lower()} {pair_label(symbol)} position.")
         for position in positions:
             await client.close_position(position, _client_order_id())
+    notify.market_closed(client.mode, "Crypto", pair_label(symbol), "", f"{side.lower()} closed from the dashboard")

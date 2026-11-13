@@ -1728,6 +1728,10 @@ function renderRisk(risk) {
   const expEl  = document.querySelector("#accountExposureLimit");
   if (lossEl) lossEl.value = risk.account_daily_loss_limit || "";
   if (expEl)  expEl.value  = risk.max_account_exposure     || "";
+  // Forex and Crypto limits; a box being typed in is left alone.
+  document.querySelectorAll("[data-risk-field]").forEach(input => {
+    if (document.activeElement !== input) input.value = risk[input.dataset.riskField] || "";
+  });
 
   const todayNetEl = document.querySelector("#todayNet");
   if (todayNetEl) {
@@ -3433,6 +3437,15 @@ document.querySelector("#accountExposureLimit")?.addEventListener("change", asyn
   await patchJson("/api/risk", { max_account_exposure: Number(e.target.value || 0) });
   await refresh();
 });
+
+document.querySelectorAll("[data-risk-field]").forEach(input => input.addEventListener("change", async () => {
+  try {
+    await patchJson("/api/risk", { [input.dataset.riskField]: Number(input.value || 0) });
+  } catch (err) {
+    showNotice("Couldn't save the limit", err.message);
+  }
+  await refresh();
+}));
 
 // ─── Settings page (whole platform) ─────────────────────────────────────────
 

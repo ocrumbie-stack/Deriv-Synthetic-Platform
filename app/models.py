@@ -41,6 +41,13 @@ class RiskSettings(Base):
     execution_mode_override: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     max_account_exposure: Mapped[float] = mapped_column(Float, default=0.0)
     account_daily_loss_limit: Mapped[float] = mapped_column(Float, default=0.0)
+    # Forex and Crypto trade on their own broker accounts, so each has its
+    # own limits in that account's currency. 0 is off. The loss limit is
+    # today's closed P/L; the margin limit is margin in open positions.
+    forex_daily_loss_limit: Mapped[float] = mapped_column(Float, default=0.0)
+    forex_max_margin: Mapped[float] = mapped_column(Float, default=0.0)
+    crypto_daily_loss_limit: Mapped[float] = mapped_column(Float, default=0.0)
+    crypto_max_margin: Mapped[float] = mapped_column(Float, default=0.0)
     # Open Positions' close-all target: once the summed unrealized P/L of every
     # open position reaches +take_profit or -stop_loss, all of them are closed
     # and the target clears - unless close_all_repeat keeps it for the next

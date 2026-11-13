@@ -275,5 +275,70 @@ class HelperTests(ForexTradingTestCase):
         self.assertIsNotNone(out["closed_at"])
 
 
+class LimitTests(ForexTradingTestCase):
+    def limits(self, **values):
+        risk = self.db.get(RiskSettings, 1)
+        for name, value in values.items():
+            setattr(risk, name, value)
+        self.db.commit()
+
+    def test_daily_loss_limit_refuses_entries_but_not_exits(self):
+        self.limits(forex_daily_loss_limit=50)
+        client = FakeClient([position(9, "long", label=forex_trading.LABEL, comment="fx")])
+        client.deals = [{"net_profit": -30.0}, {"net_profit": -20.5}]
+        signal = self.send(client, symbol="USDJPY")
+        self.assertEqual(signal.status, ExecutionStatus.rejected)
+        self.assertIn("daily loss limit reached", signal.reason)
+        self.assertEqual(client.orders, [])
+        self.assertEqual(self.send(client, action="exit", direction=None).status, ExecutionStatus.closed)
+
+    def test_entry_goes_through_under_the_loss_limit(self):
+        self.limits(forex_daily_loss_limit=50)
+        client = FakeClient()
+        client.deals = [{"net_profit": -30.0}, {"net_profit": 12.0}]
+        self.assertEqual(self.send(client).status, ExecutionStatus.executed)
+
+    def test_unchecked_loss_limit_refuses_the_entry(self):
+        self.limits(forex_daily_loss_limit=50)
+        client = FakeClient()
+
+        async def broken(since, until=None):
+            raise CTraderError("cTrader timed out")
+        client.closing_deals = broken
+        signal = self.send(client)
+        self.assertEqual(signal.status, ExecutionStatus.rejected)
+        self.assertIn("Couldn't check", signal.reason)
+        self.assertEqual(client.orders, [])
+
+    def test_margin_limit_counts_every_position_but_frees_a_reversal(self):
+        self.limits(forex_max_margin=3)
+        # 3.67 margin held by a position opened in the cTrader app.
+        signal = self.send(FakeClient([position(9, "long")]))
+        self.assertEqual(signal.status, ExecutionStatus.rejected)
+        self.assertIn("margin limit reached", signal.reason)
+        # The strategy's own long is closed by the reversal, so its margin doesn't count.
+        client = FakeClient([position(9, "long", label=forex_trading.LABEL, comment="fx")])
+        self.assertEqual(self.send(client, direction="short").status, ExecutionStatus.executed)
+
+    def test_duplicate_signal_id_is_refused_when_blocking_is_on(self):
+        client = FakeClient()
+        self.assertEqual(self.send(client, signal_id="a1").status, ExecutionStatus.executed)
+        again = self.send(client, symbol="USDJPY", signal_id="a1")
+        self.assertEqual((again.status, again.reason), (ExecutionStatus.rejected, "Duplicate signal_id."))
+        self.limits(duplicate_blocking=False)
+        self.assertEqual(self.send(client, symbol="USDJPY", signal_id="a1").status, ExecutionStatus.executed)
+
+    def test_telegram_messages_for_open_close_and_reject(self):
+        client = FakeClient()
+        with patch("app.notify.notify") as sent:
+            self.send(client)
+            self.send(client)  # same direction again
+            self.send(client, action="exit", direction=None)
+        events = [call.args[0] for call in sent.call_args_list]
+        self.assertEqual(events, ["trade_opened", "signal_rejected", "trade_closed"])
+        self.assertIn("Forex: opened LONG EURUSD", sent.call_args_list[0].args[1])
+        self.assertIn("P/L +1.25", sent.call_args_list[2].args[1])
+
+
 if __name__ == "__main__":
     unittest.main()

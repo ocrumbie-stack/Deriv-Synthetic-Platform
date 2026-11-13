@@ -26,7 +26,7 @@ from app.config import settings
 from app.ctrader import CTraderClient, CTraderError
 from app.models import Direction, ExecutionStatus, ForexBot, ForexSignal, SignalAction
 from app.schemas import WebhookSignal
-from app.services import get_risk_settings
+from app.services import get_risk_settings, local_period_start
 
 logger = logging.getLogger(__name__)
 
@@ -91,9 +91,49 @@ def _finish(db: Session, signal: ForexSignal, status: ExecutionStatus, reason: s
     signal.status = status
     signal.reason = reason
     db.commit()
-    if status == ExecutionStatus.failed:
-        notify.order_failed(signal.execution_mode, f"Forex {signal.action.value} {signal.symbol}", reason)
+    _alert(signal)
     return signal
+
+
+def _alert(signal: ForexSignal) -> None:
+    """The Telegram message for a finished signal."""
+    mode, pair, status = signal.execution_mode, signal.symbol, signal.status
+    direction = signal.direction.value if signal.direction else ""
+    if status == ExecutionStatus.failed:
+        notify.order_failed(mode, f"Forex {signal.action.value} {pair}", signal.reason)
+    elif status == ExecutionStatus.rejected:
+        notify.market_rejected(mode, "Forex", f"{signal.action.value} {direction}".strip(), pair, signal.strategy_name, signal.reason)
+    elif status == ExecutionStatus.executed:
+        detail = f"{signal.lots:g} lots" + (f" @ {signal.entry_price:g}" if signal.entry_price else "")
+        if signal.closed_positions:
+            detail += f" · reversed, the closed side made {signal.net_profit or 0:+.2f}"
+        notify.market_opened(mode, "Forex", direction, pair, signal.strategy_name, detail)
+    elif status == ExecutionStatus.closed:
+        how = "closed from the dashboard" if signal.signal_id == MANUAL_CLOSE else "strategy exit"
+        notify.market_closed(mode, "Forex", pair, signal.strategy_name, how, signal.net_profit)
+
+
+async def limit_block(client: CTraderClient, risk, other_positions: list[dict]) -> str | None:
+    """Why the Forex limits on Risk Controls refuse an entry, or None.
+    Amounts are in the cTrader account's currency. The margin a new order
+    needs isn't known before it is placed, so the margin limit stops entries
+    once the margin already in use has reached it. A loss limit that can't
+    be checked refuses the entry rather than letting it through unchecked."""
+    limit = abs(risk.forex_daily_loss_limit or 0.0)
+    if limit:
+        try:
+            deals = await client.closing_deals(local_period_start("today"))
+        except CTraderError as e:
+            return f"Couldn't check the Forex daily loss limit ({e}), so the entry was refused."
+        net = sum(d["net_profit"] for d in deals)
+        if net <= -limit:
+            return f"Forex daily loss limit reached: today's closed P/L is {net:,.2f}, limit -{limit:,.2f}."
+    cap = risk.forex_max_margin or 0.0
+    if cap:
+        in_use = sum(p.get("used_margin") or 0.0 for p in other_positions)
+        if in_use >= cap:
+            return f"Forex margin limit reached: {in_use:,.2f} margin in use, limit {cap:,.2f}."
+    return None
 
 
 def opened_by(db: Session, account_id: int) -> dict[int, str]:
@@ -172,11 +212,15 @@ async def process_signal(
     except ValueError as e:
         return _finish(db, signal, ExecutionStatus.rejected, str(e))
     signal.symbol = pair
+    risk = get_risk_settings(db)
+    if risk.duplicate_blocking and payload.signal_id and payload.signal_id != MANUAL_CLOSE:
+        seen = db.scalar(select(ForexSignal.id).where(ForexSignal.signal_id == payload.signal_id, ForexSignal.id != signal.id))
+        if seen:
+            return _finish(db, signal, ExecutionStatus.rejected, "Duplicate signal_id.")
 
     if payload.action == SignalAction.entry:
         if payload.direction is None:
             return _finish(db, signal, ExecutionStatus.rejected, "Entry needs a direction (long or short).")
-        risk = get_risk_settings(db)
         if settings.emergency_stop or risk.emergency_stop:
             return _finish(db, signal, ExecutionStatus.rejected, "Emergency stop is active.")
         if bot is None:
@@ -196,7 +240,8 @@ async def process_signal(
         signal.account_id = account_id
         ctrader.verify_account_mode(account_id, live, MARKET)
         symbol = await client.resolve_symbol(pair)
-        positions = strategy_positions(await client.positions(), opened_by(db, account_id), payload.strategy, int(symbol["symbolId"]))
+        account_positions = await client.positions()
+        positions = strategy_positions(account_positions, opened_by(db, account_id), payload.strategy, int(symbol["symbolId"]))
     except CTraderError as e:
         return _finish(db, signal, ExecutionStatus.failed, str(e))
 
@@ -216,6 +261,11 @@ async def process_signal(
 
     if any(p["direction"] == payload.direction.value for p in positions):
         return _finish(db, signal, ExecutionStatus.rejected, f"A {payload.direction.value} {forex.pair_label(pair)} position is already open.")
+    # A reversal closes the strategy's opposite position first, freeing its margin.
+    closing = {p["position_id"] for p in positions}
+    blocked = await limit_block(client, risk, [p for p in account_positions if p["position_id"] not in closing])
+    if blocked:
+        return _finish(db, signal, ExecutionStatus.rejected, blocked)
     reversed_note = None
     if positions:
         try:

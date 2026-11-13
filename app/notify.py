@@ -169,3 +169,31 @@ def signal_rejected(signal) -> None:
         f"⛔ {mode_tag(signal.execution_mode)} Rejected {action}{direction} {signal.symbol}\n"
         f"Bot: {signal.strategy_name} · {signal.rejection_reason}"
     ))
+
+
+# ─── Forex and Crypto ────────────────────────────────────────────────────────
+# These markets keep their own signal journals rather than Trade rows, so the
+# messages are built from plain values. They use the same event switches.
+
+
+def market_opened(mode: str | None, market: str, direction: str, symbol: str, strategy: str, detail: str) -> None:
+    notify("trade_opened", (
+        f"🟢 {mode_tag(mode)} {market}: opened {direction.upper()} {symbol}\n"
+        f"Bot: {strategy} · {detail}"
+    ))
+
+
+def market_closed(mode: str | None, market: str, symbol: str, strategy: str, detail: str, net: float | None = None) -> None:
+    """`net` is in the broker account's own currency, so no symbol is shown."""
+    result = f"P/L {net:+.2f} · " if net is not None else ""
+    notify("trade_closed", (
+        f"{'🔻' if net is not None and net < 0 else '✅'} {mode_tag(mode)} {market}: closed {symbol}\n"
+        f"Bot: {strategy or '—'} · {result}{detail}"
+    ))
+
+
+def market_rejected(mode: str | None, market: str, action: str, symbol: str, strategy: str, reason: str | None) -> None:
+    notify("signal_rejected", (
+        f"⛔ {mode_tag(mode)} {market}: rejected {action} {symbol}\n"
+        f"Bot: {strategy} · {reason}"
+    ))

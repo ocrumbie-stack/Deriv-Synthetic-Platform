@@ -236,6 +236,29 @@ class BlofinClient:
         rows = await self._request("GET", "/api/v1/account/positions", {"instId": symbol})
         return [_position(row) for row in rows or [] if float(row.get("positions") or 0) != 0]
 
+    async def closed_positions(self, since_ms: int) -> list[dict]:
+        """Positions closed (fully or partly) since a Unix time in ms, with
+        the realized P/L and trading fee BloFin reports for each."""
+        out, after = [], None
+        for _ in range(10):  # 100 a page; 1,000 closes in a day is plenty
+            rows = await self._request(
+                "GET", "/api/v1/account/positions-history", {"begin": str(since_ms), "limit": "100", "after": after}
+            ) or []
+            out += rows
+            if len(rows) < 100:
+                break
+            after = rows[-1].get("historyId")
+        return [
+            {
+                "symbol": row.get("instId"),
+                "realized_pnl": _num(row.get("realizedPnl")) or 0.0,
+                "fee": _num(row.get("fee")) or 0.0,
+                "closed_at_ms": int(_num(row.get("updateTime")) or 0),
+            }
+            for row in out
+            if int(_num(row.get("updateTime")) or 0) >= since_ms
+        ]
+
     async def hedge_mode(self) -> bool:
         data = await self._request("GET", "/api/v1/account/position-mode") or {}
         return data.get("positionMode") == "long_short_mode"

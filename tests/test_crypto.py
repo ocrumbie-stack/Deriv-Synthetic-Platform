@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import unittest
 from decimal import Decimal
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -243,6 +243,69 @@ class CryptoSignalTests(unittest.TestCase):
                          {"BTC-USDT": (1, "long"), "ETH-USDT": (1, "short")})
         # The ETH long isn't the bot's short, and nothing opened SOL here.
         self.assertEqual([p["strategy"] for p in data["positions"]], ["btc", None, None])
+
+    def test_daily_loss_limit_refuses_entries_but_not_exits(self):
+        self.risk.crypto_daily_loss_limit = 20
+        self.db.commit()
+        client = self._client([position("long")])
+        client.closed_positions.return_value = [{"realized_pnl": -15.0}, {"realized_pnl": -5.5}]
+        payload = WebhookSignal(secret="s", strategy="btc", symbol="ETHUSDT", action="entry", direction="long")
+        signal = asyncio.run(crypto.process_signal(self.db, payload, client))
+        self.assertEqual(signal.status.value, "rejected")
+        self.assertIn("daily loss limit reached", signal.reason)
+        client.open_market.assert_not_awaited()
+        exit_payload = WebhookSignal(secret="s", strategy="btc", symbol="BTCUSDT", action="exit")
+        self.assertEqual(asyncio.run(crypto.process_signal(self.db, exit_payload, client)).status.value, "closed")
+
+    def test_unchecked_loss_limit_refuses_the_entry(self):
+        self.risk.crypto_daily_loss_limit = 20
+        self.db.commit()
+        client = self._client()
+        client.closed_positions.side_effect = BlofinError("BloFin HTTP 500")
+        signal = asyncio.run(crypto.process_signal(
+            self.db, WebhookSignal(secret="s", strategy="btc", symbol="BTCUSDT", action="entry", direction="long"), client))
+        self.assertEqual(signal.status.value, "rejected")
+        self.assertIn("Couldn't check", signal.reason)
+        client.open_market.assert_not_awaited()
+
+    def test_margin_limit_counts_other_pairs_but_frees_a_reversal(self):
+        self.risk.crypto_max_margin = 20
+        self.db.commit()
+        # $10 on ETH plus this bot's $12.50 is over $20.
+        signal, client = self._send([{"symbol": "ETH-USDT", "side": "LONG", "margin": 10.0}])
+        self.assertEqual(signal.status.value, "rejected")
+        self.assertIn("margin limit", signal.reason)
+        client.open_market.assert_not_awaited()
+        # A BTC short being reversed is closed first, so its margin doesn't count.
+        signal, client = self._send([{"symbol": "BTC-USDT", "side": "SHORT", "margin": 10.0}])
+        self.assertEqual(signal.status.value, "executed")
+
+    def test_duplicate_signal_id_is_refused_when_blocking_is_on(self):
+        self.assertEqual(self._send(signal_id="a1")[0].status.value, "executed")
+        again, client = self._send(signal_id="a1")
+        self.assertEqual((again.status.value, again.reason), ("rejected", "Duplicate signal_id."))
+        client.open_market.assert_not_awaited()
+
+    def test_telegram_messages_for_open_close_and_reject(self):
+        with patch("app.notify.notify") as sent:
+            self._send()
+            self._send(strategy="unknown")
+            client = self._client([position("long")])
+            asyncio.run(crypto.process_signal(self.db, WebhookSignal(secret="s", strategy="btc", symbol="BTCUSDT", action="exit"), client))
+        self.assertEqual([call.args[0] for call in sent.call_args_list], ["trade_opened", "signal_rejected", "trade_closed"])
+        self.assertIn("Crypto: opened LONG BTCUSDT", sent.call_args_list[0].args[1])
+
+    def test_closed_positions_reads_realized_pnl_since_the_start(self):
+        from app.blofin import BlofinClient
+        client = BlofinClient("demo")
+        rows = [
+            {"instId": "ETH-USDT", "realizedPnl": "0.7", "fee": "0.19", "updateTime": "2000", "historyId": "2"},
+            {"instId": "BCH-USDT", "realizedPnl": "-8.7", "fee": "0.54", "updateTime": "500", "historyId": "1"},
+        ]
+        with patch.object(BlofinClient, "_request", new=AsyncMock(return_value=rows)) as request:
+            closed = asyncio.run(client.closed_positions(1000))
+        self.assertEqual([(c["symbol"], c["realized_pnl"]) for c in closed], [("ETH-USDT", 0.7)])
+        self.assertEqual(request.call_args.args[:2], ("GET", "/api/v1/account/positions-history"))
 
     def test_api_key_failure_only_hides_the_badges(self):
         client = self._client()

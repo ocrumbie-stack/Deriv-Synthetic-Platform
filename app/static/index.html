@@ -1179,7 +1179,7 @@
               </div>
               <div class="risk-panel">
                 <div>
-                  <p class="panel-label">Account</p>
+                  <p class="panel-label">Synthetic</p>
                   <p class="panel-title">Daily Loss Limit</p>
                 </div>
                 <div class="field-row">
@@ -1196,7 +1196,7 @@
               </div>
               <div class="risk-panel">
                 <div>
-                  <p class="panel-label">Account</p>
+                  <p class="panel-label">Synthetic</p>
                   <p class="panel-title">Exposure Limit</p>
                 </div>
                 <div class="field-row">
@@ -1210,6 +1210,36 @@
                   </div>
                   <div class="meter-track"><span id="exposureMeter"></span></div>
                 </div>
+              </div>
+              <div class="risk-panel">
+                <div>
+                  <p class="panel-label">Forex</p>
+                  <p class="panel-title">Forex Limits</p>
+                </div>
+                <div class="field-row">
+                  <label for="forexLossLimit">Daily loss limit</label>
+                  <input id="forexLossLimit" data-risk-field="forex_daily_loss_limit" type="number" min="0" step="0.01" placeholder="off" />
+                </div>
+                <div class="field-row">
+                  <label for="forexMaxMargin">Max margin in use</label>
+                  <input id="forexMaxMargin" data-risk-field="forex_max_margin" type="number" min="0" step="0.01" placeholder="off" />
+                </div>
+                <p class="subtle settings-hint">In the cTrader account's currency, for the current mode's account. New entries are refused once today's closed P/L is down by the loss limit, or once margin in use has reached the margin limit. Exits always go through. Blank or 0 is off.</p>
+              </div>
+              <div class="risk-panel">
+                <div>
+                  <p class="panel-label">Crypto</p>
+                  <p class="panel-title">Crypto Limits</p>
+                </div>
+                <div class="field-row">
+                  <label for="cryptoLossLimit">Daily loss limit (USDT)</label>
+                  <input id="cryptoLossLimit" data-risk-field="crypto_daily_loss_limit" type="number" min="0" step="0.01" placeholder="off" />
+                </div>
+                <div class="field-row">
+                  <label for="cryptoMaxMargin">Max margin in use (USDT)</label>
+                  <input id="cryptoMaxMargin" data-risk-field="crypto_max_margin" type="number" min="0" step="0.01" placeholder="off" />
+                </div>
+                <p class="subtle settings-hint">New entries are refused once today's closed P/L on BloFin is down by the loss limit, or when the bot's margin would take open positions over the margin limit. Exits always go through. Blank or 0 is off.</p>
               </div>
             </div>
           </div>
@@ -1308,6 +1338,6 @@
       </div>
     </div>
 
-    <script src="/static/app.js?v=7"></script>
+    <script src="/static/app.js?v=8"></script>
   </body>
 </html>

@@ -669,6 +669,9 @@ def update_strategy(strategy_id: int, updates: dict, db: Session = Depends(get_d
     return strategy
 
 
+MARKET_LIMIT_FIELDS = ("forex_daily_loss_limit", "forex_max_margin", "crypto_daily_loss_limit", "crypto_max_margin")
+
+
 @app.get("/api/risk")
 def risk_settings(db: Session = Depends(get_db)) -> dict:
     risk = get_risk_settings(db)
@@ -680,6 +683,7 @@ def risk_settings(db: Session = Depends(get_db)) -> dict:
         "duplicate_blocking": risk.duplicate_blocking,
         "max_account_exposure": risk.max_account_exposure,
         "account_daily_loss_limit": risk.account_daily_loss_limit,
+        **{field: getattr(risk, field) or 0.0 for field in MARKET_LIMIT_FIELDS},
         "current_account_exposure": round(account_exposure(db), 8),
         "today_account_net": round(daily_account_net(db), 8),
         "close_all_target": close_all_target(risk, settings.execution_mode.lower()),
@@ -696,6 +700,15 @@ def update_risk_settings(updates: dict, db: Session = Depends(get_db)) -> dict:
     for field in ("emergency_stop", "duplicate_blocking", "max_account_exposure", "account_daily_loss_limit"):
         if field in updates:
             setattr(risk, field, updates[field])
+    for field in MARKET_LIMIT_FIELDS:
+        if field in updates:
+            try:
+                value = float(updates[field] or 0)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422, detail=f"{field} must be a number.")
+            if value < 0:
+                raise HTTPException(status_code=422, detail=f"{field} can't be negative.")
+            setattr(risk, field, value)
     if "execution_mode" in updates:
         mode = str(updates["execution_mode"] or "").strip().lower()
         if mode not in ("demo", "live"):
