@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Trading Platform</title>
-    <link rel="stylesheet" href="/static/styles.css?v=6" />
+    <link rel="stylesheet" href="/static/styles.css?v=7" />
   </head>
   <body>
     <div class="app">
@@ -881,7 +881,7 @@
             <div class="table-wrap">
               <table>
                 <thead><tr>
-                  <th>Strategy</th><th>Size</th><th>Stop loss</th><th>Take profit</th><th>Trailing stop</th><th>Allowed pairs</th><th>Status</th><th></th>
+                  <th>Bot</th><th>Size</th><th>TP / SL</th><th>P&amp;L (7 days)</th><th>Allowed pairs</th><th>Status</th><th></th>
                 </tr></thead>
                 <tbody id="forexBots"></tbody>
               </table>
@@ -1074,6 +1074,8 @@
                 <label><span class="bot-field-label">Strategy name</span><input name="name" type="text" placeholder="Must match the alert's strategy" required /></label>
                 <label><span class="bot-field-label">Margin (USDT)</span><input name="margin" type="number" min="1" step="0.01" value="10" required /></label>
                 <label><span class="bot-field-label">Leverage</span><input name="leverage" type="number" min="1" max="125" step="1" value="10" required /></label>
+                <label><span class="bot-field-label">TP % of margin (per trade)</span><input name="tp_pct" type="number" min="0.1" step="0.1" placeholder="optional" /></label>
+                <label><span class="bot-field-label">SL % of margin (per trade)</span><input name="sl_pct" type="number" min="0.1" max="99.9" step="0.1" placeholder="optional" /></label>
                 <label><span class="bot-field-label">Allowed pairs</span><input name="symbols" type="text" placeholder="Any — or BTCUSDT, ETHUSDT" /></label>
                 <button type="submit" class="dialog-btn primary">Create</button>
               </div>
@@ -1087,12 +1089,12 @@
             <div class="table-wrap">
               <table>
                 <thead><tr>
-                  <th>Strategy</th><th>Margin</th><th>Leverage</th><th>Position value</th><th>Allowed pairs</th><th>Status</th><th></th>
+                  <th>Bot</th><th>Margin</th><th>TP / SL</th><th>Open P&amp;L</th><th>Allowed pairs</th><th>Status</th><th></th>
                 </tr></thead>
                 <tbody id="cryptoBots"></tbody>
               </table>
             </div>
-            <p class="subtle settings-hint">Each entry puts up the bot's margin at its leverage, so $20 at 10x opens about a $200 position (isolated margin, rounded down to BloFin's lot size). Entries need an enabled bot with the alert's strategy name; the alert's own size and leverage are ignored. Pausing a bot only stops new entries — its exits still close positions.</p>
+            <p class="subtle settings-hint">Each entry puts up the bot's margin at its leverage, so $20 at 10x opens about a $200 position (isolated margin, rounded down to BloFin's lot size). Entries need an enabled bot with the alert's strategy name; the alert's own size and leverage are ignored. TP / SL are a % of the margin, placed on BloFin with each entry as prices measured from the last price: 50% at 10x is a 5% move. take_profit or stop_loss prices in the alert are used instead when sent. Click a bot to see the pairs it has traded; a position opened on BloFin itself isn't listed under a bot. Pausing a bot only stops new entries — its exits still close positions.</p>
           </div>
         </div>
 
@@ -1306,6 +1308,6 @@
       </div>
     </div>
 
-    <script src="/static/app.js?v=6"></script>
+    <script src="/static/app.js?v=7"></script>
   </body>
 </html>

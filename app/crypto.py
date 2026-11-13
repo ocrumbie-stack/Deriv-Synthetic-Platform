@@ -16,9 +16,10 @@ import asyncio
 import logging
 import time
 import uuid
+from decimal import Decimal
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import notify
@@ -61,6 +62,8 @@ def bot_out(bot: CryptoBot) -> dict:
         "margin": bot.margin,
         "leverage": bot.leverage,
         "position_value": position_value(bot.margin, bot.leverage),
+        "tp_pct": bot.tp_pct,
+        "sl_pct": bot.sl_pct,
         "enabled": bot.enabled,
         "created_at": bot.created_at.isoformat(),
     }
@@ -70,6 +73,25 @@ def position_value(margin: float, leverage: int) -> float:
     """The USDT position an entry aims for: $12.50 margin at 10x is $125.
     BloFin trades whole lots, so the order is this rounded down to a lot."""
     return round(margin * leverage, 2)
+
+
+def stop_prices(bot: CryptoBot, direction: Direction, price: float, tick_size) -> tuple[str | None, str | None]:
+    """The bot's take profit and stop loss (% of margin) as BloFin trigger
+    prices, measured from the last price: 50% of the margin at 10x is a 5%
+    move. Rounded to the pair's tick and returned as plain decimal text."""
+    tick = Decimal(str(tick_size or 0))
+
+    def at(pct: float | None, gain: bool) -> str | None:
+        if not pct:
+            return None
+        move = Decimal(str(pct)) / 100 / bot.leverage
+        up = gain == (direction == Direction.long)
+        level = Decimal(str(price)) * (1 + move if up else 1 - move)
+        if tick > 0:
+            level = (level / tick).to_integral_value() * tick
+        return format(level, "f") if level > 0 else None
+
+    return at(bot.tp_pct, True), at(bot.sl_pct, False)
 
 
 def _client_order_id() -> str:
@@ -150,9 +172,15 @@ async def process_signal(db: Session, payload: WebhookSignal, client: BlofinClie
         hedge = await client.hedge_mode()
         position_side = payload.direction.value if hedge else "net"
         await client.set_leverage(symbol, bot.leverage, position_side if hedge else None)
+        # Prices sent in the alert win over the bot's own % of margin.
+        take_profit, stop_loss = stop_prices(bot, payload.direction, price, instrument.get("tickSize"))
+        take_profit = payload.take_profit if payload.take_profit is not None else take_profit
+        stop_loss = payload.stop_loss if payload.stop_loss is not None else stop_loss
+        signal.take_profit = float(take_profit) if take_profit is not None else None
+        signal.stop_loss = float(stop_loss) if stop_loss is not None else None
         order = await client.open_market(
             symbol, payload.direction.value, contracts, _client_order_id(), position_side=position_side,
-            take_profit=payload.take_profit, stop_loss=payload.stop_loss,
+            take_profit=take_profit, stop_loss=stop_loss,
         )
     except (BlofinError, OSError, KeyError, ValueError) as e:
         logger.warning("BloFin entry failed for %s: %s", symbol, e)
@@ -196,6 +224,37 @@ def _signal_out(signal: CryptoSignal) -> dict:
     }
 
 
+def bot_pairs(db: Session, mode: str) -> tuple[dict[str, list[dict]], dict[str, CryptoSignal]]:
+    """What each strategy has traded in this mode - per pair, how many
+    entries were filled and the latest one's side and TP/SL - and, per pair,
+    the newest filled entry of any strategy (who an open position belongs to)."""
+    rows = db.execute(
+        select(CryptoSignal.strategy_name, CryptoSignal.symbol, func.count(), func.max(CryptoSignal.id))
+        .where(
+            CryptoSignal.execution_mode == mode,
+            CryptoSignal.action == SignalAction.entry,
+            CryptoSignal.status == ExecutionStatus.executed,
+        )
+        .group_by(CryptoSignal.strategy_name, CryptoSignal.symbol)
+    ).all()
+    latest = {s.id: s for s in db.scalars(select(CryptoSignal).where(CryptoSignal.id.in_([r[3] for r in rows])))}
+    pairs: dict[str, list[dict]] = {}
+    newest: dict[str, CryptoSignal] = {}
+    for strategy, symbol, entries, last_id in rows:
+        last = latest[last_id]
+        pairs.setdefault(strategy, []).append({
+            "symbol": symbol,
+            "entries": entries,
+            "direction": last.direction.value if last.direction else None,
+            "take_profit": last.take_profit,
+            "stop_loss": last.stop_loss,
+            "last_entry_at": last.created_at.isoformat(),
+        })
+        if symbol not in newest or last.id > newest[symbol].id:
+            newest[symbol] = last
+    return pairs, newest
+
+
 async def overview(db: Session, client: BlofinClient | None = None) -> dict:
     """Connection state, wallet, open positions and recent signals for the
     current demo/live mode only."""
@@ -204,11 +263,12 @@ async def overview(db: Session, client: BlofinClient | None = None) -> dict:
         select(CryptoSignal).where(CryptoSignal.execution_mode == mode).order_by(CryptoSignal.id.desc()).limit(200)
     )
     bots = db.scalars(select(CryptoBot).order_by(CryptoBot.name))
+    pairs, newest = bot_pairs(db, mode)
     data = {
         "mode": mode,
         "connected": configured(mode),
         "missing": missing_settings(mode),
-        "bots": [bot_out(b) for b in bots],
+        "bots": [{**bot_out(b), "pairs": pairs.get(b.name, [])} for b in bots],
         "balance": None,
         "positions": [],
         "error": None,
@@ -222,6 +282,12 @@ async def overview(db: Session, client: BlofinClient | None = None) -> dict:
         data["balance"], data["positions"] = await asyncio.gather(client.balance(), client.positions())
     except (BlofinError, OSError) as e:
         data["error"] = str(e)
+    # A position belongs to the strategy whose entry on that pair was filled
+    # last, if it was the same side; otherwise it was opened on BloFin itself.
+    for position in data["positions"]:
+        last = newest.get(position["symbol"])
+        owned = last is not None and last.direction is not None and POSITION_SIDE[last.direction] == position["side"]
+        position["strategy"] = last.strategy_name if owned else None
     # Only decorates the header, so a failure here hides the badges rather
     # than flagging the connection.
     try:

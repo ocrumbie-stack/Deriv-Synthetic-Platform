@@ -246,8 +246,8 @@ class BlofinClient:
         })
 
     async def open_market(self, symbol: str, direction: str, contracts: Decimal, client_order_id: str,
-                          position_side: str = "net", take_profit: float | None = None,
-                          stop_loss: float | None = None) -> dict:
+                          position_side: str = "net", take_profit: float | str | None = None,
+                          stop_loss: float | str | None = None) -> dict:
         """A market entry of `contracts`. TP/SL are prices held on BloFin,
         triggered on the last price and filled at market ("-1")."""
         body = {

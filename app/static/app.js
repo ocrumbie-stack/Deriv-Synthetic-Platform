@@ -291,7 +291,7 @@ function navigate(pageId, updateUrl = true) {
   if (pageId === "forex-overview") startForexView();
   else stopForexView();
   if (pageId === "forex-bots") loadForexBots();
-  if (pageId === "forex-positions" || pageId === "forex-history") startForexTrading();
+  if (pageId === "forex-positions" || pageId === "forex-history" || pageId === "forex-bots") startForexTrading();
   else stopForexTrading();
   if (market === "crypto") startCryptoView();
   else stopCryptoView();
@@ -764,6 +764,7 @@ function renderForexTrading(data) {
       <td class="subtle wrap-cell">${escapeAttr(s.reason || "")}</td>
     </tr>`).join("")
     : emptyRow(9, "No forex signals yet");
+  renderForexBots();
 }
 
 document.querySelector("#forexPositions").addEventListener("click", async event => {
@@ -1093,28 +1094,174 @@ function renderCrypto(data) {
     : emptyRow(9, "No crypto signals yet");
 
   document.querySelector("#cryptoBots").innerHTML = data.bots.length
-    ? data.bots.map(bot => `<tr>
-      <td><strong>${escapeAttr(bot.name)}</strong></td>
-      <td>${cryptoMoney(bot.margin)}</td>
-      <td>${bot.leverage}x</td>
-      <td>${cryptoMoney(bot.position_value)}</td>
-      <td>${bot.symbols.length ? bot.symbols.map(cryptoPair).join(", ") : '<span class="subtle">Any</span>'}</td>
-      <td>${statusBadge(bot.enabled ? "enabled" : "paused")}</td>
-      <td class="row-actions">
-        <button type="button" class="mini-switch neutral" data-bot-action="alert" data-bot-id="${bot.id}">Alerts</button>
-        <button type="button" class="mini-switch neutral" data-bot-action="toggle" data-bot-id="${bot.id}">${bot.enabled ? "Pause" : "Resume"}</button>
-        <button type="button" class="mini-switch neutral" data-bot-action="edit" data-bot-id="${bot.id}">Edit</button>
-        <button type="button" class="mini-switch" data-bot-action="delete" data-bot-id="${bot.id}">Delete</button>
-      </td>
-    </tr>`).join("")
+    ? marketBotRows(cryptoBotRows(data), cryptoBotsOpen, "Entries")
     : emptyRow(7, "No crypto bots yet. Create one for each strategy that should trade on BloFin.");
 }
 
-function cryptoPositionHint(margin, leverage) {
+// ─── Bot rows shared by Forex and Crypto ─────────────────────────────────────
+// Like a Multipliers bot row: open pairs with their running P/L under the
+// name, TP / SL, P&L, and a Pairs table that opens on a click. Which rows are
+// open is kept per market so the 10s refresh doesn't close them.
+
+const forexBotsOpen = new Set();
+const cryptoBotsOpen = new Set();
+
+function plusMinus(tp, sl, unit) {
+  if (tp == null && sl == null) return '<span class="subtle">— / —</span>';
+  return `${tp == null ? "—" : `+${number.format(tp)}${unit}`} / ${sl == null ? "—" : `-${number.format(sl)}${unit}`}`;
+}
+
+function botPnl(v, money) {
+  return `<span class="${pnlClass(v)}">${v > 0 ? "+" : ""}${money(v)}</span>`;
+}
+
+function marketBotRows(rows, openIds, tradesLabel) {
+  const dash = '<span class="subtle">—</span>';
+  return rows.map(r => {
+    const open = openIds.has(r.id);
+    const badges = r.open.map(p => `<span class="badge ${p.upl > 0 ? "ok" : p.upl < 0 ? "warn" : ""}">${p.label}${p.upl == null ? "" : ` ${p.upl > 0 ? "+" : ""}${r.money(p.upl)}`}</span>`).join("");
+    const pairs = r.pairs.length
+      ? r.pairs.map(p => `<tr>
+          <td><strong>${p.label}</strong></td>
+          <td>${p.position || dash}</td>
+          <td class="mbot-mono">${p.tpsl}</td>
+          <td>${p.trades}</td>
+          <td class="mbot-mono">${p.pnl == null ? dash : botPnl(p.pnl, r.money)}</td>
+          <td>${p.position ? '<span class="badge ok">open</span>' : '<span class="badge">flat</span>'}</td>
+        </tr>`).join("")
+      : `<tr><td colspan="6" class="subtle">${r.noPairs}</td></tr>`;
+    return `
+    <tr class="mbot-row" data-bot-expand="${r.id}">
+      <td>
+        <div class="mbot-name"><span class="mbot-chev${open ? " open" : ""}">▶</span><span class="bot-dot ${r.enabled ? "active" : "paused"}"></span><strong>${escapeAttr(r.name)}</strong></div>
+        ${badges ? `<div class="mbot-badges">${badges}</div>` : ""}
+      </td>
+      <td>${r.size}</td>
+      <td class="mbot-mono">${r.tpsl}</td>
+      <td class="mbot-mono">${r.pnl == null ? dash : `<strong>${botPnl(r.pnl, r.money)}</strong>`}${r.pnlNote ? `<span class="sub-line">${r.pnlNote}</span>` : ""}</td>
+      <td>${r.allowed}</td>
+      <td>${statusBadge(r.enabled ? "enabled" : "paused")}</td>
+      <td class="row-actions">
+        <button type="button" class="mini-switch neutral" data-bot-action="alert" data-bot-id="${r.id}">Alerts</button>
+        <button type="button" class="mini-switch neutral" data-bot-action="toggle" data-bot-id="${r.id}">${r.enabled ? "Pause" : "Resume"}</button>
+        <button type="button" class="mini-switch neutral" data-bot-action="edit" data-bot-id="${r.id}">Edit</button>
+        <button type="button" class="mini-switch" data-bot-action="delete" data-bot-id="${r.id}">Delete</button>
+      </td>
+    </tr>
+    <tr class="mbot-detail"${open ? "" : " hidden"}>
+      <td colspan="7">
+        <div class="mbot-pairs-title">Pairs</div>
+        <table>
+          <thead><tr><th>Symbol</th><th>Position</th><th>TP / SL</th><th>${tradesLabel}</th><th>P&amp;L</th><th>Status</th></tr></thead>
+          <tbody>${pairs}</tbody>
+        </table>
+      </td>
+    </tr>`;
+  }).join("");
+}
+
+// A click on a bot row (not on one of its buttons) opens or closes its pairs.
+function toggleMarketBotRow(event, openIds) {
+  const row = event.target.closest("[data-bot-expand]");
+  if (!row || event.target.closest("button")) return;
+  const id = Number(row.dataset.botExpand);
+  const open = !openIds.has(id);
+  if (open) openIds.add(id); else openIds.delete(id);
+  row.querySelector(".mbot-chev").classList.toggle("open", open);
+  row.nextElementSibling.hidden = !open;
+}
+
+const sumOf = (items, key) => items.reduce((total, item) => total + Number(item[key] || 0), 0);
+
+function cryptoBotRows(data) {
+  return data.bots.map(bot => {
+    const open = data.positions.filter(p => p.strategy === bot.name);
+    const traded = Object.fromEntries((bot.pairs || []).map(p => [p.symbol, p]));
+    const symbols = [...new Set([...open.map(p => p.symbol), ...Object.keys(traded)])].sort();
+    const botTpsl = plusMinus(bot.tp_pct, bot.sl_pct, "%");
+    return {
+      id: bot.id, name: bot.name, enabled: bot.enabled, money: cryptoMoney,
+      size: `${cryptoMoney(bot.margin)}<span class="sub-line">${bot.leverage}x · ${cryptoMoney(bot.position_value)} position</span>`,
+      tpsl: botTpsl,
+      pnl: data.connected && !data.error ? sumOf(open, "unrealized_pnl") : null,
+      pnlNote: open.length ? `${open.length} open` : "no open position",
+      allowed: bot.symbols.length ? bot.symbols.map(cryptoPair).join(", ") : '<span class="subtle">Any</span>',
+      open: open.map(p => ({ label: cryptoPair(p.symbol), upl: p.unrealized_pnl })),
+      noPairs: "No pairs traded yet — pairs appear here once an entry is filled.",
+      pairs: symbols.map(symbol => {
+        const pos = open.find(p => p.symbol === symbol);
+        const last = traded[symbol];
+        // The prices placed with the latest entry, while its position is open.
+        const prices = pos && last && (last.take_profit || last.stop_loss)
+          ? `${last.take_profit ? number.format(last.take_profit) : "—"} / ${last.stop_loss ? number.format(last.stop_loss) : "—"}`
+          : botTpsl;
+        return {
+          label: cryptoPair(symbol),
+          position: pos ? `<span class="badge ${pos.side === "LONG" ? "ok" : "bad"}">${escapeAttr(pos.side)}</span> <span class="subtle">${cryptoMoney(pos.margin)} · ${pos.leverage == null ? "—" : `${escapeAttr(pos.leverage)}x`} @ ${pos.entry_price == null ? "—" : number.format(pos.entry_price)}</span>` : "",
+          tpsl: prices,
+          trades: last ? last.entries : 0,
+          pnl: pos ? Number(pos.unrealized_pnl || 0) : null,
+        };
+      }),
+    };
+  });
+}
+
+function forexBotRows() {
+  const trading = forexTradingView.data;
+  const loaded = trading && trading.connected && !trading.error;
+  const money = v => fxMoney(v);
+  return forexBots.map(bot => {
+    const open = loaded ? trading.positions.filter(p => p.strategy === bot.name) : [];
+    const closed = loaded ? trading.history.filter(t => t.strategy === bot.name) : [];
+    const symbols = [...new Set([...open, ...closed].map(t => t.symbol))].sort();
+    const botTpsl = plusMinus(bot.take_profit_pips, bot.stop_loss_pips, " pips") + (bot.trailing_stop ? '<span class="sub-line">Trailing</span>' : "");
+    const unrealized = sumOf(open, "unrealized_pnl");
+    return {
+      id: bot.id, name: bot.name, enabled: bot.enabled, money,
+      size: `${fxLots(bot.lots)}<span class="sub-line">${number.format(bot.units)} units</span>`,
+      tpsl: botTpsl,
+      pnl: loaded ? sumOf(closed, "net_profit") + unrealized : null,
+      pnlNote: loaded ? `${closed.length} closed${open.length ? ` · ${unrealized > 0 ? "+" : ""}${money(unrealized)} open` : ""}` : "",
+      allowed: bot.symbols.length ? bot.symbols.map(fxPair).join(", ") : '<span class="subtle">All pairs</span>',
+      open: open.map(p => ({ label: fxSymbol(p.symbol), upl: p.unrealized_pnl })),
+      noPairs: loaded
+        ? `No pairs traded in the last ${trading.history_days} days — pairs appear here once an entry is filled.`
+        : "Pick a cTrader account on the Forex Overview to see this bot's pairs.",
+      pairs: symbols.map(symbol => {
+        const pos = open.find(p => p.symbol === symbol);
+        const trades = closed.filter(t => t.symbol === symbol);
+        return {
+          label: fxSymbol(symbol),
+          position: pos ? `${fxSide(pos.direction)} <span class="subtle">${pos.lots == null ? "—" : fxLots(pos.lots)} @ ${fxPrice(pos.entry_price)}</span>` : "",
+          // The prices on the open position; otherwise what the bot will place.
+          tpsl: pos ? `${fxPrice(pos.take_profit)} / ${fxPrice(pos.stop_loss)}${pos.trailing_stop ? '<span class="sub-line">Trailing</span>' : ""}` : botTpsl,
+          trades: trades.length,
+          pnl: sumOf(trades, "net_profit") + Number(pos?.unrealized_pnl || 0),
+        };
+      }),
+    };
+  });
+}
+
+function cryptoPositionHint(margin, leverage, tp, sl) {
   const value = Number(margin) * Number(leverage);
-  return value > 0
-    ? `Each entry opens about a ${currency.format(value)} position: ${currency.format(Number(margin))} margin at ${Number(leverage)}x.`
+  if (!(value > 0)) return "";
+  // A % of the margin is that % divided by the leverage as a price move.
+  const stop = (pct, label, sign) => Number(pct) > 0
+    ? ` ${label} at ${sign}${currency.format(Number(margin) * Number(pct) / 100)} (a ${number.format(Number((Number(pct) / Number(leverage)).toFixed(3)))}% price move).`
     : "";
+  return `Each entry opens about a ${currency.format(value)} position: ${currency.format(Number(margin))} margin at ${Number(leverage)}x.`
+    + stop(tp, "Take profit", "+") + stop(sl, "Stop loss", "-");
+}
+
+// Blank TP / SL fields mean "none", sent as null.
+function cryptoBotBody(get) {
+  const pct = name => (get(name) === "" || get(name) == null ? null : Number(get(name)));
+  return {
+    name: get("name"), margin: Number(get("margin")), leverage: Number(get("leverage")),
+    tp_pct: pct("tp_pct"), sl_pct: pct("sl_pct"), symbols: get("symbols") || null,
+  };
 }
 
 async function sendJson(method, url, body) {
@@ -1136,7 +1283,8 @@ document.querySelector("#cryptoBotNew").addEventListener("click", () => {
 
 document.querySelector("#cryptoBotForm").addEventListener("input", event => {
   const form = event.currentTarget;
-  document.querySelector("#cryptoBotPreview").textContent = cryptoPositionHint(form.elements.margin.value, form.elements.leverage.value);
+  const value = name => form.elements[name].value;
+  document.querySelector("#cryptoBotPreview").textContent = cryptoPositionHint(value("margin"), value("leverage"), value("tp_pct"), value("sl_pct"));
 });
 
 document.querySelector("#cryptoBotForm").addEventListener("submit", async event => {
@@ -1144,12 +1292,7 @@ document.querySelector("#cryptoBotForm").addEventListener("submit", async event 
   const form = event.target;
   const error = document.querySelector("#cryptoBotError");
   try {
-    await sendJson("POST", "/api/crypto/bots", {
-      name: form.elements.name.value.trim(),
-      margin: Number(form.elements.margin.value),
-      leverage: Number(form.elements.leverage.value),
-      symbols: form.elements.symbols.value.trim() || null,
-    });
+    await sendJson("POST", "/api/crypto/bots", cryptoBotBody(name => form.elements[name].value.trim()));
     form.reset();
     form.hidden = true;
     error.textContent = "";
@@ -1160,6 +1303,7 @@ document.querySelector("#cryptoBotForm").addEventListener("submit", async event 
 });
 
 document.querySelector("#cryptoBots").addEventListener("click", async event => {
+  toggleMarketBotRow(event, cryptoBotsOpen);
   const button = event.target.closest("[data-bot-action]");
   if (!button) return;
   const bot = cryptoView.data.bots.find(b => b.id === Number(button.dataset.botId));
@@ -1181,13 +1325,13 @@ document.querySelector("#cryptoBots").addEventListener("click", async event => {
         { name: "name", label: "Strategy name", value: bot.name },
         [{ name: "margin", label: "Margin", value: bot.margin, prefix: "$" },
          { name: "leverage", label: "Leverage", value: bot.leverage }],
+        [{ name: "tp_pct", label: "TP % of margin (per trade)", value: bot.tp_pct ?? "", placeholder: "none" },
+         { name: "sl_pct", label: "SL % of margin (per trade)", value: bot.sl_pct ?? "", placeholder: "none" }],
         { name: "symbols", label: "Allowed pairs", value: bot.symbols.map(cryptoPairText).join(", "), placeholder: "Any", hint: "Leave empty to allow any USDT pair." },
       ],
-      note: "Position value is margin × leverage, rounded down to BloFin's lot size.",
+      note: "Position value is margin × leverage, rounded down to BloFin's lot size. TP / SL are placed on BloFin with each new entry; leave one empty for none. Open positions keep the ones they have.",
       confirmLabel: "Save",
-      onSubmit: values => sendJson("PATCH", url, {
-        name: values.name, margin: Number(values.margin), leverage: Number(values.leverage), symbols: values.symbols,
-      }),
+      onSubmit: values => sendJson("PATCH", url, cryptoBotBody(name => values[name])),
     });
     if (saved) loadCrypto();
   } else if (action === "delete") {
@@ -1309,8 +1453,6 @@ let forexBots = [];
 
 function fxPair(symbol) { return escapeAttr(`${symbol.slice(0, 3)}/${symbol.slice(3)}`); }
 
-function fxPips(v) { return v == null ? '<span class="subtle">—</span>' : `${number.format(v)} pips`; }
-
 function fxLots(lots) {
   return `${number.format(lots)} lot${lots === 1 ? "" : "s"}`;
 }
@@ -1336,23 +1478,15 @@ async function loadForexBots() {
   } catch {
     return;
   }
+  renderForexBots();
+}
+
+// Drawn from the bots list plus the positions and 7-day history the page
+// polls, so it is called when either arrives.
+function renderForexBots() {
   document.querySelector("#forexBots").innerHTML = forexBots.length
-    ? forexBots.map(bot => `<tr>
-      <td><strong>${escapeAttr(bot.name)}</strong></td>
-      <td>${fxLots(bot.lots)}<span class="sub-line">${number.format(bot.units)} units</span></td>
-      <td>${fxPips(bot.stop_loss_pips)}</td>
-      <td>${fxPips(bot.take_profit_pips)}</td>
-      <td>${bot.trailing_stop ? "On" : '<span class="subtle">—</span>'}</td>
-      <td>${bot.symbols.length ? bot.symbols.map(fxPair).join(", ") : '<span class="subtle">All pairs</span>'}</td>
-      <td>${statusBadge(bot.enabled ? "enabled" : "paused")}</td>
-      <td class="row-actions">
-        <button type="button" class="mini-switch neutral" data-bot-action="alert" data-bot-id="${bot.id}">Alerts</button>
-        <button type="button" class="mini-switch neutral" data-bot-action="toggle" data-bot-id="${bot.id}">${bot.enabled ? "Pause" : "Resume"}</button>
-        <button type="button" class="mini-switch neutral" data-bot-action="edit" data-bot-id="${bot.id}">Edit</button>
-        <button type="button" class="mini-switch" data-bot-action="delete" data-bot-id="${bot.id}">Delete</button>
-      </td>
-    </tr>`).join("")
-    : emptyRow(8, "No forex bots yet. Create one for each strategy that should trade forex on cTrader.");
+    ? marketBotRows(forexBotRows(), forexBotsOpen, "Trades")
+    : emptyRow(7, "No forex bots yet. Create one for each strategy that should trade forex on cTrader.");
 }
 
 document.querySelector("#forexBotNew").addEventListener("click", () => {
@@ -1385,6 +1519,7 @@ document.querySelector("#forexBotForm").addEventListener("submit", async event =
 });
 
 document.querySelector("#forexBots").addEventListener("click", async event => {
+  toggleMarketBotRow(event, forexBotsOpen);
   const button = event.target.closest("[data-bot-action]");
   if (!button) return;
   const bot = forexBots.find(b => b.id === Number(button.dataset.botId));

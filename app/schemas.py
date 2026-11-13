@@ -43,6 +43,10 @@ class CryptoBotCreate(BaseModel):
     symbols: str | None = Field(default=None, max_length=400)
     margin: float = Field(default=10.0, gt=0)
     leverage: int = Field(default=1, ge=1, le=125)
+    # % of the margin per trade. A stop at 100% is the whole margin, which
+    # isolated margin liquidates before it is reached.
+    tp_pct: float | None = Field(default=None, gt=0)
+    sl_pct: float | None = Field(default=None, gt=0, lt=100)
 
 
 class CryptoBotUpdate(BaseModel):
@@ -50,6 +54,8 @@ class CryptoBotUpdate(BaseModel):
     symbols: str | None = Field(default=None, max_length=400)
     margin: float | None = Field(default=None, gt=0)
     leverage: int | None = Field(default=None, ge=1, le=125)
+    tp_pct: float | None = Field(default=None, gt=0)
+    sl_pct: float | None = Field(default=None, gt=0, lt=100)
     enabled: bool | None = None
 
 

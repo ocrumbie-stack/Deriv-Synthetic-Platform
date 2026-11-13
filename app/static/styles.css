@@ -894,12 +894,22 @@ canvas { display: block; width: 100%; }
 .crypto-exposure-short { color: var(--red); font-weight: 700; }
 .crypto-webhook-setup summary .dim { color: var(--muted); font-weight: 400; }
 .crypto-webhook-setup .webhook-panel { margin-top: 4px; }
-.crypto-bot-fields { align-items: end; display: grid; gap: 12px; grid-template-columns: 1.4fr 1fr 1fr 1.6fr auto; }
+.crypto-bot-fields { align-items: end; display: grid; gap: 12px; grid-template-columns: 1.4fr repeat(4, 1fr) 1.4fr auto; }
 .crypto-bot-fields input { width: 100%; }
 #cryptoBotForm[hidden], #forexBotForm[hidden] { display: none; }
 .forex-bot-fields { align-items: end; display: grid; gap: 12px; grid-template-columns: 1.4fr repeat(4, 1fr) 1.4fr auto; }
 .forex-bot-fields input { width: 100%; }
 .forex-bot-fields .cfd-bot-check input { width: auto; }
+.mbot-row { cursor: pointer; }
+.mbot-name { align-items: center; display: flex; gap: 8px; }
+.mbot-chev { color: var(--muted); display: inline-block; font-size: 9px; transition: transform 150ms; }
+.mbot-chev.open { transform: rotate(90deg); }
+.mbot-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; padding-left: 22px; }
+.mbot-badges .badge { font-size: 9px; }
+.mbot-mono { font-family: monospace; font-size: 12px; }
+.mbot-detail > td { background: var(--panel-2); border-bottom: 2px solid var(--border); padding: 0; }
+.mbot-detail table { background: var(--bg); border-collapse: collapse; width: 100%; }
+.mbot-pairs-title { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 0.14em; padding: 10px 16px 6px; text-transform: uppercase; }
 .alert-generate { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 14px; }
 .alert-generate .nav-link-btn { padding: 9px; text-align: center; width: 100%; }
 .alert-kit { display: grid; gap: 14px; margin-top: 12px; }
@@ -968,7 +978,7 @@ td.wrap-cell { min-width: 260px; white-space: normal; }
   .crypto-bot-fields, .forex-bot-fields, .cfd-bot-fields { grid-template-columns: 1fr 1fr; }
   .cfd-bot-fields label:first-child { grid-column: 1 / -1; }
   .forex-bot-fields label:first-child, .forex-pairs-field { grid-column: 1 / -1; }
-  .crypto-bot-fields label:first-child, .crypto-bot-fields label:nth-child(4) { grid-column: 1 / -1; }
+  .crypto-bot-fields label:first-child, .crypto-bot-fields label:nth-child(6) { grid-column: 1 / -1; }
 }
 
 /* ── Risk panels ────────────────────────────────────────────── */

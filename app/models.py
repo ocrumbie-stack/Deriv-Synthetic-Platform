@@ -148,6 +148,10 @@ class CryptoBot(Base):
     symbols: Mapped[str | None] = mapped_column(String(400), nullable=True)
     margin: Mapped[float] = mapped_column(Float, default=10.0)
     leverage: Mapped[int] = mapped_column(Integer, default=1)
+    # Take profit / stop loss per trade as a % of the margin, like a
+    # Multipliers bot's % of stake. None places no order on that side.
+    tp_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sl_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

@@ -205,6 +205,45 @@ class CryptoSignalTests(unittest.TestCase):
         self.assertEqual(data["mode"], "demo")
         self.assertEqual(len(data["signals"]), 1)
 
+    def test_bot_tp_sl_are_a_percent_of_margin(self):
+        self.bot.tp_pct, self.bot.sl_pct = 50, 25
+        self.db.commit()
+        client = self._client()
+        client.instrument.return_value = {**BTC, "tickSize": "0.1"}
+        payload = WebhookSignal(secret="s", strategy="btc", symbol="BTCUSDT", action="entry", direction="long")
+        signal = asyncio.run(crypto.process_signal(self.db, payload, client))
+        kwargs = client.open_market.call_args.kwargs
+        # 50% of the margin at 10x is a 5% move from $50,000; 25% is 2.5%.
+        self.assertEqual((kwargs["take_profit"], kwargs["stop_loss"]), ("52500.0", "48750.0"))
+        self.assertEqual((signal.take_profit, signal.stop_loss), (52500.0, 48750.0))
+
+    def test_short_stops_mirror_and_alert_prices_win(self):
+        self.bot.tp_pct, self.bot.sl_pct = 50, 25
+        self.db.commit()
+        signal, client = self._send(direction="short", stop_loss=51000)
+        kwargs = client.open_market.call_args.kwargs
+        self.assertEqual((kwargs["take_profit"], kwargs["stop_loss"]), ("47500.000", 51000))
+        self.assertEqual((signal.take_profit, signal.stop_loss), (47500.0, 51000.0))
+
+    def test_small_prices_round_to_the_tick_as_plain_decimals(self):
+        bot = CryptoBot(name="pepe", margin=10, leverage=5, tp_pct=10, sl_pct=None)
+        take_profit, stop_loss = crypto.stop_prices(bot, crypto.Direction.long, 0.00001234, "0.00000001")
+        self.assertEqual((take_profit, stop_loss), ("0.00001259", None))
+
+    def test_overview_lists_bot_pairs_and_position_owner(self):
+        self._send()
+        self._send(symbol="ETHUSDT", direction="short")
+        client = self._client([
+            {"symbol": "BTC-USDT", "side": "LONG"}, {"symbol": "ETH-USDT", "side": "LONG"}, {"symbol": "SOL-USDT", "side": "LONG"},
+        ])
+        client.balance.return_value = {"equity": 100.0, "available": 90.0, "unrealized_pnl": 0.0}
+        data = asyncio.run(crypto.overview(self.db, client))
+        pairs = {p["symbol"]: p for p in data["bots"][0]["pairs"]}
+        self.assertEqual({s: (p["entries"], p["direction"]) for s, p in pairs.items()},
+                         {"BTC-USDT": (1, "long"), "ETH-USDT": (1, "short")})
+        # The ETH long isn't the bot's short, and nothing opened SOL here.
+        self.assertEqual([p["strategy"] for p in data["positions"]], ["btc", None, None])
+
     def test_api_key_failure_only_hides_the_badges(self):
         client = self._client()
         client.balance.return_value = {"equity": 100.0, "available": 90.0, "unrealized_pnl": 0.0}
