@@ -1375,7 +1375,7 @@ document.querySelectorAll("[data-crypto-copy]").forEach(btn => btn.addEventListe
   });
 }));
 
-// ─── TradingView alert kit (Forex and Crypto bots) ───────────────────────────
+// ─── TradingView alert kit (CFD, Forex and Crypto bots) ──────────────────────
 // Everything a bot needs in TradingView: its market's webhook URL and the
 // messages for the alert's Message field. Shown with the placeholder secret;
 // Copy swaps in the real one.
@@ -4147,6 +4147,18 @@ function wireBotForm() {
 
 // ─── CFD bots (Synthetic → CFDs, traded on cTrader) ─────────────────────────
 
+// The CFD Overview's webhook panel: CFDs use the Synthetic /webhook and
+// /webhook/exit URLs, routed to cTrader by the alert's strategy name.
+document.querySelector("#cfdWebhookUrl").textContent = `${window.location.origin}/webhook`;
+document.querySelector("#cfdExitWebhookUrl").textContent = `${window.location.origin}/webhook/exit`;
+document.querySelectorAll("[data-cfd-copy]").forEach(btn => btn.addEventListener("click", () => {
+  const text = document.getElementById(btn.dataset.cfdCopy).textContent;
+  navigator.clipboard.writeText(withRealSecret(text)).then(() => {
+    btn.textContent = "Copied!";
+    setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+  });
+}));
+
 function renderCfdBots(bots) {
   const active = bots.filter(b => b.enabled).length;
   document.querySelector("#cfdStatBots").textContent = bots.length ? `${active} of ${bots.length}` : "0";
@@ -4159,7 +4171,7 @@ function renderCfdBots(bots) {
       <td>${b.cycles_completed}</td>
       <td>${statusBadge(b.enabled ? "enabled" : "paused")}</td>
       <td class="row-actions">
-        <button type="button" class="mini-switch neutral" data-cfd-action="alert" data-bot-id="${b.id}">Copy alert</button>
+        <button type="button" class="mini-switch neutral" data-cfd-action="alert" data-bot-id="${b.id}">Alerts</button>
         <button type="button" class="mini-switch neutral" data-cfd-action="edit" data-bot-id="${b.id}">Edit</button>
         <button type="button" class="mini-switch neutral" data-cfd-action="toggle" data-bot-id="${b.id}">${b.enabled ? "Pause" : "Resume"}</button>
         <button type="button" class="mini-switch" data-cfd-action="delete" data-bot-id="${b.id}">Delete</button>
@@ -4208,9 +4220,8 @@ document.querySelector("#cfdBots").addEventListener("click", async event => {
   const url = `/api/signal-bots/${bot.id}`;
   const action = button.dataset.cfdAction;
   if (action === "alert") {
-    await navigator.clipboard.writeText(withRealSecret(botTemplate(bot.name)));
-    button.textContent = "Copied!";
-    setTimeout(() => { button.textContent = "Copy alert"; }, 2000);
+    // CFD bots share the Synthetic webhook; the bot's name routes it to cTrader.
+    showAlertKit(bot.name, "/webhook");
   } else if (action === "toggle") {
     try {
       await patchJson(url, { enabled: !bot.enabled });

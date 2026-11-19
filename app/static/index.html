@@ -650,6 +650,10 @@
               </div>
               <p class="subtle settings-hint">Trades on the cTrader account picked on the CFDs Overview, demo or live following the mode switch. Take profit and stop loss are dollars per trade, turned into price levels for the lot size and placed on cTrader with the order. A trailing stop needs a stop loss; cTrader moves it behind price. The name must match the alert's strategy and can't also be used by a Multipliers bot.</p>
               <p class="settings-error" id="cfdBotError" role="alert"></p>
+              <div class="alert-generate">
+                <button type="button" class="nav-link-btn" data-alert-generate="/webhook">Generate TradingView Alert Message</button>
+              </div>
+              <div class="alert-kit" hidden></div>
             </form>
             <div class="table-wrap">
               <table>
@@ -738,6 +742,44 @@
               <div id="ctraderMessage" style="display:none;margin-top:10px;font-size:12px"></div>
             </div>
             <p class="subtle settings-hint">Log in with the cTrader ID that holds your Deriv cTrader account, then pick which Deriv account trades in demo mode and which in live. Only Deriv accounts are offered here; other brokers' accounts go on the Forex page. CFD bots follow the demo/live switch, like everything else.</p>
+            <div class="webhook-panel crypto-webhooks">
+              <div class="webhook-section" style="border-right:0;border-bottom:1px solid var(--border)">
+                <span class="webhook-label">SYNTHETIC WEBHOOK URL <span class="dim">(the same URL Multipliers use - the alert's strategy picks the bot)</span></span>
+                <div class="url-row">
+                  <code id="cfdWebhookUrl" class="url-display">/webhook</code>
+                  <button type="button" class="copy-btn" data-cfd-copy="cfdWebhookUrl">Copy</button>
+                </div>
+              </div>
+              <div class="webhook-section" style="border-right:0;border-bottom:1px solid var(--border)">
+                <span class="webhook-label">STRATEGY ALERT PAYLOAD <span class="dim">(entries and exits from a TradingView strategy)</span></span>
+                <div class="url-row">
+                  <code id="cfdStrategyPayload" class="url-display dim">{"secret":"YOUR_SECRET","strategy":"{{strategy.title}}","symbol":"{{ticker}}","action":"{{strategy.order.action}}","market_position":"{{strategy.market_position}}","price":{{close}}}</code>
+                  <button type="button" class="copy-btn" data-cfd-copy="cfdStrategyPayload">Copy</button>
+                </div>
+              </div>
+              <div class="webhook-section" style="border-right:0;border-bottom:1px solid var(--border)">
+                <span class="webhook-label">PRICE ALERT ENTRY PAYLOAD <span class="dim">(plain price / trendline alerts - set your bot name and long or short)</span></span>
+                <div class="url-row">
+                  <code id="cfdPricePayload" class="url-display dim">{"secret":"YOUR_SECRET","strategy":"YOUR_BOT_NAME","symbol":"{{ticker}}","action":"entry","direction":"long","price":{{close}}}</code>
+                  <button type="button" class="copy-btn" data-cfd-copy="cfdPricePayload">Copy</button>
+                </div>
+              </div>
+              <div class="webhook-section" style="border-right:0;border-bottom:1px solid var(--border)">
+                <span class="webhook-label">MANUAL EXIT WEBHOOK URL <span class="dim">(closes the open position for a strategy and symbol, independent of the strategy's own exit)</span></span>
+                <div class="url-row">
+                  <code id="cfdExitWebhookUrl" class="url-display">/webhook/exit</code>
+                  <button type="button" class="copy-btn" data-cfd-copy="cfdExitWebhookUrl">Copy</button>
+                </div>
+              </div>
+              <div class="webhook-section" style="border-right:0">
+                <span class="webhook-label">MANUAL EXIT PAYLOAD <span class="dim">(set your bot name)</span></span>
+                <div class="url-row">
+                  <code id="cfdExitPayload" class="url-display dim">{"secret":"YOUR_SECRET","strategy":"YOUR_BOT_NAME","symbol":"{{ticker}}","price":{{close}}}</code>
+                  <button type="button" class="copy-btn" data-cfd-copy="cfdExitPayload">Copy</button>
+                </div>
+              </div>
+            </div>
+            <p class="subtle settings-hint">An alert trades a CFD when its strategy matches a CFD bot's name exactly; otherwise it goes to Multipliers. Each bot's Alerts button on Signal Bots has its messages ready to paste.</p>
           </div>
         </div>
 
