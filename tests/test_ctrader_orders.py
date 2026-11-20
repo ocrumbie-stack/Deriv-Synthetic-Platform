@@ -9,7 +9,7 @@ from app import ctrader, services
 from app.config import settings
 from app.ctrader import CTraderError
 from app.database import Base
-from app.models import PositionStatus, RiskSettings, Signal, SignalBot, Trade
+from app.models import CfdLotSize, PositionStatus, RiskSettings, Signal, SignalBot, Trade
 from app.schemas import WebhookSignal
 
 # Volatility 75 on Deriv's cTrader: lotSize/step/min in protocol cents.
@@ -197,6 +197,102 @@ class CTraderOrderTests(unittest.TestCase):
     def test_cfd_lots_never_count_as_stake_exposure(self):
         self._open_trade()
         self.assertEqual(services.account_exposure(self.db), 0.0)
+
+    def test_auto_bot_trades_the_lot_sizes_page(self):
+        self.bot.lots = None
+        self.db.add(CfdLotSize(symbol="VOLATILITY 75 INDEX", lots=0.3))
+        self.db.commit()
+        client = fake_client()
+        result, *_ = self._send(client)
+        self.assertEqual(result.signal.status.value, "executed", result.signal.rejection_reason)
+        self.assertEqual(client.open_market.call_args.args[1:], ("long", 0.3))
+
+    def test_auto_bot_without_a_saved_size_trades_the_minimum(self):
+        self.bot.lots = None
+        self.db.commit()
+        client = fake_client()
+        result, *_ = self._send(client)
+        self.assertEqual(result.signal.status.value, "executed", result.signal.rejection_reason)
+        self.assertEqual(client.open_market.call_args.args[1:], ("long", 0.01))
+
+    def test_bot_lots_beat_the_lot_sizes_page(self):
+        self.db.add(CfdLotSize(symbol="VOLATILITY 75 INDEX", lots=0.3))
+        self.db.commit()
+        client = fake_client()
+        self._send(client)
+        self.assertEqual(client.open_market.call_args.args[1:], ("long", 0.5))
+
+    def test_bot_lots_below_the_minimum_are_refused_not_resized(self):
+        client = fake_client()
+        client.resolve_symbol = AsyncMock(return_value={**SYMBOL, "minVolume": 100})
+        result, *_ = self._send(client)
+        self.assertEqual(result.signal.status.value, "failed")
+        self.assertIn("below this symbol's minimum of 1 lots", result.signal.rejection_reason)
+        client.open_market.assert_not_called()
+
+
+class LotCheckTests(unittest.TestCase):
+    def test_limits_in_lots(self):
+        self.assertEqual(ctrader.lot_limits({**SYMBOL, "minVolume": 50, "stepVolume": 10}),
+                         {"min_lots": 0.5, "step_lots": 0.1, "max_lots": 1000.0})
+
+    def test_between_steps_refused(self):
+        symbol = {**SYMBOL, "minVolume": 50, "stepVolume": 10}
+        ctrader.check_lots(0.7, symbol)
+        with self.assertRaisesRegex(CTraderError, "steps of 0.1 lots"):
+            ctrader.check_lots(0.75, symbol)
+        with self.assertRaisesRegex(CTraderError, "minimum of 0.5 lots"):
+            ctrader.check_lots(0.4, symbol)
+        with self.assertRaisesRegex(CTraderError, "maximum"):
+            ctrader.check_lots(2000, symbol)
+
+
+class LotSizeRouteTests(unittest.TestCase):
+    def setUp(self):
+        engine = create_engine("sqlite://")
+        Base.metadata.create_all(engine)
+        self.db = sessionmaker(bind=engine)()
+        self.db.add(RiskSettings(id=1, emergency_stop=False, duplicate_blocking=True, execution_mode_override="demo"))
+        self.db.commit()
+        self._mode = settings.execution_mode
+        v100 = {**SYMBOL, "symbolId": 8, "symbolName": "Volatility 100 Index", "minVolume": 100, "stepVolume": 1}
+        self.client = MagicMock()
+        self.client.symbols_with_details = AsyncMock(return_value=[v100, SYMBOL])
+
+    def tearDown(self):
+        settings.execution_mode = self._mode
+        self.db.close()
+
+    def _run(self, coro):
+        from app import ctrader_routes
+        with patch.object(ctrader_routes.ctrader, "CTraderClient", return_value=self.client):
+            return asyncio.run(coro(ctrader_routes))
+
+    def test_lists_symbols_at_their_minimum(self):
+        out = self._run(lambda r: r.lot_sizes(db=self.db))
+        self.assertIsNone(out["error"])
+        rows = {row["symbol"]: row for row in out["symbols"]}
+        self.assertEqual(rows["Volatility 100 Index"]["lots"], 1.0)
+        self.assertIsNone(rows["Volatility 100 Index"]["saved_lots"])
+        self.assertEqual(rows["Volatility 75 Index"]["min_lots"], 0.01)
+
+    def test_save_check_and_reset(self):
+        from fastapi import HTTPException
+        from app.ctrader_routes import LotSizeUpdate
+        row = self._run(lambda r: r.update_lot_size(LotSizeUpdate(symbol="volatility 100 index", lots=2), db=self.db))
+        self.assertEqual((row["lots"], row["saved_lots"]), (2, 2))
+        self.assertEqual(self.db.scalar(select(CfdLotSize.lots).where(CfdLotSize.symbol == "VOLATILITY 100 INDEX")), 2)
+        with self.assertRaises(HTTPException) as caught:
+            self._run(lambda r: r.update_lot_size(LotSizeUpdate(symbol="Volatility 100 Index", lots=0.01), db=self.db))
+        self.assertIn("minimum of 1 lots", caught.exception.detail)
+        row = self._run(lambda r: r.update_lot_size(LotSizeUpdate(symbol="Volatility 100 Index", lots=None), db=self.db))
+        self.assertEqual((row["lots"], row["saved_lots"]), (1.0, None))
+        self.assertIsNone(self.db.scalar(select(CfdLotSize)))
+
+    def test_no_account_picked_is_reported(self):
+        self.client.symbols_with_details = AsyncMock(side_effect=CTraderError("No cTrader demo account is selected"))
+        out = self._run(lambda r: r.lot_sizes(db=self.db))
+        self.assertEqual((out["symbols"], out["error"]), ([], "No cTrader demo account is selected"))
 
 
 class DollarDistanceTests(unittest.TestCase):

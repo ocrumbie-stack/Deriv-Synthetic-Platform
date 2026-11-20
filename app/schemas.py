@@ -197,9 +197,8 @@ class SignalBotCreate(BaseModel):
     trailing_stop: bool = False
 
     @model_validator(mode="after")
-    def ctrader_needs_lots(self) -> "SignalBotCreate":
-        if self.account == "ctrader" and not self.lots:
-            raise ValueError("A cTrader bot needs a lot size.")
+    def check_trailing_stop(self) -> "SignalBotCreate":
+        # A CFD bot with no lots is on Auto: the Lot Sizes page sizes it.
         if self.trailing_stop and not self.sl_usd:
             raise ValueError("A trailing stop needs a stop loss to trail.")
         return self

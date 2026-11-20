@@ -13,7 +13,7 @@ from app import ctrader, notify
 from app.config import ENV_EXECUTION_MODE, ENV_MAX_MULTIPLIER_FLOOR, ENV_TIMEZONE, settings
 from app.ctrader import CTraderClient, CTraderError
 from app.deriv import DerivClient, DerivExecutionError, chart_tpsl_amounts
-from app.models import AppSettings, BotPair, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
+from app.models import AppSettings, BotPair, CfdLotSize, ExecutionStatus, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
 from app.schemas import ManualExitSignal, WebhookSignal
 
 logger = logging.getLogger("uvicorn.error")
@@ -272,7 +272,9 @@ def validate_signal(db: Session, payload: WebhookSignal, strategy: Strategy, bot
                 return f"Take profit {payload.take_profit} is on the wrong side of the {payload.direction.value} entry at {payload.price}."
             if payload.stop_loss and (payload.price - payload.stop_loss) * above <= 0:
                 return f"Stop loss {payload.stop_loss} is on the wrong side of the {payload.direction.value} entry at {payload.price}."
-        if payload.size <= 0:
+        # A CFD bot left on Auto has no size until its symbol is looked up
+        # on cTrader (see cfd_lots), which refuses a size it won't take.
+        if not cfd and payload.size <= 0:
             return "Entry signals require size greater than zero."
         if not cfd and strategy.max_position_size and payload.size > strategy.max_position_size:
             return "Signal size exceeds the strategy maximum position size."
@@ -410,7 +412,19 @@ def ctrader_stop_distances(payload: WebhookSignal, bot: SignalBot, volume: int, 
     return side(payload.stop_loss, bot.sl_usd), side(payload.take_profit, bot.tp_usd)
 
 
-async def open_ctrader_trade(trade: Trade, payload: WebhookSignal, bot: SignalBot) -> None:
+def cfd_lots(db: Session, bot: SignalBot, symbol: dict) -> float:
+    """The lots a CFD entry trades: the bot's own Lots when set, otherwise
+    (Auto) the Lot Sizes page's size for this symbol, otherwise cTrader's
+    minimum for it. A size the symbol doesn't take is refused by
+    lots_to_volume when the order is built, never resized."""
+    if bot.lots:
+        return bot.lots
+    name = str(symbol.get("symbolName") or "").upper()
+    saved = db.scalar(select(CfdLotSize.lots).where(CfdLotSize.symbol == name)) if name else None
+    return saved or ctrader.lot_limits(symbol)["min_lots"]
+
+
+async def open_ctrader_trade(db: Session, trade: Trade, payload: WebhookSignal, bot: SignalBot) -> None:
     """Open the trade's position on the cTrader account picked for its mode
     and fill in the trade from the fill. Raises CTraderExecutionError."""
     live = trade.execution_mode == "live"
@@ -419,12 +433,13 @@ async def open_ctrader_trade(trade: Trade, payload: WebhookSignal, bot: SignalBo
         account_id = client.account_id
         ctrader.verify_account_mode(account_id, live)
         symbol = await client.resolve_symbol(payload.symbol)
-        volume = ctrader.lots_to_volume(bot.lots or 0, symbol)
+        lots = cfd_lots(db, bot, symbol)
+        volume = ctrader.lots_to_volume(lots, symbol)
         stop_loss, take_profit = ctrader_stop_distances(payload, bot, volume, symbol)
         position = await client.open_market(
             symbol,
             payload.direction.value,
-            bot.lots,
+            lots,
             stop_loss_distance=stop_loss,
             take_profit_distance=take_profit,
             trailing_stop=bool(bot.trailing_stop and stop_loss),
@@ -438,7 +453,7 @@ async def open_ctrader_trade(trade: Trade, payload: WebhookSignal, bot: SignalBo
     trade.ctrader_account_id = account_id
     trade.exchange_order_id = str(position["position_id"])
     trade.entry_price = position["entry_price"] or trade.entry_price
-    trade.size = ctrader.volume_to_lots(position["volume"], symbol) or bot.lots
+    trade.size = ctrader.volume_to_lots(position["volume"], symbol) or lots
     trade.leverage = 1
 
 
@@ -935,7 +950,7 @@ async def process_webhook_signal(db: Session, payload: WebhookSignal) -> Process
             if cfd:
                 # The pair row still carries the per-symbol cycle count and pause.
                 get_or_create_bot_pair(db, bot, payload.symbol)
-                await open_ctrader_trade(trade, payload, bot)
+                await open_ctrader_trade(db, trade, payload, bot)
             else:
                 client = DerivClient()
                 hedge = bot.hedge_mode if bot else False

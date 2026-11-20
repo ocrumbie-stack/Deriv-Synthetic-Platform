@@ -629,8 +629,6 @@ async def update_signal_bot(bot_id: int, updates: SignalBotUpdate, db: Session =
         raise HTTPException(status_code=404, detail="Signal bot not found.")
     data = updates.model_dump(exclude_unset=True)
     if data.get("account") and data["account"] != bot.account:
-        if data["account"] == "ctrader" and not (data.get("lots") or bot.lots):
-            raise HTTPException(status_code=422, detail="A cTrader bot needs a lot size.")
         # Its open position would be left on the other account with nothing
         # managing it - the exit would go to the wrong place.
         if db.scalar(select(Trade.id).where(Trade.strategy_name == bot.name, Trade.status == PositionStatus.open)):

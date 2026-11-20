@@ -17,13 +17,14 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import ctrader
 from app.auth import _is_https
 from app.config import settings
 from app.database import get_db
-from app.models import CTraderConnection
+from app.models import CfdLotSize, CTraderConnection
 
 router = APIRouter()
 
@@ -301,3 +302,70 @@ async def symbol(symbol: str, mode: str | None = None, market: str | None = None
         "max_lots": ctrader.volume_to_lots(int(found.get("maxVolume") or 0), found),
         "step_lots": ctrader.volume_to_lots(int(found.get("stepVolume") or 0), found),
     }
+
+
+# --- Synthetic → CFDs → Lot Sizes ------------------------------------------
+# Like the Multipliers Leverage page: every symbol on the Deriv cTrader
+# account, starting at cTrader's minimum, with the size a CFD bot on Auto
+# (Lots left blank) trades. Limits come from the account picked for the
+# current mode; sizes are saved by symbol name, shared by demo and live.
+
+class LotSizeUpdate(BaseModel):
+    symbol: str
+    lots: float | None = None  # None goes back to the symbol's minimum
+
+
+def _lot_size_row(found: dict, saved: float | None) -> dict:
+    limits = ctrader.lot_limits(found)
+    return {
+        "symbol": found.get("symbolName"),
+        "description": found.get("description"),
+        **limits,
+        "saved_lots": saved,
+        "lots": saved or limits["min_lots"],
+    }
+
+
+@router.get("/api/ctrader/lot-sizes")
+async def lot_sizes(db: Session = Depends(get_db)) -> dict:
+    from app.services import get_risk_settings
+
+    get_risk_settings(db)  # applies the dashboard's demo/live switch
+    mode = settings.execution_mode.lower()
+    saved = {row.symbol: row.lots for row in db.scalars(select(CfdLotSize))}
+    try:
+        symbols = await ctrader.CTraderClient(live=mode == "live", market="synthetic").symbols_with_details()
+    except ctrader.CTraderError as exc:
+        return {"mode": mode, "error": str(exc), "symbols": []}
+    rows = [_lot_size_row(s, saved.get(str(s.get("symbolName") or "").upper()))
+            for s in symbols if s.get("symbolName") and int(s.get("lotSize") or 0) > 0]
+    return {"mode": mode, "error": None, "symbols": sorted(rows, key=lambda r: r["symbol"].upper())}
+
+
+@router.patch("/api/ctrader/lot-sizes")
+async def update_lot_size(update: LotSizeUpdate, db: Session = Depends(get_db)) -> dict:
+    from app.services import get_risk_settings
+
+    get_risk_settings(db)
+    mode = settings.execution_mode.lower()
+    name = update.symbol.strip().upper()
+    try:
+        symbols = await ctrader.CTraderClient(live=mode == "live", market="synthetic").symbols_with_details()
+        found = next((s for s in symbols if str(s.get("symbolName") or "").upper() == name), None)
+        if not found:
+            raise HTTPException(status_code=404, detail=f"No symbol called {update.symbol} on this cTrader account.")
+        if update.lots is not None:
+            ctrader.check_lots(update.lots, found)
+    except ctrader.CTraderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    row = db.scalar(select(CfdLotSize).where(CfdLotSize.symbol == name))
+    if update.lots is None:
+        if row:
+            db.delete(row)
+    else:
+        if not row:
+            row = CfdLotSize(symbol=name)
+            db.add(row)
+        row.lots = update.lots
+    db.commit()
+    return _lot_size_row(found, update.lots)

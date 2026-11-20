@@ -366,9 +366,9 @@ class BotAccountTests(unittest.TestCase):
     def tearDown(self):
         self.db.close()
 
-    def test_ctrader_bot_needs_lots(self):
-        with self.assertRaises(ValidationError):
-            SignalBotCreate(name="Bot", account="ctrader")
+    def test_ctrader_bot_lots_blank_means_auto(self):
+        # No lots = Auto: the Lot Sizes page sizes each symbol.
+        self.assertIsNone(SignalBotCreate(name="Bot", account="ctrader").lots)
         self.assertEqual(SignalBotCreate(name="Bot", account="ctrader", lots=0.5).lots, 0.5)
         self.assertEqual(SignalBotCreate(name="Bot").account, "options")
 

@@ -370,6 +370,19 @@ class BotPair(Base):
     bot: Mapped["SignalBot"] = relationship(back_populates="pairs")
 
 
+class CfdLotSize(Base):
+    """Synthetic → CFDs → Lot Sizes: the lots a CFD bot with Lots left blank
+    (Auto) trades on a symbol. Keyed by cTrader's symbol name in upper case
+    (e.g. "VOLATILITY 100 INDEX"), which is the same on the demo and live
+    accounts. A symbol with no row trades cTrader's minimum for it."""
+    __tablename__ = "cfd_lot_sizes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    lots: Mapped[float] = mapped_column(Float)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class SymbolLeverage(Base):
     __tablename__ = "symbol_leverage"
 

@@ -203,6 +203,7 @@ const pageIds = new Set([
   "cfd-bots",
   "cfd-positions",
   "cfd-history",
+  "cfd-lot-sizes",
   "forex-overview",
   "forex-bots",
   "forex-positions",
@@ -228,7 +229,7 @@ const tabParent = {
 const marketPages = {
   home:      ["home"],
   synthetic: ["dashboard-overview", "trading-bots", "trading-positions", "trading-history", "signals-journal", "strategies-ranking",
-              "strategies-leverage", "cfd-overview", "cfd-bots", "cfd-positions", "cfd-history"],
+              "strategies-leverage", "cfd-overview", "cfd-bots", "cfd-positions", "cfd-history", "cfd-lot-sizes"],
   forex:     ["forex-overview", "forex-bots", "forex-positions", "forex-history"],
   crypto:    ["crypto-overview", "crypto-bots", "crypto-positions", "crypto-history"],
   system:    ["system-risk", "system-settings", "strategies-settings"],
@@ -249,6 +250,7 @@ const forexView = { data: null, timer: null, refetchAt: 0, loading: false };
 const forexTradingView = { data: null, timer: null, loading: false };
 const cryptoView = { data: null, market: null, timer: null, loading: false };
 const homeView = { timer: null, loading: false };
+let cfdLotRows = [];
 
 function navigate(pageId, updateUrl = true) {
   pageId = pageAliases[pageId] || pageId;
@@ -288,6 +290,7 @@ function navigate(pageId, updateUrl = true) {
     wireBotForm();
   }
   if (pageId === "system-settings") loadAppSettings();
+  if (pageId === "cfd-lot-sizes") loadCfdLotSizes();
   if (pageId === "forex-overview") startForexView();
   else stopForexView();
   if (pageId === "forex-bots") loadForexBots();
@@ -4147,6 +4150,63 @@ function wireBotForm() {
 
 // ─── CFD bots (Synthetic → CFDs, traded on cTrader) ─────────────────────────
 
+// ─── CFD Lot Sizes (Synthetic → CFDs → Lot Sizes) ───────────────────────────
+// Like the Multipliers Leverage page: each symbol starts at cTrader's
+// minimum, and a CFD bot left on Auto trades the size saved here.
+
+
+async function loadCfdLotSizes() {
+  const error = document.querySelector("#cfdLotError");
+  const body = document.querySelector("#cfdLotSizes");
+  if (!cfdLotRows.length) body.innerHTML = emptyRow(4, "Loading symbols from cTrader…");
+  try {
+    const data = await getJson("/api/ctrader/lot-sizes", 30000);
+    cfdLotRows = data.symbols;
+    error.textContent = data.error || "";
+  } catch (e) {
+    error.textContent = e.message;
+  }
+  renderCfdLotSizes();
+}
+
+function renderCfdLotSizes() {
+  const query = document.querySelector("#cfdLotSearch").value.trim().toLowerCase();
+  const rows = cfdLotRows.filter(r => !query || `${r.symbol} ${r.description || ""}`.toLowerCase().includes(query));
+  document.querySelector("#cfdLotSizes").innerHTML = rows.length
+    ? rows.map(r => `<tr>
+      <td><strong>${escapeText(r.symbol)}</strong>${r.description && r.description !== r.symbol ? `<span class="sub-line">${escapeText(r.description)}</span>` : ""}</td>
+      <td class="subtle">min ${number.format(r.min_lots)} · step ${number.format(r.step_lots)}${r.max_lots ? ` · max ${number.format(r.max_lots)}` : ""}</td>
+      <td><input class="inline-input" type="number" step="any" min="0" style="width:100px" value="${r.lots}" data-lot-symbol="${escapeAttr(r.symbol)}" aria-label="Lot size for ${escapeAttr(r.symbol)}" />
+        ${r.saved_lots ? "" : '<span class="sub-line">minimum</span>'}</td>
+      <td class="row-actions">${r.saved_lots ? `<button type="button" class="mini-switch neutral" data-lot-reset="${escapeAttr(r.symbol)}">Use minimum</button>` : ""}</td>
+    </tr>`).join("")
+    : emptyRow(4, cfdLotRows.length ? "No symbols match." : "No symbols - connect a Deriv cTrader account on CFDs → Overview.");
+}
+
+async function saveCfdLotSize(symbol, lots) {
+  const error = document.querySelector("#cfdLotError");
+  try {
+    const row = await sendJson("PATCH", "/api/ctrader/lot-sizes", { symbol, lots });
+    cfdLotRows = cfdLotRows.map(r => r.symbol === row.symbol ? row : r);
+    error.textContent = "";
+  } catch (e) {
+    error.textContent = `${symbol}: ${e.message}`;
+  }
+  renderCfdLotSizes();
+}
+
+document.querySelector("#cfdLotSearch").addEventListener("input", renderCfdLotSizes);
+document.querySelector("#cfdLotSizes").addEventListener("change", event => {
+  const input = event.target.closest("[data-lot-symbol]");
+  if (!input) return;
+  const lots = Number(input.value);
+  saveCfdLotSize(input.dataset.lotSymbol, lots > 0 ? lots : null);
+});
+document.querySelector("#cfdLotSizes").addEventListener("click", event => {
+  const button = event.target.closest("[data-lot-reset]");
+  if (button) saveCfdLotSize(button.dataset.lotReset, null);
+});
+
 // The CFD Overview's webhook panel: CFDs use the Synthetic /webhook and
 // /webhook/exit URLs, routed to cTrader by the alert's strategy name.
 document.querySelector("#cfdWebhookUrl").textContent = `${window.location.origin}/webhook`;
@@ -4165,7 +4225,7 @@ function renderCfdBots(bots) {
   document.querySelector("#cfdBots").innerHTML = bots.length
     ? bots.map(b => `<tr>
       <td><span class="bot-dot ${b.enabled ? "active" : "paused"}"></span> <strong>${escapeAttr(b.name)}</strong></td>
-      <td>${number.format(b.lots ?? 0)}</td>
+      <td>${b.lots ? number.format(b.lots) : 'Auto<span class="sub-line">Lot Sizes page</span>'}</td>
       <td>${b.tp_usd ? "+" + currency.format(b.tp_usd) : '<span class="subtle">—</span>'} / ${b.sl_usd ? "-" + currency.format(b.sl_usd) : '<span class="subtle">—</span>'}${b.trailing_stop ? '<span class="sub-line">Trailing stop</span>' : ""}</td>
       <td>${b.default_pair_max_cycles ?? '<span class="subtle">—</span>'}</td>
       <td>${b.cycles_completed}</td>
@@ -4197,7 +4257,9 @@ document.querySelector("#cfdBotForm").addEventListener("submit", async event => 
   try {
     // A CFD bot is sized by lots; size (the Multipliers stake) is unused.
     await sendJson("POST", "/api/signal-bots", {
-      name: form.elements.name.value.trim(), account: "ctrader", lots: Number(form.elements.lots.value), size: 1,
+      name: form.elements.name.value.trim(), account: "ctrader", size: 1,
+      // Blank = Auto: each symbol's size comes from the Lot Sizes page.
+      ...(Number(form.elements.lots.value) > 0 ? { lots: Number(form.elements.lots.value) } : {}),
       ...(tp > 0 ? { tp_usd: tp } : {}),
       ...(sl > 0 ? { sl_usd: sl } : {}),
       trailing_stop: form.elements.trailing_stop.checked,
@@ -4234,7 +4296,7 @@ document.querySelector("#cfdBots").addEventListener("click", async event => {
       title: `Edit ${bot.name}`,
       fields: [
         { name: "name", label: "Strategy name", value: bot.name },
-        [{ name: "lots", label: "Lots", value: bot.lots },
+        [{ name: "lots", label: "Lots", value: bot.lots ?? "", placeholder: "Auto" },
          { name: "max_cycles", label: "Max Cycles (per symbol)", value: bot.default_pair_max_cycles ?? "", placeholder: "None" }],
         [{ name: "tp_usd", label: "Take profit ($ per trade)", value: bot.tp_usd ?? "", placeholder: "None", prefix: "$" },
          { name: "sl_usd", label: "Stop loss ($ per trade)", value: bot.sl_usd ?? "", placeholder: "None", prefix: "$" }],
@@ -4243,7 +4305,7 @@ document.querySelector("#cfdBots").addEventListener("click", async event => {
       ],
       confirmLabel: "Save",
       onSubmit: values => sendJson("PATCH", url, {
-        name: values.name, lots: Number(values.lots),
+        name: values.name, lots: Number(values.lots) > 0 ? Number(values.lots) : null,
         tp_usd: Number(values.tp_usd) > 0 ? Number(values.tp_usd) : null,
         sl_usd: Number(values.sl_usd) > 0 ? Number(values.sl_usd) : null,
         trailing_stop: values.trailing_stop,

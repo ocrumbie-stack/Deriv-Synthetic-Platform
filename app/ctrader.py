@@ -331,6 +331,25 @@ def volume_to_lots(volume: int | float, symbol: dict) -> float:
     return round(float(volume) / lot_size, 8) if lot_size else 0.0
 
 
+def lot_limits(symbol: dict) -> dict:
+    """The symbol's smallest, largest and step order size in lots."""
+    return {
+        "min_lots": volume_to_lots(int(symbol.get("minVolume") or symbol.get("stepVolume") or 0), symbol),
+        "step_lots": volume_to_lots(int(symbol.get("stepVolume") or 1), symbol),
+        "max_lots": volume_to_lots(int(symbol.get("maxVolume") or 0), symbol),
+    }
+
+
+def check_lots(lots: float, symbol: dict) -> None:
+    """Refuse a size cTrader would not take as typed: below the minimum,
+    above the maximum, or between steps (lots_to_volume would round that
+    down at order time, so it's caught when the size is saved instead)."""
+    volume = lots_to_volume(lots, symbol)
+    if Decimal(str(lots)) * int(symbol["lotSize"]) != volume:
+        step = lot_limits(symbol)["step_lots"]
+        raise CTraderError(f"{lots:g} lots isn't a size this symbol takes: it moves in steps of {step:g} lots.")
+
+
 def dollars_to_distance(dollars: float, volume: int, symbol: dict) -> float:
     """The price move that makes or loses `dollars` on a position of
     `volume` (protocol cents of a unit), rounded to the symbol's digits as
@@ -741,6 +760,22 @@ class CTraderClient:
                 raise CTraderError(f"cTrader has no details for symbol {symbol_id}.")
             CTraderClient._symbol_details[key] = found[0]
         return CTraderClient._symbol_details[key]
+
+    async def symbols_with_details(self) -> list[dict]:
+        """Every symbol on the account with its full details (lot size and
+        volume limits), asking cTrader only for the ones not cached yet."""
+        light = await self.symbols()
+        missing = [int(s["symbolId"]) for s in light if (self.account_id, int(s["symbolId"])) not in CTraderClient._symbol_details]
+        for start in range(0, len(missing), 100):
+            payload = await self._call(SYMBOL_BY_ID_REQ, {"symbolId": missing[start:start + 100]}, SYMBOL_BY_ID_RES)
+            for found in payload.get("symbol") or []:
+                CTraderClient._symbol_details[(self.account_id, int(found["symbolId"]))] = found
+        out = []
+        for s in light:
+            details = CTraderClient._symbol_details.get((self.account_id, int(s["symbolId"])))
+            if details:
+                out.append({**details, "symbolName": s.get("symbolName"), "description": s.get("description")})
+        return out
 
     async def resolve_symbol(self, raw: str) -> dict:
         """The account's symbol for an alert's symbol, with its full details
