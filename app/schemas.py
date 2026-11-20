@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from typing import Any, Literal
 
@@ -78,7 +79,17 @@ class WebhookSignal(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def normalize_tradingview(cls, values: dict) -> dict:
+    def normalize_tradingview(cls, values: Any) -> Any:
+        # TradingView sends a message that isn't valid JSON as text/plain, so
+        # it arrives as raw text; anything that still isn't a JSON object is
+        # left for validation to refuse with a 422 rather than crash with a 500.
+        if isinstance(values, (bytes, str)):
+            try:
+                values = json.loads(values)
+            except ValueError:
+                return values
+        if not isinstance(values, dict):
+            return values
         action = str(values.get("action", "")).lower()
         mp = str(values.get("market_position", "")).lower()
         if action in ("buy", "sell") and mp:
