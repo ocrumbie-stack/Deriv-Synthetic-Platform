@@ -43,7 +43,8 @@ class CryptoBotCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     symbols: str | None = Field(default=None, max_length=400)
     margin: float = Field(default=10.0, gt=0)
-    leverage: int = Field(default=1, ge=1, le=125)
+    # 0 is Auto: the pair's leverage on Crypto → Leverage.
+    leverage: int = Field(default=0, ge=0, le=125)
     # % of the margin per trade. A stop at 100% is the whole margin, which
     # isolated margin liquidates before it is reached.
     tp_pct: float | None = Field(default=None, gt=0)
@@ -54,10 +55,19 @@ class CryptoBotUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     symbols: str | None = Field(default=None, max_length=400)
     margin: float | None = Field(default=None, gt=0)
-    leverage: int | None = Field(default=None, ge=1, le=125)
+    leverage: int | None = Field(default=None, ge=0, le=125)
     tp_pct: float | None = Field(default=None, gt=0)
     sl_pct: float | None = Field(default=None, gt=0, lt=100)
     enabled: bool | None = None
+
+
+class CryptoLeverageUpdate(BaseModel):
+    symbol: str = Field(..., min_length=1, max_length=40)
+    leverage: int | None = Field(default=None, ge=1, le=125)  # None goes back to the default
+
+
+class CryptoDefaultLeverage(BaseModel):
+    leverage: int = Field(..., ge=1, le=125)
 
 
 class WebhookSignal(BaseModel):

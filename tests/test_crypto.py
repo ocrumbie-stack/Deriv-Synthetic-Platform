@@ -13,7 +13,7 @@ from app import crypto
 from app.blofin import BlofinError, _position, contract_symbol, contracts_for, sign
 from app.config import settings
 from app.database import Base
-from app.models import CryptoBot, CryptoSignal, RiskSettings
+from app.models import CryptoBot, CryptoPairLeverage, CryptoSignal, RiskSettings
 from app.schemas import WebhookSignal
 
 BTC = {"instId": "BTC-USDT", "contractValue": "0.001", "lotSize": "0.1", "minSize": "0.1", "state": "live"}
@@ -314,6 +314,121 @@ class CryptoSignalTests(unittest.TestCase):
         data = asyncio.run(crypto.overview(self.db, client))
         self.assertIsNone(data["api_key"])
         self.assertIsNone(data["error"])
+
+
+class CryptoLeverageTests(unittest.TestCase):
+    """Crypto -> Leverage: Auto bots trade the pair's leverage or the default,
+    capped at BloFin's maximum, and a stop too close to liquidation is refused."""
+
+    setUp = CryptoSignalTests.setUp
+    tearDown = CryptoSignalTests.tearDown
+    _client = CryptoSignalTests._client
+    _send = CryptoSignalTests._send
+
+    def _auto(self, sl_pct=None):
+        self.bot.leverage, self.bot.sl_pct = 0, sl_pct
+        self.db.commit()
+
+    def test_auto_bot_uses_the_pairs_leverage(self):
+        self._auto()
+        self.db.add(CryptoPairLeverage(symbol="BTC-USDT", leverage=20))
+        self.db.commit()
+        signal, client = self._send()
+        self.assertEqual(signal.status.value, "executed")
+        client.set_leverage.assert_awaited_once_with("BTC-USDT", 20, None)
+        # $12.50 at 20x is $250: 5 contracts of 0.001 BTC at $50,000.
+        self.assertEqual(client.open_market.call_args.args[2], Decimal("5.0"))
+        self.assertEqual(signal.leverage, 20)
+
+    def test_auto_bot_without_a_pair_row_uses_the_default(self):
+        self._auto()
+        self.risk.crypto_default_leverage = 5
+        self.db.commit()
+        signal, client = self._send()
+        client.set_leverage.assert_awaited_once_with("BTC-USDT", 5, None)
+        self.assertEqual(signal.leverage, 5)
+
+    def test_bot_leverage_overrides_the_page(self):
+        self.db.add(CryptoPairLeverage(symbol="BTC-USDT", leverage=20))
+        self.db.commit()
+        _, client = self._send()
+        client.set_leverage.assert_awaited_once_with("BTC-USDT", 10, None)
+
+    def test_leverage_is_capped_at_blofins_maximum(self):
+        self._auto()
+        self.db.add(CryptoPairLeverage(symbol="BTC-USDT", leverage=20))
+        self.db.commit()
+        client = self._client()
+        client.instrument.return_value = {**BTC, "maxLeverage": "8"}
+        payload = WebhookSignal(secret="s", strategy="btc", symbol="BTCUSDT", action="entry", direction="long")
+        signal = asyncio.run(crypto.process_signal(self.db, payload, client))
+        client.set_leverage.assert_awaited_once_with("BTC-USDT", 8, None)
+        self.assertIn("capped at BloFin's 8x", signal.reason)
+
+    def test_bot_stop_too_close_to_liquidation_is_refused(self):
+        # 20x with a 100x max liquidates about 4.5% away; 80% of that is 3.6%.
+        # A 90% SL is a 4.5% move, so it's refused - and the open short isn't
+        # reversed first.
+        self.bot.leverage, self.bot.sl_pct = 20, 90
+        self.db.commit()
+        signal, client = self._send(positions=[position("short")])
+        self.assertEqual(signal.status.value, "rejected")
+        self.assertIn("too close to liquidation", signal.reason)
+        client.close_position.assert_not_awaited()
+        client.open_market.assert_not_awaited()
+
+    def test_stop_inside_the_limit_goes_through(self):
+        self.bot.leverage, self.bot.sl_pct = 20, 50  # a 2.5% move
+        self.db.commit()
+        signal, _ = self._send()
+        self.assertEqual(signal.status.value, "executed")
+
+    def test_alert_stop_price_is_checked_too(self):
+        self.bot.leverage = 20
+        self.db.commit()
+        signal, _ = self._send(stop_loss=48000)  # 4% below $50,000
+        self.assertEqual(signal.status.value, "rejected")
+        signal, _ = self._send(direction="short", stop_loss=51500)  # 3% above
+        self.assertEqual(signal.status.value, "executed")
+
+    def _page_client(self):
+        client = self._client()
+        client.mode = "demo"
+        client.instruments.return_value = [
+            {**BTC, "maxLeverage": "100"},
+            {**BTC, "instId": "ETH-USDT", "maxLeverage": "50"},
+        ]
+        return client
+
+    def test_page_lists_set_pairs_first_and_flags_auto_bot_stops(self):
+        self._auto(sl_pct=90)
+        self.risk.crypto_default_leverage = 5
+        self.db.add(CryptoPairLeverage(symbol="ETH-USDT", leverage=30))
+        self.db.commit()
+        data = asyncio.run(crypto.leverage_page(self.db, self._page_client()))
+        eth, btc = data["pairs"]
+        self.assertEqual((eth["symbol"], eth["saved_leverage"], eth["leverage"]), ("ETH-USDT", 30, 30))
+        self.assertEqual((btc["symbol"], btc["saved_leverage"], btc["leverage"]), ("BTC-USDT", None, 5))
+        # 5x with a 100x max: 20% less 0.5% maintenance is 19.5%; 80% of the
+        # margin lost there is 78%, so a 90% SL is flagged.
+        self.assertEqual((btc["liquidation_pct"], btc["safe_sl_pct"]), (19.5, 78.0))
+        self.assertEqual(btc["too_close"], ["btc"])
+        self.assertEqual(data["default_leverage"], 5)
+
+    def test_saving_caps_at_the_maximum_and_none_resets(self):
+        client = self._page_client()
+        row = asyncio.run(crypto.set_pair_leverage(self.db, "ETHUSDT.P", 80, client))
+        self.assertEqual((row["saved_leverage"], row["leverage"]), (50, 50))
+        self.assertEqual(self.db.query(CryptoPairLeverage).one().leverage, 50)
+        row = asyncio.run(crypto.set_pair_leverage(self.db, "ETH-USDT", None, client))
+        self.assertIsNone(row["saved_leverage"])
+        self.assertEqual(self.db.query(CryptoPairLeverage).count(), 0)
+        with self.assertRaises(BlofinError):
+            asyncio.run(crypto.set_pair_leverage(self.db, "NOPEUSDT", 5, client))
+
+    def test_default_leverage_is_saved(self):
+        crypto.set_default_leverage(self.db, 7)
+        self.assertEqual(crypto.default_leverage(self.db), 7)
 
 
 class CryptoMarketTests(unittest.TestCase):

@@ -48,6 +48,9 @@ class RiskSettings(Base):
     forex_max_margin: Mapped[float] = mapped_column(Float, default=0.0)
     crypto_daily_loss_limit: Mapped[float] = mapped_column(Float, default=0.0)
     crypto_max_margin: Mapped[float] = mapped_column(Float, default=0.0)
+    # Crypto → Leverage: the leverage a crypto bot on Auto trades on a pair
+    # with no leverage of its own (CryptoPairLeverage).
+    crypto_default_leverage: Mapped[int] = mapped_column(Integer, default=1)
     # Open Positions' close-all target: once the summed unrealized P/L of every
     # open position reaches +take_profit or -stop_loss, all of them are closed
     # and the target clears - unless close_all_repeat keeps it for the next
@@ -145,7 +148,9 @@ class ForexSignal(Base):
 class CryptoBot(Base):
     """A strategy allowed to trade on BloFin, and how big its entries are:
     `margin` USDT put up at `leverage`, so a position worth margin x leverage.
-    The webhook's own size and leverage are ignored, as on Deriv."""
+    The webhook's own size and leverage are ignored, as on Deriv. Leverage 0
+    is Auto: the pair's leverage on Crypto → Leverage (CryptoPairLeverage,
+    else the default there). The column stays NOT NULL like SignalBot's."""
 
     __tablename__ = "crypto_bots"
 
@@ -161,6 +166,18 @@ class CryptoBot(Base):
     sl_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class CryptoPairLeverage(Base):
+    """Crypto → Leverage: the leverage a crypto bot on Auto trades on one
+    BloFin pair (BTC-USDT). A pair with no row uses the default on
+    RiskSettings.crypto_default_leverage. Shared by demo and live."""
+    __tablename__ = "crypto_pair_leverage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    leverage: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class CryptoSignal(Base):

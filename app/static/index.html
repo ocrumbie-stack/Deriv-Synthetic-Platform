@@ -175,6 +175,10 @@
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.5"/><path d="M7 4V7l2 1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
               Trade History
             </button>
+            <button class="nav-item" data-page="crypto-leverage">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 12V8M7 12V4M12 12V2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+              Leverage
+            </button>
           </div>
 
           <div class="nav-section" data-market="system">
@@ -1139,7 +1143,7 @@
               <div class="crypto-bot-fields">
                 <label><span class="bot-field-label">Strategy name</span><input name="name" type="text" placeholder="Must match the alert's strategy" required /></label>
                 <label><span class="bot-field-label">Margin (USDT)</span><input name="margin" type="number" min="1" step="0.01" value="10" required /></label>
-                <label><span class="bot-field-label">Leverage</span><input name="leverage" type="number" min="1" max="125" step="1" value="10" required /></label>
+                <label><span class="bot-field-label">Leverage</span><input name="leverage" type="number" min="1" max="125" step="1" placeholder="Auto" /></label>
                 <label><span class="bot-field-label">TP % of margin (per trade)</span><input name="tp_pct" type="number" min="0.1" step="0.1" placeholder="optional" /></label>
                 <label><span class="bot-field-label">SL % of margin (per trade)</span><input name="sl_pct" type="number" min="0.1" max="99.9" step="0.1" placeholder="optional" /></label>
                 <label><span class="bot-field-label">Allowed pairs</span><input name="symbols" type="text" placeholder="Any — or BTCUSDT, ETHUSDT" /></label>
@@ -1160,7 +1164,38 @@
                 <tbody id="cryptoBots"></tbody>
               </table>
             </div>
-            <p class="subtle settings-hint">Each entry puts up the bot's margin at its leverage, so $20 at 10x opens about a $200 position (isolated margin, rounded down to BloFin's lot size). Entries need an enabled bot with the alert's strategy name; the alert's own size and leverage are ignored. TP / SL are a % of the margin, placed on BloFin with each entry as prices measured from the last price: 50% at 10x is a 5% move. take_profit or stop_loss prices in the alert are used instead when sent. Click a bot to see the pairs it has traded; a position opened on BloFin itself isn't listed under a bot. Pausing a bot only stops new entries — its exits still close positions.</p>
+            <p class="subtle settings-hint">Each entry puts up the bot's margin at its leverage, so $20 at 10x opens about a $200 position (isolated margin, rounded down to BloFin's lot size). Leave Leverage blank (Auto) to use each pair's leverage on Crypto → Leverage; a number typed in is used on every pair instead. Either way it's capped at the pair's BloFin maximum, and an entry whose stop loss is too close to liquidation is refused. Entries need an enabled bot with the alert's strategy name; the alert's own size and leverage are ignored. TP / SL are a % of the margin, placed on BloFin with each entry as prices measured from the last price: 50% at 10x is a 5% move. take_profit or stop_loss prices in the alert are used instead when sent. Click a bot to see the pairs it has traded; a position opened on BloFin itself isn't listed under a bot. Pausing a bot only stops new entries — its exits still close positions.</p>
+          </div>
+        </div>
+
+        <div class="page" id="page-crypto-leverage">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Leverage</h1>
+              <p class="subtle">Crypto · every USDT pair on BloFin, on the default leverage until you give it its own. A crypto bot with Leverage left blank (Auto) trades the leverage set here.</p>
+            </div>
+            <div class="crypto-lev-tools">
+              <label class="cfd-bot-check"><input id="cryptoLevSetOnly" type="checkbox" /> <span>Set only</span></label>
+              <input id="cryptoLevSearch" class="inline-input" type="search" placeholder="Filter pairs" aria-label="Filter pairs" style="width:180px" />
+            </div>
+          </div>
+          <div class="page-body">
+            <form id="cryptoLevDefaultForm" class="risk-panel crypto-lev-default">
+              <label><span class="bot-field-label">Default leverage</span>
+                <input name="leverage" class="inline-input" type="number" min="1" max="125" step="1" required style="width:90px" /></label>
+              <button type="submit" class="dialog-btn primary">Save</button>
+              <label><span class="bot-field-label">Show TP / SL moves for</span>
+                <select id="cryptoLevBot" class="inline-input" style="width:auto;min-width:160px"></select></label>
+              <p class="subtle settings-hint">Every pair without its own leverage uses the default. Changing it moves all of those pairs at once; pairs you've set keep their own number.</p>
+            </form>
+            <p class="settings-error" id="cryptoLevError" role="alert"></p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Pair</th><th>BloFin max</th><th>Leverage in use</th><th>Liquidation</th><th>TP / SL move</th><th></th></tr></thead>
+                <tbody id="cryptoLeverage"></tbody>
+              </table>
+            </div>
+            <p class="subtle settings-hint">Leverage is capped at each pair's BloFin maximum. Liquidation is roughly how far price can move against an isolated position before BloFin closes it (an estimate; BloFin's own maintenance tiers differ a little). An entry whose stop loss is more than 80% of the way to liquidation is refused, so a red pair is one where an Auto bot's SL % is too wide for that leverage: lower the leverage or the bot's SL %. TP / SL move is the price move the chosen bot's % of margin needs at this leverage. A bot with its own Leverage typed in ignores this page. Changes only apply to new entries; open positions keep the leverage they opened with.</p>
           </div>
         </div>
 

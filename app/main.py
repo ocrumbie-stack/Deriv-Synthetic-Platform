@@ -19,7 +19,7 @@ from app.config import ENV_EXECUTION_MODE, ENV_MAX_MULTIPLIER_FLOOR, ENV_TIMEZON
 from app.database import Base, SessionLocal, engine, get_db, sync_schema
 from app.deriv import DerivClient, DerivExecutionError
 from app.models import BotPair, CryptoBot, CryptoSignal, ExecutionStatus, ForexBot, ForexSignal, PositionStatus, RiskSettings, Signal, SignalAction, SignalBot, Strategy, SymbolLeverage, Trade
-from app.schemas import BotPairOut, BotPairUpdate, CloseAllTarget, CryptoBotCreate, CryptoBotUpdate, ForexBotCreate, ForexBotUpdate, ForexPairUpdate, ManualExitSignal, PositionAction, PositionStopAction, PositionTpSl, PositionTpSlAction, PositionTpSlDetail, PositionTrailAction, SecretQuery, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, SignalStatusQuery, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
+from app.schemas import BotPairOut, BotPairUpdate, CloseAllTarget, CryptoBotCreate, CryptoBotUpdate, CryptoDefaultLeverage, CryptoLeverageUpdate, ForexBotCreate, ForexBotUpdate, ForexPairUpdate, ManualExitSignal, PositionAction, PositionStopAction, PositionTpSl, PositionTpSlAction, PositionTpSlDetail, PositionTrailAction, SecretQuery, SignalBotCreate, SignalBotOut, SignalBotUpdate, SignalOut, SignalStatusQuery, StrategyOut, SymbolLeverageOut, SymbolLeverageUpdate, TradeOut, WebhookSignal
 from app.services import PAIR_DEFAULT_FIELDS, account_exposure, close_all_open_trades, close_all_target, get_app_settings, local_period_start, close_trade, daily_account_net, get_live_unrealized_pnl, get_risk_settings, get_signal_bot, preview_chart_trade, process_manual_exit, process_webhook_signal, reconcile_open_trade, trade_tpsl_amounts, close_position_with_signal, trade_execution_lock
 from app import auth, crypto, ctrader_routes, forex, forex_trading, home, notify, trade_audit
 from app.blofin import BlofinError, missing_settings as blofin_missing
@@ -868,6 +868,24 @@ async def crypto_overview(db: Session = Depends(get_db)) -> dict:
 @app.get("/api/crypto/market")
 async def crypto_market(symbols: str = "") -> dict:
     return await crypto.market(symbols)
+
+
+@app.get("/api/crypto/leverage")
+async def crypto_leverage(db: Session = Depends(get_db)) -> dict:
+    return await crypto.leverage_page(db)
+
+
+@app.patch("/api/crypto/leverage")
+async def update_crypto_leverage(update: CryptoLeverageUpdate, db: Session = Depends(get_db)) -> dict:
+    try:
+        return await crypto.set_pair_leverage(db, update.symbol, update.leverage)
+    except BlofinError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.put("/api/crypto/leverage/default")
+def update_crypto_default_leverage(update: CryptoDefaultLeverage, db: Session = Depends(get_db)) -> dict:
+    return {"default_leverage": crypto.set_default_leverage(db, update.leverage)}
 
 
 def _crypto_bot_fields(fields: dict, db: Session, bot_id: int | None = None) -> dict:

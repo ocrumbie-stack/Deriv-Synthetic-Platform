@@ -1746,3 +1746,19 @@ tr.clickable:hover td, tr.selected td { background: var(--panel-2, #16161e); }
   .page-tabs { margin-bottom: -15px; }
   .page-body { padding: 16px 16px 40px; }
 }
+
+/* Crypto → Leverage */
+.crypto-lev-tools { align-items: center; display: flex; gap: 12px; }
+.crypto-lev-tools .cfd-bot-check { padding-bottom: 0; }
+.crypto-lev-tools .cfd-bot-check input { width: auto; height: auto; margin: 0; }
+.crypto-lev-default { align-items: flex-end; display: flex; flex-wrap: wrap; gap: 12px; }
+.crypto-lev-default label { display: flex; flex-direction: column; gap: 4px; }
+.crypto-lev-default .settings-hint { flex-basis: 100%; margin: 0; }
+#cryptoLeverage tr.lev-flag td { background: var(--red-dim); }
+#cryptoLeverage tr.lev-flag td:first-child { box-shadow: inset 3px 0 0 var(--red); }
+#cryptoLeverage .lev-flag-note { color: var(--red); }
+#cryptoLeverage tr[data-dim] td { opacity: .55; }
+@media (max-width: 640px) {
+  .crypto-lev-tools { flex-wrap: wrap; }
+  .crypto-lev-tools input[type="search"] { width: 100% !important; }
+}

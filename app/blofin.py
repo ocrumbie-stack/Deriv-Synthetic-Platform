@@ -165,6 +165,11 @@ class BlofinClient:
             raise BlofinError(f"BloFin doesn't list {pair_label(symbol)}.")
         return row
 
+    async def instruments(self) -> list[dict]:
+        """Every USDT perpetual BloFin lists (instId, maxLeverage, state, ...)."""
+        rows = await self._request("GET", "/api/v1/market/instruments", signed=False)
+        return [r for r in rows or [] if str(r.get("instId") or "").endswith("-USDT")]
+
     async def last_price(self, symbol: str) -> float:
         rows = await self._request("GET", "/api/v1/market/tickers", {"instId": symbol}, signed=False)
         price = _num((rows or [{}])[0].get("last"))

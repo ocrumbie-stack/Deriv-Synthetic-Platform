@@ -7,7 +7,10 @@ environment - and each signal records the mode it ran in, so the page only
 shows the current mode's signals.
 
 Entries need an enabled crypto bot named after the strategy, which sets the
-size and leverage. An entry against an open opposite position closes it
+size and leverage. A bot with leverage 0 (Auto) uses the pair's leverage on
+Crypto -> Leverage, or the default set there; either way it's capped at the
+pair's BloFin maximum. An entry whose stop loss sits too close to the
+liquidation price is refused. An entry against an open opposite position closes it
 first (a reversal); an entry in the same direction as an open position is
 refused. Exits go through even when the bot is paused or missing.
 """
@@ -26,7 +29,7 @@ from sqlalchemy.orm import Session
 from app import notify
 from app.blofin import BlofinClient, BlofinError, configured, contract_symbol, contracts_for, missing_settings, pair_label
 from app.config import settings
-from app.models import CryptoBot, CryptoSignal, Direction, ExecutionStatus, SignalAction
+from app.models import CryptoBot, CryptoPairLeverage, CryptoSignal, Direction, ExecutionStatus, SignalAction
 from app.schemas import WebhookSignal
 from app.services import get_risk_settings, local_period_start
 
@@ -61,8 +64,10 @@ def bot_out(bot: CryptoBot) -> dict:
         "name": bot.name,
         "symbols": symbols.split(",") if symbols else [],
         "margin": bot.margin,
+        # 0 is Auto: the leverage differs per pair (Crypto -> Leverage).
         "leverage": bot.leverage,
-        "position_value": position_value(bot.margin, bot.leverage),
+        "auto_leverage": not bot.leverage,
+        "position_value": position_value(bot.margin, bot.leverage) if bot.leverage else None,
         "tp_pct": bot.tp_pct,
         "sl_pct": bot.sl_pct,
         "enabled": bot.enabled,
@@ -76,16 +81,83 @@ def position_value(margin: float, leverage: int) -> float:
     return round(margin * leverage, 2)
 
 
-def stop_prices(bot: CryptoBot, direction: Direction, price: float, tick_size) -> tuple[str | None, str | None]:
+# --- Leverage (Crypto -> Leverage) -----------------------------------------
+# Used when BloFin doesn't send a pair's maximum leverage.
+FALLBACK_MAX_LEVERAGE = 100
+# An entry is refused when its stop loss is further than this share of the
+# way from the entry price to the liquidation price.
+SL_LIQUIDATION_SHARE = 0.8
+
+
+def max_leverage(instrument: dict) -> int | None:
+    """The pair's highest leverage on BloFin, or None if it isn't sent."""
+    try:
+        return int(float(instrument.get("maxLeverage") or 0)) or None
+    except (TypeError, ValueError):
+        return None
+
+
+def default_leverage(db: Session) -> int:
+    return max(1, get_risk_settings(db).crypto_default_leverage or 1)
+
+
+def leverage_for(db: Session, bot: CryptoBot, symbol: str, most: int | None = None) -> tuple[int, str, bool]:
+    """(leverage, where it came from, whether it was capped) for an entry on
+    `symbol`: the bot's own number, else the pair's row on Crypto ->
+    Leverage, else the default there - at most the pair's BloFin maximum."""
+    if bot.leverage:
+        leverage, source = bot.leverage, "bot"
+    else:
+        saved = db.scalar(select(CryptoPairLeverage.leverage).where(CryptoPairLeverage.symbol == symbol))
+        leverage, source = (saved, "pair") if saved else (default_leverage(db), "default")
+    if most and leverage > most:
+        return most, source, True
+    return leverage, source, False
+
+
+def liquidation_move(leverage: int, most: int | None) -> float:
+    """About how far price (as a fraction) moves against an isolated position
+    before BloFin liquidates it: the margin (1/leverage) less maintenance
+    margin, estimated as half the initial margin at the pair's maximum
+    leverage. It's an estimate - BloFin's own tiers differ a little."""
+    return max(1 / leverage - 0.5 / (most or FALLBACK_MAX_LEVERAGE), 0.0)
+
+
+def safe_sl_pct(leverage: int, most: int | None) -> float:
+    """The largest stop loss (% of margin) an entry at `leverage` may have."""
+    return round(SL_LIQUIDATION_SHARE * liquidation_move(leverage, most) * leverage * 100, 2)
+
+
+def stop_block(symbol: str, direction: Direction, price: float, stop_loss, leverage: int, most: int | None) -> str | None:
+    """Why an entry's stop loss is too close to liquidation, or None."""
+    if stop_loss is None or not price:
+        return None
+    stop = float(stop_loss)
+    move = (price - stop) / price if direction == Direction.long else (stop - price) / price
+    if move <= 0:
+        return None  # on the profit side - BloFin refuses it with its own reason
+    liquidation = liquidation_move(leverage, most)
+    if move <= SL_LIQUIDATION_SHARE * liquidation:
+        return None
+    return (f"Stop loss too close to liquidation: {pair_label(symbol)} at {leverage}x liquidates about "
+            f"{liquidation * 100:.2f}% away and the stop is {move * 100:.2f}% away "
+            f"(the most allowed is {SL_LIQUIDATION_SHARE * liquidation * 100:.2f}%). "
+            "Lower the leverage on Crypto > Leverage or the bot's SL %.")
+
+
+def stop_prices(bot: CryptoBot, direction: Direction, price: float, tick_size,
+                leverage: int | None = None) -> tuple[str | None, str | None]:
     """The bot's take profit and stop loss (% of margin) as BloFin trigger
     prices, measured from the last price: 50% of the margin at 10x is a 5%
-    move. Rounded to the pair's tick and returned as plain decimal text."""
+    move. Rounded to the pair's tick and returned as plain decimal text.
+    `leverage` is the one the entry trades at (the bot's own by default)."""
     tick = Decimal(str(tick_size or 0))
+    leverage = leverage or bot.leverage or 1
 
     def at(pct: float | None, gain: bool) -> str | None:
         if not pct:
             return None
-        move = Decimal(str(pct)) / 100 / bot.leverage
+        move = Decimal(str(pct)) / 100 / leverage
         up = gain == (direction == Direction.long)
         level = Decimal(str(price)) * (1 + move if up else 1 - move)
         if tick > 0:
@@ -164,7 +236,7 @@ async def process_signal(db: Session, payload: WebhookSignal, client: BlofinClie
         action=payload.action,
         direction=payload.direction,
         margin=bot.margin if bot else None,
-        leverage=bot.leverage if bot else 1,
+        leverage=(bot.leverage or 1) if bot else 1,
         take_profit=payload.take_profit,
         stop_loss=payload.stop_loss,
         signal_id=payload.signal_id,
@@ -203,11 +275,14 @@ async def process_signal(db: Session, payload: WebhookSignal, client: BlofinClie
     if allowed and symbol not in allowed.split(","):
         return _finish(db, signal, ExecutionStatus.rejected, f"{pair_label(symbol)} isn't one of this bot's allowed pairs.")
 
-    value = position_value(bot.margin, bot.leverage)
     try:
         instrument, price = await asyncio.gather(client.instrument(symbol), client.last_price(symbol))
         if instrument.get("state") not in (None, "live"):
             return _finish(db, signal, ExecutionStatus.rejected, f"{pair_label(symbol)} isn't trading on BloFin right now.")
+        most = max_leverage(instrument)
+        leverage, _source, capped = leverage_for(db, bot, symbol, most)
+        signal.leverage = leverage
+        value = position_value(bot.margin, leverage)
         contracts = contracts_for(value, price, instrument["contractValue"], instrument["lotSize"])
         if contracts < float(instrument["minSize"]) or contracts <= 0:
             smallest = float(instrument["minSize"]) * float(instrument["contractValue"]) * price
@@ -223,17 +298,20 @@ async def process_signal(db: Session, payload: WebhookSignal, client: BlofinClie
         blocked = await limit_block(client, risk, others, bot.margin)
         if blocked:
             return _finish(db, signal, ExecutionStatus.rejected, blocked)
-        for position in open_positions:
-            await client.close_position(position, _client_order_id())
-        hedge = await client.hedge_mode()
-        position_side = payload.direction.value if hedge else "net"
-        await client.set_leverage(symbol, bot.leverage, position_side if hedge else None)
         # Prices sent in the alert win over the bot's own % of margin.
-        take_profit, stop_loss = stop_prices(bot, payload.direction, price, instrument.get("tickSize"))
+        take_profit, stop_loss = stop_prices(bot, payload.direction, price, instrument.get("tickSize"), leverage)
         take_profit = payload.take_profit if payload.take_profit is not None else take_profit
         stop_loss = payload.stop_loss if payload.stop_loss is not None else stop_loss
         signal.take_profit = float(take_profit) if take_profit is not None else None
         signal.stop_loss = float(stop_loss) if stop_loss is not None else None
+        blocked = stop_block(symbol, payload.direction, price, stop_loss, leverage, most)
+        if blocked:
+            return _finish(db, signal, ExecutionStatus.rejected, blocked)
+        for position in open_positions:
+            await client.close_position(position, _client_order_id())
+        hedge = await client.hedge_mode()
+        position_side = payload.direction.value if hedge else "net"
+        await client.set_leverage(symbol, leverage, position_side if hedge else None)
         order = await client.open_market(
             symbol, payload.direction.value, contracts, _client_order_id(), position_side=position_side,
             take_profit=take_profit, stop_loss=stop_loss,
@@ -242,8 +320,12 @@ async def process_signal(db: Session, payload: WebhookSignal, client: BlofinClie
         logger.warning("BloFin entry failed for %s: %s", symbol, e)
         return _finish(db, signal, ExecutionStatus.failed, str(e))
     signal.order_id = str(order.get("orderId") or "") or None
-    reason = "Reversed the open position first." if open_positions else None
-    return _finish(db, signal, ExecutionStatus.executed, reason)
+    notes = []
+    if open_positions:
+        notes.append("Reversed the open position first.")
+    if capped:
+        notes.append(f"Leverage capped at BloFin's {most}x maximum for {pair_label(symbol)}.")
+    return _finish(db, signal, ExecutionStatus.executed, " ".join(notes) or None)
 
 
 async def _exit(db: Session, client: BlofinClient, signal: CryptoSignal, symbol: str) -> CryptoSignal:
@@ -422,3 +504,105 @@ async def close_position(symbol: str, side: str, client: BlofinClient | None = N
         for position in positions:
             await client.close_position(position, _client_order_id())
     notify.market_closed(client.mode, "Crypto", pair_label(symbol), "", f"{side.lower()} closed from the dashboard")
+
+
+# --- Crypto -> Leverage page ------------------------------------------------
+# Every USDT pair on BloFin, each on the default leverage until given its
+# own. A crypto bot with Leverage left blank (Auto) trades the leverage here.
+INSTRUMENTS_TTL = 600
+
+
+async def _instruments(client: BlofinClient) -> dict[str, dict]:
+    rows = await _cached(("instruments", client.mode), INSTRUMENTS_TTL, client.instruments)
+    return {row["instId"]: row for row in rows}
+
+
+def _auto_bots(db: Session) -> list[tuple[CryptoBot, set | None]]:
+    """Bots on Auto leverage, each with its allowed pairs (None for any)."""
+    out = []
+    for bot in db.scalars(select(CryptoBot).where(CryptoBot.leverage == 0).order_by(CryptoBot.name)):
+        try:
+            allowed = normalize_symbols(bot.symbols)
+        except BlofinError:
+            allowed = None
+        out.append((bot, set(allowed.split(",")) if allowed else None))
+    return out
+
+
+def _leverage_row(instrument: dict, saved: int | None, default: int, auto_bots: list[tuple[CryptoBot, set | None]]) -> dict:
+    symbol = instrument["instId"]
+    most = max_leverage(instrument)
+    wanted = saved or default
+    leverage = min(wanted, most) if most else wanted
+    safe = safe_sl_pct(leverage, most)
+    return {
+        "symbol": symbol,
+        "state": instrument.get("state") or "live",
+        "max_leverage": most,
+        "saved_leverage": saved,
+        "wanted_leverage": wanted,
+        "leverage": leverage,
+        "capped": leverage < wanted,
+        "liquidation_pct": round(liquidation_move(leverage, most) * 100, 2),
+        "safe_sl_pct": safe,
+        # Auto bots allowed on this pair whose stop loss would be refused.
+        "too_close": [bot.name for bot, allowed in auto_bots
+                      if bot.sl_pct and bot.sl_pct > safe and (allowed is None or symbol in allowed)],
+    }
+
+
+async def leverage_page(db: Session, client: BlofinClient | None = None) -> dict:
+    mode = _mode()
+    client = client or BlofinClient(mode)
+    default = default_leverage(db)
+    saved = {row.symbol: row.leverage for row in db.scalars(select(CryptoPairLeverage))}
+    bots = db.scalars(select(CryptoBot).order_by(CryptoBot.name))
+    data = {
+        "mode": mode,
+        "default_leverage": default,
+        "sl_share": SL_LIQUIDATION_SHARE,
+        "error": None,
+        "pairs": [],
+        "bots": [{"id": b.id, "name": b.name, "leverage": b.leverage, "tp_pct": b.tp_pct,
+                  "sl_pct": b.sl_pct, "enabled": b.enabled} for b in bots],
+    }
+    try:
+        instruments = await _instruments(client)
+    except (BlofinError, OSError, httpx.HTTPError) as e:
+        data["error"] = str(e) or "BloFin's pair list is unavailable."
+        return data
+    auto_bots = _auto_bots(db)
+    rows = [_leverage_row(inst, saved.get(symbol), default, auto_bots) for symbol, inst in instruments.items()]
+    # Pairs given their own leverage first, then A-Z.
+    data["pairs"] = sorted(rows, key=lambda r: (r["saved_leverage"] is None, r["symbol"]))
+    return data
+
+
+async def set_pair_leverage(db: Session, symbol: str, leverage: int | None, client: BlofinClient | None = None) -> dict:
+    """Save a pair's leverage (capped at its BloFin maximum), or with None put
+    it back on the default. Raises BlofinError for a pair BloFin doesn't list."""
+    client = client or BlofinClient(_mode())
+    symbol = contract_symbol(symbol)
+    instrument = (await _instruments(client)).get(symbol)
+    if instrument is None:
+        raise BlofinError(f"BloFin doesn't list {pair_label(symbol)}.")
+    most = max_leverage(instrument)
+    row = db.scalar(select(CryptoPairLeverage).where(CryptoPairLeverage.symbol == symbol))
+    saved = None
+    if leverage is None:
+        if row:
+            db.delete(row)
+    else:
+        if not row:
+            row = CryptoPairLeverage(symbol=symbol)
+            db.add(row)
+        row.leverage = saved = min(leverage, most) if most else leverage
+    db.commit()
+    return _leverage_row(instrument, saved, default_leverage(db), _auto_bots(db))
+
+
+def set_default_leverage(db: Session, leverage: int) -> int:
+    risk = get_risk_settings(db)
+    risk.crypto_default_leverage = leverage
+    db.commit()
+    return leverage

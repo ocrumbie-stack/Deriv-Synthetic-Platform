@@ -212,6 +212,7 @@ const pageIds = new Set([
   "crypto-bots",
   "crypto-positions",
   "crypto-history",
+  "crypto-leverage",
   "system-risk",
   "system-settings",
 ]);
@@ -231,7 +232,7 @@ const marketPages = {
   synthetic: ["dashboard-overview", "trading-bots", "trading-positions", "trading-history", "signals-journal", "strategies-ranking",
               "strategies-leverage", "cfd-overview", "cfd-bots", "cfd-positions", "cfd-history", "cfd-lot-sizes"],
   forex:     ["forex-overview", "forex-bots", "forex-positions", "forex-history"],
-  crypto:    ["crypto-overview", "crypto-bots", "crypto-positions", "crypto-history"],
+  crypto:    ["crypto-overview", "crypto-bots", "crypto-positions", "crypto-history", "crypto-leverage"],
   system:    ["system-risk", "system-settings", "strategies-settings"],
 };
 const pageMarket = Object.fromEntries(Object.entries(marketPages).flatMap(([m, pages]) => pages.map(p => [p, m])));
@@ -251,6 +252,7 @@ const forexTradingView = { data: null, timer: null, loading: false };
 const cryptoView = { data: null, market: null, timer: null, loading: false };
 const homeView = { timer: null, loading: false };
 let cfdLotRows = [];
+const cryptoLevView = { data: null };
 
 function navigate(pageId, updateUrl = true) {
   pageId = pageAliases[pageId] || pageId;
@@ -291,6 +293,7 @@ function navigate(pageId, updateUrl = true) {
   }
   if (pageId === "system-settings") loadAppSettings();
   if (pageId === "cfd-lot-sizes") loadCfdLotSizes();
+  if (pageId === "crypto-leverage") loadCryptoLeverage();
   if (pageId === "forex-overview") startForexView();
   else stopForexView();
   if (pageId === "forex-bots") loadForexBots();
@@ -1033,7 +1036,7 @@ function renderCryptoOverview(data) {
       return `<div class="crypto-bot${bot.enabled ? "" : " paused"}">
         <span class="crypto-bot-dot" title="${bot.enabled ? "Active" : "Paused"}"></span>
         <strong>${escapeAttr(bot.name)}</strong>
-        <span class="crypto-bot-size">${bot.enabled ? `${cryptoMoney(bot.margin)} · ${bot.leverage}x` : "paused"}</span>
+        <span class="crypto-bot-size">${bot.enabled ? `${cryptoMoney(bot.margin)} · ${cryptoLeverageText(bot)}` : "paused"}</span>
         <span class="crypto-bot-last">${last ? `${escapeAttr(last.action)} ${cryptoSince(last.created_at)}` : "no recent signals"}</span>
       </div>`;
     }).join("")
@@ -1184,7 +1187,7 @@ function cryptoBotRows(data) {
     const botTpsl = plusMinus(bot.tp_pct, bot.sl_pct, "%");
     return {
       id: bot.id, name: bot.name, enabled: bot.enabled, money: cryptoMoney,
-      size: `${cryptoMoney(bot.margin)}<span class="sub-line">${bot.leverage}x · ${cryptoMoney(bot.position_value)} position</span>`,
+      size: `${cryptoMoney(bot.margin)}<span class="sub-line">${bot.leverage ? `${bot.leverage}x · ${cryptoMoney(bot.position_value)} position` : "Auto leverage · per pair"}</span>`,
       tpsl: botTpsl,
       pnl: data.connected && !data.error ? sumOf(open, "unrealized_pnl") : null,
       pnlNote: open.length ? `${open.length} open` : "no open position",
@@ -1247,7 +1250,16 @@ function forexBotRows() {
   });
 }
 
+function cryptoLeverageText(bot) {
+  return bot.leverage ? `${bot.leverage}x` : "Auto";
+}
+
 function cryptoPositionHint(margin, leverage, tp, sl) {
+  if (!(Number(leverage) > 0)) {
+    return Number(margin) > 0
+      ? `Leverage on Auto: each entry uses the pair's leverage on Crypto → Leverage, so ${currency.format(Number(margin))} margin opens a different size per pair. TP / SL moves per pair are shown there.`
+      : "";
+  }
   const value = Number(margin) * Number(leverage);
   if (!(value > 0)) return "";
   // A % of the margin is that % divided by the leverage as a price move.
@@ -1262,7 +1274,8 @@ function cryptoPositionHint(margin, leverage, tp, sl) {
 function cryptoBotBody(get) {
   const pct = name => (get(name) === "" || get(name) == null ? null : Number(get(name)));
   return {
-    name: get("name"), margin: Number(get("margin")), leverage: Number(get("leverage")),
+    // Blank leverage is Auto (0): the pair's leverage on Crypto → Leverage.
+    name: get("name"), margin: Number(get("margin")), leverage: get("leverage") === "" || get("leverage") == null ? 0 : Number(get("leverage")),
     tp_pct: pct("tp_pct"), sl_pct: pct("sl_pct"), symbols: get("symbols") || null,
   };
 }
@@ -1327,12 +1340,12 @@ document.querySelector("#cryptoBots").addEventListener("click", async event => {
       fields: [
         { name: "name", label: "Strategy name", value: bot.name },
         [{ name: "margin", label: "Margin", value: bot.margin, prefix: "$" },
-         { name: "leverage", label: "Leverage", value: bot.leverage }],
+         { name: "leverage", label: "Leverage", value: bot.leverage || "", placeholder: "Auto" }],
         [{ name: "tp_pct", label: "TP % of margin (per trade)", value: bot.tp_pct ?? "", placeholder: "none" },
          { name: "sl_pct", label: "SL % of margin (per trade)", value: bot.sl_pct ?? "", placeholder: "none" }],
         { name: "symbols", label: "Allowed pairs", value: bot.symbols.map(cryptoPairText).join(", "), placeholder: "Any", hint: "Leave empty to allow any USDT pair." },
       ],
-      note: "Position value is margin × leverage, rounded down to BloFin's lot size. TP / SL are placed on BloFin with each new entry; leave one empty for none. Open positions keep the ones they have.",
+      note: "Leave Leverage empty for Auto: each pair's leverage on Crypto → Leverage. Position value is margin × leverage, rounded down to BloFin's lot size. TP / SL are placed on BloFin with each new entry; leave one empty for none. Open positions keep the ones they have.",
       confirmLabel: "Save",
       onSubmit: values => sendJson("PATCH", url, cryptoBotBody(name => values[name])),
     });
@@ -4205,6 +4218,102 @@ document.querySelector("#cfdLotSizes").addEventListener("change", event => {
 document.querySelector("#cfdLotSizes").addEventListener("click", event => {
   const button = event.target.closest("[data-lot-reset]");
   if (button) saveCfdLotSize(button.dataset.lotReset, null);
+});
+
+// ─── Crypto Leverage (Crypto → Leverage) ────────────────────────────────────
+// Every BloFin USDT pair on the default leverage until given its own. A
+// crypto bot with Leverage blank (Auto) trades the leverage shown here.
+
+async function loadCryptoLeverage() {
+  const error = document.querySelector("#cryptoLevError");
+  if (!cryptoLevView.data) document.querySelector("#cryptoLeverage").innerHTML = emptyRow(6, "Loading pairs from BloFin…");
+  try {
+    cryptoLevView.data = await getJson("/api/crypto/leverage", 30000);
+    error.textContent = cryptoLevView.data.error || "";
+  } catch (e) {
+    error.textContent = e.message;
+  }
+  const data = cryptoLevView.data;
+  if (!data) return;
+  const form = document.querySelector("#cryptoLevDefaultForm");
+  if (document.activeElement !== form.elements.leverage) form.elements.leverage.value = data.default_leverage;
+  // Bots on Auto first: they're the ones this page sizes.
+  const select = document.querySelector("#cryptoLevBot");
+  const picked = select.value;
+  const bots = [...data.bots].sort((a, b) => (a.leverage ? 1 : 0) - (b.leverage ? 1 : 0) || a.name.localeCompare(b.name));
+  select.innerHTML = `<option value="">No bot</option>` + bots.map(b =>
+    `<option value="${b.id}">${escapeText(b.name)}${b.leverage ? ` (own ${b.leverage}x)` : " (Auto)"}</option>`).join("");
+  const fallback = bots.find(b => !b.leverage && (b.tp_pct || b.sl_pct));
+  select.value = bots.some(b => String(b.id) === picked) ? picked : fallback ? String(fallback.id) : "";
+  renderCryptoLeverage();
+}
+
+const pctText = v => `${number.format(Number(Number(v).toFixed(2)))}%`;
+
+function renderCryptoLeverage() {
+  const data = cryptoLevView.data;
+  if (!data) return;
+  const query = document.querySelector("#cryptoLevSearch").value.trim().toLowerCase().replace(/[-.]/g, "");
+  const setOnly = document.querySelector("#cryptoLevSetOnly").checked;
+  const bot = data.bots.find(b => String(b.id) === document.querySelector("#cryptoLevBot").value);
+  const rows = data.pairs.filter(r => (!setOnly || r.saved_leverage) && (!query || r.symbol.toLowerCase().replace("-", "").includes(query)));
+  document.querySelector("#cryptoLeverage").innerHTML = rows.length
+    ? rows.map(r => {
+      // A bot with its own leverage trades that (still capped), not the page's.
+      const lev = bot && bot.leverage ? Math.min(bot.leverage, r.max_leverage || bot.leverage) : r.leverage;
+      const move = pct => pct ? pctText(pct / lev) : "—";
+      const moves = bot ? `+${move(bot.tp_pct)} / −${move(bot.sl_pct)}${bot.leverage ? `<span class="sub-line">at the bot's own ${lev}x</span>` : ""}` : '<span class="subtle">pick a bot</span>';
+      const flagged = r.too_close.length > 0;
+      return `<tr${flagged ? ' class="lev-flag"' : ""}${r.state === "live" ? "" : ' data-dim="1"'}>
+        <td><strong>${escapeText(cryptoPairText(r.symbol))}</strong>${r.state === "live" ? "" : `<span class="sub-line">${escapeText(r.state)}</span>`}</td>
+        <td class="subtle">${r.max_leverage ? `${r.max_leverage}x` : "—"}</td>
+        <td><input class="inline-input" type="number" step="1" min="1" max="${r.max_leverage || 125}" style="width:80px" value="${r.saved_leverage || ""}" placeholder="${r.leverage}" data-lev-symbol="${escapeAttr(r.symbol)}" aria-label="Leverage for ${escapeAttr(cryptoPairText(r.symbol))}" />
+          <span class="sub-line">${r.saved_leverage ? "own" : `default ${r.wanted_leverage}x`}${r.capped ? ` · capped at BloFin max ${r.max_leverage}x` : ""}</span></td>
+        <td>~${pctText(r.liquidation_pct)}<span class="sub-line">SL up to ${pctText(r.safe_sl_pct)} of margin</span>
+          ${flagged ? `<span class="sub-line lev-flag-note">SL too wide: ${r.too_close.map(escapeText).join(", ")}</span>` : ""}</td>
+        <td>${moves}</td>
+        <td class="row-actions">${r.saved_leverage ? `<button type="button" class="mini-switch neutral" data-lev-reset="${escapeAttr(r.symbol)}">Reset to default</button>` : ""}</td>
+      </tr>`;
+    }).join("")
+    : emptyRow(6, data.pairs.length ? (setOnly && !data.pairs.some(r => r.saved_leverage) ? "No pairs have their own leverage yet." : "No pairs match.") : "No pairs - BloFin's pair list didn't load.");
+}
+
+async function saveCryptoLeverage(symbol, leverage) {
+  const error = document.querySelector("#cryptoLevError");
+  try {
+    const row = await sendJson("PATCH", "/api/crypto/leverage", { symbol, leverage });
+    cryptoLevView.data.pairs = cryptoLevView.data.pairs.map(r => r.symbol === row.symbol ? row : r);
+    error.textContent = "";
+  } catch (e) {
+    error.textContent = `${cryptoPairText(symbol)}: ${e.message}`;
+  }
+  renderCryptoLeverage();
+}
+
+document.querySelector("#cryptoLevSearch").addEventListener("input", renderCryptoLeverage);
+document.querySelector("#cryptoLevSetOnly").addEventListener("change", renderCryptoLeverage);
+document.querySelector("#cryptoLevBot").addEventListener("change", renderCryptoLeverage);
+document.querySelector("#cryptoLeverage").addEventListener("change", event => {
+  const input = event.target.closest("[data-lev-symbol]");
+  if (!input) return;
+  const leverage = Math.round(Number(input.value));
+  saveCryptoLeverage(input.dataset.levSymbol, input.value.trim() !== "" && leverage >= 1 ? leverage : null);
+});
+document.querySelector("#cryptoLeverage").addEventListener("click", event => {
+  const button = event.target.closest("[data-lev-reset]");
+  if (button) saveCryptoLeverage(button.dataset.levReset, null);
+});
+document.querySelector("#cryptoLevDefaultForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const error = document.querySelector("#cryptoLevError");
+  try {
+    await sendJson("PUT", "/api/crypto/leverage/default", { leverage: Math.round(Number(event.target.elements.leverage.value)) });
+    error.textContent = "";
+    event.target.elements.leverage.blur();
+    await loadCryptoLeverage();
+  } catch (e) {
+    error.textContent = e.message;
+  }
 });
 
 // The CFD Overview's webhook panel: CFDs use the Synthetic /webhook and
