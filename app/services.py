@@ -433,6 +433,7 @@ async def open_ctrader_trade(db: Session, trade: Trade, payload: WebhookSignal, 
         account_id = client.account_id
         ctrader.verify_account_mode(account_id, live)
         symbol = await client.resolve_symbol(payload.symbol)
+        ctrader.check_open_for_entries(symbol)
         lots = cfd_lots(db, bot, symbol)
         volume = ctrader.lots_to_volume(lots, symbol)
         stop_loss, take_profit = ctrader_stop_distances(payload, bot, volume, symbol)

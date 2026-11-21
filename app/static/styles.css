@@ -1747,6 +1747,13 @@ tr.clickable:hover td, tr.selected td { background: var(--panel-2, #16161e); }
   .page-body { padding: 16px 16px 40px; }
 }
 
+/* CFD Lot Sizes: what the broker lets you do on each symbol */
+.lot-status { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 2px 7px; border-radius: 4px; white-space: nowrap; }
+.lot-status.open { color: var(--green); background: var(--green-dim); }
+.lot-status.close-only, .lot-status.disabled { color: var(--yellow); background: var(--yellow-dim); }
+#cfdLotSizes tr.row-dim td { opacity: .55; }
+#cfdLotSizes tr.row-dim td:nth-child(2) { opacity: 1; }
+
 /* Crypto → Leverage */
 .crypto-lev-tools { align-items: center; display: flex; gap: 12px; }
 .crypto-lev-tools .cfd-bot-check { padding-bottom: 0; }

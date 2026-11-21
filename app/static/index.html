@@ -699,11 +699,11 @@
             <p class="settings-error" id="cfdLotError" role="alert"></p>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>Symbol</th><th>cTrader allows</th><th>Lot size in use</th><th></th></tr></thead>
+                <thead><tr><th>Symbol</th><th>Status</th><th>cTrader allows</th><th>Lot size in use</th><th></th></tr></thead>
                 <tbody id="cfdLotSizes"></tbody>
               </table>
             </div>
-            <p class="subtle settings-hint">Minimum, step and maximum come from the cTrader account picked for the current mode. A size below the minimum, above the maximum or between steps can't be saved. A bot with its own Lots typed in uses that instead, and is refused if a symbol won't take it.</p>
+            <p class="subtle settings-hint">Minimum, step and maximum come from the cTrader account picked for the current mode. A size below the minimum, above the maximum or between steps can't be saved. A bot with its own Lots typed in uses that instead, and is refused if a symbol won't take it. Close-only symbols (listed last) are set by the broker, usually because they're being retired: entries on them are refused, exits still close.</p>
           </div>
         </div>
 

@@ -321,6 +321,7 @@ def _lot_size_row(found: dict, saved: float | None) -> dict:
         "symbol": found.get("symbolName"),
         "description": found.get("description"),
         **limits,
+        "status": ctrader.trading_status(found),
         "saved_lots": saved,
         "lots": saved or limits["min_lots"],
     }
@@ -339,7 +340,9 @@ async def lot_sizes(db: Session = Depends(get_db)) -> dict:
         return {"mode": mode, "error": str(exc), "symbols": []}
     rows = [_lot_size_row(s, saved.get(str(s.get("symbolName") or "").upper()))
             for s in symbols if s.get("symbolName") and int(s.get("lotSize") or 0) > 0]
-    return {"mode": mode, "error": None, "symbols": sorted(rows, key=lambda r: r["symbol"].upper())}
+    # Symbols open for new positions first; close-only ones (often being
+    # retired by the broker) after them.
+    return {"mode": mode, "error": None, "symbols": sorted(rows, key=lambda r: (r["status"] != "open", r["symbol"].upper()))}
 
 
 @router.patch("/api/ctrader/lot-sizes")

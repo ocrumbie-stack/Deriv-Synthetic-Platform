@@ -340,6 +340,27 @@ def lot_limits(symbol: dict) -> dict:
     }
 
 
+# ProtoOATradingMode: what the broker lets you do on a symbol. A symbol being
+# retired is usually set to close-only first.
+TRADING_STATUS = {0: "open", 1: "disabled", 2: "disabled", 3: "close-only"}
+
+
+def trading_status(symbol: dict) -> str:
+    return TRADING_STATUS.get(int(symbol.get("tradingMode") or 0), "disabled")
+
+
+def check_open_for_entries(symbol: dict) -> None:
+    """Refuse a new position on a symbol the broker doesn't let you open,
+    with the reason, instead of cTrader's bare TRADING_DISABLED."""
+    status = trading_status(symbol)
+    if status == "open":
+        return
+    name = symbol.get("symbolName") or symbol.get("symbolId")
+    if status == "close-only":
+        raise CTraderError(f"{name} is close-only on this cTrader account (set by the broker): new positions can't be opened, open ones can still be closed.")
+    raise CTraderError(f"Trading {name} is disabled on this cTrader account (set by the broker).")
+
+
 def check_lots(lots: float, symbol: dict) -> None:
     """Refuse a size cTrader would not take as typed: below the minimum,
     above the maximum, or between steps (lots_to_volume would round that
@@ -636,10 +657,22 @@ class CTraderClient:
     the market picked for the current demo/live mode; `live` says which
     host it is on; `market` says whose login (tokens) to use."""
 
-    # Per account: light symbol list, and full details by symbol id.
+    # Per account: light symbol list, and full details by symbol id, each
+    # with when it was fetched. Details carry the trading mode, which the
+    # broker can switch (e.g. to close-only) at any time, so they expire too.
     _symbol_lists: dict[int, tuple[float, list[dict]]] = {}
-    _symbol_details: dict[tuple[int, int], dict] = {}
+    _symbol_details: dict[tuple[int, int], tuple[float, dict]] = {}
     SYMBOL_LIST_TTL = 3600.0
+    SYMBOL_DETAILS_TTL = 600.0
+
+    def _cached_details(self, symbol_id: int) -> dict | None:
+        cached = CTraderClient._symbol_details.get((self.account_id, int(symbol_id)))
+        if cached and time.monotonic() - cached[0] < self.SYMBOL_DETAILS_TTL:
+            return cached[1]
+        return None
+
+    def _cache_details(self, found: dict) -> None:
+        CTraderClient._symbol_details[(self.account_id, int(found["symbolId"]))] = (time.monotonic(), found)
 
     def __init__(
         self,
@@ -752,27 +785,28 @@ class CTraderClient:
         return symbols
 
     async def symbol_details(self, symbol_id: int) -> dict:
-        key = (self.account_id, int(symbol_id))
-        if key not in CTraderClient._symbol_details:
+        details = self._cached_details(symbol_id)
+        if details is None:
             payload = await self._call(SYMBOL_BY_ID_REQ, {"symbolId": [int(symbol_id)]}, SYMBOL_BY_ID_RES)
             found = payload.get("symbol") or []
             if not found:
                 raise CTraderError(f"cTrader has no details for symbol {symbol_id}.")
-            CTraderClient._symbol_details[key] = found[0]
-        return CTraderClient._symbol_details[key]
+            details = found[0]
+            self._cache_details(details)
+        return details
 
     async def symbols_with_details(self) -> list[dict]:
         """Every symbol on the account with its full details (lot size and
         volume limits), asking cTrader only for the ones not cached yet."""
         light = await self.symbols()
-        missing = [int(s["symbolId"]) for s in light if (self.account_id, int(s["symbolId"])) not in CTraderClient._symbol_details]
+        missing = [int(s["symbolId"]) for s in light if self._cached_details(s["symbolId"]) is None]
         for start in range(0, len(missing), 100):
             payload = await self._call(SYMBOL_BY_ID_REQ, {"symbolId": missing[start:start + 100]}, SYMBOL_BY_ID_RES)
             for found in payload.get("symbol") or []:
-                CTraderClient._symbol_details[(self.account_id, int(found["symbolId"]))] = found
+                self._cache_details(found)
         out = []
         for s in light:
-            details = CTraderClient._symbol_details.get((self.account_id, int(s["symbolId"])))
+            details = self._cached_details(s["symbolId"])
             if details:
                 out.append({**details, "symbolName": s.get("symbolName"), "description": s.get("description")})
         return out

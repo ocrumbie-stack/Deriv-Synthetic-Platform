@@ -4171,7 +4171,7 @@ function wireBotForm() {
 async function loadCfdLotSizes() {
   const error = document.querySelector("#cfdLotError");
   const body = document.querySelector("#cfdLotSizes");
-  if (!cfdLotRows.length) body.innerHTML = emptyRow(4, "Loading symbols from cTrader…");
+  if (!cfdLotRows.length) body.innerHTML = emptyRow(5, "Loading symbols from cTrader…");
   try {
     const data = await getJson("/api/ctrader/lot-sizes", 30000);
     cfdLotRows = data.symbols;
@@ -4186,14 +4186,15 @@ function renderCfdLotSizes() {
   const query = document.querySelector("#cfdLotSearch").value.trim().toLowerCase();
   const rows = cfdLotRows.filter(r => !query || `${r.symbol} ${r.description || ""}`.toLowerCase().includes(query));
   document.querySelector("#cfdLotSizes").innerHTML = rows.length
-    ? rows.map(r => `<tr>
+    ? rows.map(r => `<tr${r.status === "open" ? "" : ' class="row-dim"'}>
       <td><strong>${escapeText(r.symbol)}</strong>${r.description && r.description !== r.symbol ? `<span class="sub-line">${escapeText(r.description)}</span>` : ""}</td>
+      <td><span class="lot-status ${r.status}">${r.status === "open" ? "Open" : r.status === "close-only" ? "Close-only" : "Disabled"}</span></td>
       <td class="subtle">min ${number.format(r.min_lots)} · step ${number.format(r.step_lots)}${r.max_lots ? ` · max ${number.format(r.max_lots)}` : ""}</td>
       <td><input class="inline-input" type="number" step="any" min="0" style="width:100px" value="${r.lots}" data-lot-symbol="${escapeAttr(r.symbol)}" aria-label="Lot size for ${escapeAttr(r.symbol)}" />
         ${r.saved_lots ? "" : '<span class="sub-line">minimum</span>'}</td>
       <td class="row-actions">${r.saved_lots ? `<button type="button" class="mini-switch neutral" data-lot-reset="${escapeAttr(r.symbol)}">Use minimum</button>` : ""}</td>
     </tr>`).join("")
-    : emptyRow(4, cfdLotRows.length ? "No symbols match." : "No symbols - connect a Deriv cTrader account on CFDs → Overview.");
+    : emptyRow(5, cfdLotRows.length ? "No symbols match." : "No symbols - connect a Deriv cTrader account on CFDs → Overview.");
 }
 
 async function saveCfdLotSize(symbol, lots) {

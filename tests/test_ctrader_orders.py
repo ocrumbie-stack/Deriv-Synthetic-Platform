@@ -230,6 +230,24 @@ class CTraderOrderTests(unittest.TestCase):
         self.assertIn("below this symbol's minimum of 1 lots", result.signal.rejection_reason)
         client.open_market.assert_not_called()
 
+    def test_close_only_symbol_refuses_entries_with_the_reason(self):
+        client = fake_client()
+        client.resolve_symbol = AsyncMock(return_value={**SYMBOL, "tradingMode": 3})
+        result, *_ = self._send(client)
+        self.assertEqual(result.signal.status.value, "failed")
+        self.assertIn("Volatility 75 Index is close-only on this cTrader account", result.signal.rejection_reason)
+        client.open_market.assert_not_called()
+
+    def test_close_only_symbol_still_closes(self):
+        trade = self._open_trade()
+        client = fake_client()
+        client.resolve_symbol = AsyncMock(return_value={**SYMBOL, "tradingMode": 3})
+        result, *_ = self._send(client, action="exit", direction=None)
+        self.assertEqual(result.signal.status.value, "closed", result.signal.rejection_reason)
+        client.close_position.assert_called_once()
+        self.db.refresh(trade)
+        self.assertEqual(trade.status, PositionStatus.closed)
+
 
 class LotCheckTests(unittest.TestCase):
     def test_limits_in_lots(self):
@@ -289,6 +307,13 @@ class LotSizeRouteTests(unittest.TestCase):
         self.assertEqual((row["lots"], row["saved_lots"]), (1.0, None))
         self.assertIsNone(self.db.scalar(select(CfdLotSize)))
 
+    def test_status_shown_and_open_symbols_listed_first(self):
+        retired = {**SYMBOL, "symbolId": 9, "symbolName": "Alpha Index", "tradingMode": 3}
+        self.client.symbols_with_details = AsyncMock(return_value=[retired, SYMBOL])
+        out = self._run(lambda r: r.lot_sizes(db=self.db))
+        self.assertEqual([(row["symbol"], row["status"]) for row in out["symbols"]],
+                         [("Volatility 75 Index", "open"), ("Alpha Index", "close-only")])
+
     def test_no_account_picked_is_reported(self):
         self.client.symbols_with_details = AsyncMock(side_effect=CTraderError("No cTrader demo account is selected"))
         out = self._run(lambda r: r.lot_sizes(db=self.db))
@@ -302,6 +327,22 @@ class DollarDistanceTests(unittest.TestCase):
     def test_too_small_refused(self):
         with self.assertRaises(CTraderError):
             ctrader.dollars_to_distance(0.001, 100000, {"digits": 2})
+
+
+class SymbolDetailsCacheTests(unittest.TestCase):
+    def test_details_expire_so_a_new_trading_mode_is_seen(self):
+        client = ctrader.CTraderClient(77, live=False)
+        ctrader.CTraderClient._symbol_details.clear()
+        client._call = AsyncMock(side_effect=[{"symbol": [{**SYMBOL, "tradingMode": 0}]}, {"symbol": [{**SYMBOL, "tradingMode": 3}]}])
+        try:
+            self.assertEqual(asyncio.run(client.symbol_details(7))["tradingMode"], 0)
+            self.assertEqual(asyncio.run(client.symbol_details(7))["tradingMode"], 0)  # cached
+            fetched, details = ctrader.CTraderClient._symbol_details[(77, 7)]
+            ctrader.CTraderClient._symbol_details[(77, 7)] = (fetched - ctrader.CTraderClient.SYMBOL_DETAILS_TTL - 1, details)
+            self.assertEqual(asyncio.run(client.symbol_details(7))["tradingMode"], 3)
+            self.assertEqual(client._call.await_count, 2)
+        finally:
+            ctrader.CTraderClient._symbol_details.clear()
 
 
 if __name__ == "__main__":
