@@ -91,6 +91,7 @@ def bot_out(bot: ForexBot) -> dict:
         "take_profit_pips": bot.take_profit_pips,
         "trailing_stop": bool(bot.trailing_stop),
         "enabled": bot.enabled,
+        "session_started_at": bot.session_started_at.replace(tzinfo=timezone.utc).isoformat() if bot.session_started_at else None,
         "created_at": bot.created_at.isoformat(),
     }
 

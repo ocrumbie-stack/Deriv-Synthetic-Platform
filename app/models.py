@@ -110,6 +110,9 @@ class ForexBot(Base):
     trailing_stop_pips: Mapped[float | None] = mapped_column(Float, nullable=True)
     trailing_stop: Mapped[bool] = mapped_column(Boolean, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # "Reset session" on the bot: its session P/L counts closes from here
+    # (null = since its first trade).
+    session_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -165,6 +168,9 @@ class CryptoBot(Base):
     tp_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     sl_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # "Reset session" on the bot: its session P/L counts closes from here
+    # (null = since its first entry).
+    session_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

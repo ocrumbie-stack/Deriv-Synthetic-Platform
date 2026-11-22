@@ -921,6 +921,17 @@ def update_crypto_bot(bot_id: int, updates: CryptoBotUpdate, db: Session = Depen
     return crypto.bot_out(bot)
 
 
+@app.post("/api/crypto/bots/{bot_id}/reset-session")
+def reset_crypto_bot_session(bot_id: int, db: Session = Depends(get_db)) -> dict:
+    """Session P/L and closes count again from now. Trade history is kept."""
+    bot = db.get(CryptoBot, bot_id)
+    if not bot:
+        raise HTTPException(status_code=404, detail="Crypto bot not found.")
+    bot.session_started_at = datetime.utcnow()
+    db.commit()
+    return crypto.bot_out(bot)
+
+
 @app.delete("/api/crypto/bots/{bot_id}")
 def delete_crypto_bot(bot_id: int, db: Session = Depends(get_db)) -> dict:
     bot = db.get(CryptoBot, bot_id)
@@ -993,6 +1004,17 @@ def update_forex_bot(bot_id: int, updates: ForexBotUpdate, db: Session = Depends
         raise HTTPException(status_code=404, detail="Forex bot not found.")
     for key, value in _forex_bot_fields(updates.model_dump(exclude_unset=True), db, bot_id).items():
         setattr(bot, key, value)
+    db.commit()
+    return forex.bot_out(bot)
+
+
+@app.post("/api/forex/bots/{bot_id}/reset-session")
+def reset_forex_bot_session(bot_id: int, db: Session = Depends(get_db)) -> dict:
+    """Session P/L and trade counts start again from now. History is kept."""
+    bot = db.get(ForexBot, bot_id)
+    if not bot:
+        raise HTTPException(status_code=404, detail="Forex bot not found.")
+    bot.session_started_at = datetime.utcnow()
     db.commit()
     return forex.bot_out(bot)
 

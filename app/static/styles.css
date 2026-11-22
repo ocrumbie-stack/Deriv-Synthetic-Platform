@@ -909,6 +909,11 @@ canvas { display: block; width: 100%; }
 .mbot-mono { font-family: monospace; font-size: 12px; }
 .mbot-detail > td { background: var(--panel-2); border-bottom: 2px solid var(--border); padding: 0; }
 .mbot-detail table { background: var(--bg); border-collapse: collapse; width: 100%; }
+.mbot-session { align-items: flex-end; border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 14px 28px; padding: 14px 16px; }
+.mbot-session-figure { display: flex; flex-direction: column; min-width: 96px; }
+.mbot-session-value { font-family: monospace; font-size: 13px; }
+.mbot-session-value strong { font-size: 15px; }
+.mbot-session .mini-switch { margin-left: auto; }
 .mbot-pairs-title { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 0.14em; padding: 10px 16px 6px; text-transform: uppercase; }
 .alert-generate { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 14px; }
 .alert-generate .nav-link-btn { padding: 9px; text-align: center; width: 100%; }

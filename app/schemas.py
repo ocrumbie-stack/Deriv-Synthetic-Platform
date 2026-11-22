@@ -297,6 +297,7 @@ class SignalBotOut(BaseModel):
     tp_usd: float | None = None
     sl_usd: float | None = None
     trailing_stop: bool = False
+    session_started_at: datetime | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

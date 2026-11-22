@@ -269,6 +269,26 @@ class CryptoSignalTests(unittest.TestCase):
         self.assertEqual(data["bots"][0]["pairs"][0]["closed_pnl"], 4.0)
         self.assertIsNone(data["closed_error"])
 
+    def test_session_pnl_counts_closes_after_reset_session(self):
+        from datetime import datetime, timedelta
+        start = datetime(2026, 11, 20, 12, 0, 0)
+        ms = lambda dt: int(dt.replace(tzinfo=crypto.timezone.utc).timestamp() * 1000)
+        self.db.add(CryptoSignal(strategy_name="btc", symbol="BTC-USDT", action="entry", direction="long", status="executed", execution_mode="demo", created_at=start))
+        bot = self.bot
+        bot.session_started_at = start + timedelta(hours=1)
+        self.db.commit()
+        client = self._client()
+        client.balance.return_value = {"equity": 100.0, "available": 90.0, "unrealized_pnl": 0.0}
+        opened = ms(start + timedelta(seconds=2))
+        client.closed_positions.return_value = [
+            {"symbol": "BTC-USDT", "realized_pnl": 4.0, "opened_at_ms": opened, "closed_at_ms": ms(start + timedelta(minutes=30))},  # before the reset
+            {"symbol": "BTC-USDT", "realized_pnl": 2.5, "opened_at_ms": opened, "closed_at_ms": ms(start + timedelta(hours=2))},     # after it
+        ]
+        data = asyncio.run(crypto.overview(self.db, client))
+        self.assertEqual((data["bots"][0]["closed_pnl"], data["bots"][0]["closed_count"]), (2.5, 1))
+        self.assertEqual(data["bots"][0]["pairs"][0]["closed_pnl"], 2.5)
+        self.assertTrue(data["bots"][0]["session_started_at"].startswith("2026-11-20T13:00:00"))
+
     def test_closed_pnl_failure_leaves_running_pnl(self):
         self._send()
         client = self._client()

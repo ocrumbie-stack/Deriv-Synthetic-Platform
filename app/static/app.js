@@ -1100,7 +1100,7 @@ function renderCrypto(data) {
     : emptyRow(9, "No crypto signals yet");
 
   document.querySelector("#cryptoBots").innerHTML = data.bots.length
-    ? marketBotRows(cryptoBotRows(data), cryptoBotsOpen, "Entries")
+    ? marketBotRows(cryptoBotRows(data), cryptoBotsOpen, "Closed")
     : emptyRow(7, "No crypto bots yet. Create one for each strategy that should trade on BloFin.");
 }
 
@@ -1121,7 +1121,45 @@ function botPnl(v, money) {
   return `<span class="${pnlClass(v)}">${v > 0 ? "+" : ""}${money(v)}</span>`;
 }
 
-function marketBotRows(rows, openIds, tradesLabel) {
+// The Session P&L panel at the top of an open bot row, like a Multipliers
+// bot's: the session total, what closed and what's still running, since when,
+// and Reset session. r.session = { closed, closedCount, running, openCount,
+// pct, pctOf, since, sinceNote } - closed is null when it couldn't be loaded.
+function botSessionPanel(r, actionAttr) {
+  const s = r.session;
+  const signed = v => `${v > 0 ? "+" : ""}${r.money(v)}`;
+  const figure = (label, value, sub) => `<div class="mbot-session-figure"><span class="bot-field-label">${label}</span><span class="mbot-session-value">${value}</span><span class="sub-line">${sub}</span></div>`;
+  return `<div class="mbot-session">
+    ${figure("Session P&amp;L", r.pnl == null ? '<strong class="subtle">—</strong>' : `<strong class="${pnlClass(r.pnl)}">${signed(r.pnl)}</strong>`,
+      s.pct == null ? "closed + running" : `${s.pct.toFixed(1)}% of ${s.pctOf}`)}
+    ${figure("Closed", s.closed == null ? '<span class="subtle">unavailable</span>' : `<span class="${pnlClass(s.closed)}">${signed(s.closed)}</span>`,
+      s.closed == null ? "&nbsp;" : `${s.closedCount} trade${s.closedCount === 1 ? "" : "s"}`)}
+    ${figure("Running", s.running == null ? '<span class="subtle">—</span>' : `<span class="${pnlClass(s.running)}">${signed(s.running)}</span>`,
+      `${s.openCount} open`)}
+    ${figure("Since", s.since ? fmtDate(s.since) : "First trade", s.sinceNote || (s.since ? "session reset" : "never reset"))}
+    <button type="button" class="mini-switch neutral" data-${actionAttr}="reset" data-bot-id="${r.id}">Reset session</button>
+  </div>`;
+}
+
+// The row's P&L sub-line: % (when there's a base for it), closes, and open.
+function botPnlNote(r) {
+  const s = r.session;
+  if (r.pnl == null) return "";
+  return [
+    s.pct != null && `${s.pct.toFixed(1)}%`,
+    s.closed == null ? "closed P/L unavailable" : `${s.closedCount} closed`,
+    s.openCount && s.running != null && `${s.running > 0 ? "+" : ""}${r.money(s.running)} open`,
+  ].filter(Boolean).join(" · ");
+}
+
+// A pair's P&L cell: its session total, and how much of it is still open.
+function pairPnlCell(p, money) {
+  if (p.pnl == null) return '<span class="subtle">—</span>';
+  const note = p.upl != null ? `${p.upl > 0 ? "+" : ""}${money(p.upl)} unrealized` : "session";
+  return `${botPnl(p.pnl, money)}<span class="sub-line">${note}</span>`;
+}
+
+function marketBotRows(rows, openIds, tradesLabel, actionAttr = "bot-action") {
   const dash = '<span class="subtle">—</span>';
   return rows.map(r => {
     const open = openIds.has(r.id);
@@ -1132,7 +1170,7 @@ function marketBotRows(rows, openIds, tradesLabel) {
           <td>${p.position || dash}</td>
           <td class="mbot-mono">${p.tpsl}</td>
           <td>${p.trades}</td>
-          <td class="mbot-mono">${p.pnl == null ? dash : botPnl(p.pnl, r.money)}</td>
+          <td class="mbot-mono">${pairPnlCell(p, r.money)}</td>
           <td>${p.position ? '<span class="badge ok">open</span>' : '<span class="badge">flat</span>'}</td>
         </tr>`).join("")
       : `<tr><td colspan="6" class="subtle">${r.noPairs}</td></tr>`;
@@ -1144,19 +1182,20 @@ function marketBotRows(rows, openIds, tradesLabel) {
       </td>
       <td>${r.size}</td>
       <td class="mbot-mono">${r.tpsl}</td>
-      <td class="mbot-mono">${r.pnl == null ? dash : `<strong>${botPnl(r.pnl, r.money)}</strong>`}${r.pnlNote ? `<span class="sub-line">${r.pnlNote}</span>` : ""}</td>
+      <td class="mbot-mono">${r.pnl == null ? dash : `<strong>${botPnl(r.pnl, r.money)}</strong>`}${botPnlNote(r) ? `<span class="sub-line">${botPnlNote(r)}</span>` : ""}</td>
       <td>${r.allowed}</td>
       <td>${statusBadge(r.enabled ? "enabled" : "paused")}</td>
       <td class="row-actions">
-        <button type="button" class="mini-switch neutral" data-bot-action="alert" data-bot-id="${r.id}">Alerts</button>
-        <button type="button" class="mini-switch neutral" data-bot-action="toggle" data-bot-id="${r.id}">${r.enabled ? "Pause" : "Resume"}</button>
-        <button type="button" class="mini-switch neutral" data-bot-action="edit" data-bot-id="${r.id}">Edit</button>
-        <button type="button" class="mini-switch" data-bot-action="delete" data-bot-id="${r.id}">Delete</button>
+        <button type="button" class="mini-switch neutral" data-${actionAttr}="alert" data-bot-id="${r.id}">Alerts</button>
+        <button type="button" class="mini-switch neutral" data-${actionAttr}="toggle" data-bot-id="${r.id}">${r.enabled ? "Pause" : "Resume"}</button>
+        <button type="button" class="mini-switch neutral" data-${actionAttr}="edit" data-bot-id="${r.id}">Edit</button>
+        <button type="button" class="mini-switch" data-${actionAttr}="delete" data-bot-id="${r.id}">Delete</button>
       </td>
     </tr>
     <tr class="mbot-detail"${open ? "" : " hidden"}>
       <td colspan="7">
-        <div class="mbot-pairs-title">Pairs</div>
+        ${botSessionPanel(r, actionAttr)}
+        <div class="mbot-pairs-title">${r.pairsTitle || "Pairs"}</div>
         <table>
           <thead><tr><th>Symbol</th><th>Position</th><th>TP / SL</th><th>${tradesLabel}</th><th>P&amp;L</th><th>Status</th></tr></thead>
           <tbody>${pairs}</tbody>
@@ -1185,20 +1224,24 @@ function cryptoBotRows(data) {
     const traded = Object.fromEntries((bot.pairs || []).map(p => [p.symbol, p]));
     const symbols = [...new Set([...open.map(p => p.symbol), ...Object.keys(traded)])].sort();
     const botTpsl = plusMinus(bot.tp_pct, bot.sl_pct, "%");
-    // Closed P/L since the bot's first entry plus the running P/L of what's
-    // open, like the Forex bots. Without the closed history it's running only.
+    // Session P/L: what closed since the session started (the bot's first
+    // entry, or its last Reset session) plus the running P/L of what's open.
+    // Without the closed history it's running only.
     const loaded = data.connected && !data.error;
     const withClosed = loaded && !data.closed_error;
     const unrealized = sumOf(open, "unrealized_pnl");
-    const openNote = open.length ? `${unrealized > 0 ? "+" : ""}${cryptoMoney(unrealized)} open` : "";
+    const pnl = loaded ? (withClosed ? Number(bot.closed_pnl || 0) : 0) + unrealized : null;
     return {
       id: bot.id, name: bot.name, enabled: bot.enabled, money: cryptoMoney,
       size: `${cryptoMoney(bot.margin)}<span class="sub-line">${bot.leverage ? `${bot.leverage}x · ${cryptoMoney(bot.position_value)} position` : "Auto leverage · per pair"}</span>`,
       tpsl: botTpsl,
-      pnl: loaded ? (withClosed ? Number(bot.closed_pnl || 0) : 0) + unrealized : null,
-      pnlNote: !loaded ? ""
-        : withClosed ? `${bot.closed_count || 0} closed${openNote ? ` · ${openNote}` : ""}`
-        : `${open.length} open · closed P/L unavailable`,
+      pnl,
+      session: {
+        closed: withClosed ? Number(bot.closed_pnl || 0) : null, closedCount: bot.closed_count || 0,
+        running: loaded ? unrealized : null, openCount: open.length,
+        pct: pnl != null && bot.margin > 0 ? pnl / bot.margin * 100 : null, pctOf: "margin",
+        since: bot.session_started_at,
+      },
       allowed: bot.symbols.length ? bot.symbols.map(cryptoPair).join(", ") : '<span class="subtle">Any</span>',
       open: open.map(p => ({ label: cryptoPair(p.symbol), upl: p.unrealized_pnl })),
       noPairs: "No pairs traded yet — pairs appear here once an entry is filled.",
@@ -1213,7 +1256,8 @@ function cryptoBotRows(data) {
           label: cryptoPair(symbol),
           position: pos ? `<span class="badge ${pos.side === "LONG" ? "ok" : "bad"}">${escapeAttr(pos.side)}</span> <span class="subtle">${cryptoMoney(pos.margin)} · ${pos.leverage == null ? "—" : `${escapeAttr(pos.leverage)}x`} @ ${pos.entry_price == null ? "—" : number.format(pos.entry_price)}</span>` : "",
           tpsl: prices,
-          trades: last ? last.entries : 0,
+          trades: last ? last.closed_count || 0 : 0,
+          upl: pos ? Number(pos.unrealized_pnl || 0) : null,
           pnl: withClosed && last
             ? Number(last.closed_pnl || 0) + Number(pos?.unrealized_pnl || 0)
             : pos ? Number(pos.unrealized_pnl || 0) : null,
@@ -1229,7 +1273,11 @@ function forexBotRows() {
   const money = v => fxMoney(v);
   return forexBots.map(bot => {
     const open = loaded ? trading.positions.filter(p => p.strategy === bot.name) : [];
-    const closed = loaded ? trading.history.filter(t => t.strategy === bot.name) : [];
+    // This session's closes. cTrader only sends the last week of history, so
+    // a session that started before that counts the last week's closes.
+    const start = bot.session_started_at ? new Date(bot.session_started_at) : null;
+    const days = trading?.history_days || 7;
+    const closed = loaded ? trading.history.filter(t => t.strategy === bot.name && (!start || new Date(t.closed_at) >= start)) : [];
     const symbols = [...new Set([...open, ...closed].map(t => t.symbol))].sort();
     const botTpsl = plusMinus(bot.take_profit_pips, bot.stop_loss_pips, " pips") + (bot.trailing_stop ? '<span class="sub-line">Trailing</span>' : "");
     const unrealized = sumOf(open, "unrealized_pnl");
@@ -1238,7 +1286,12 @@ function forexBotRows() {
       size: `${fxLots(bot.lots)}<span class="sub-line">${number.format(bot.units)} units</span>`,
       tpsl: botTpsl,
       pnl: loaded ? sumOf(closed, "net_profit") + unrealized : null,
-      pnlNote: loaded ? `${closed.length} closed${open.length ? ` · ${unrealized > 0 ? "+" : ""}${money(unrealized)} open` : ""}` : "",
+      session: {
+        closed: loaded ? sumOf(closed, "net_profit") : null, closedCount: closed.length,
+        running: loaded ? unrealized : null, openCount: open.length,
+        pct: null, since: bot.session_started_at,
+        sinceNote: !start || start.getTime() < Date.now() - days * 86400000 ? `counts closes from the last ${days} days` : "",
+      },
       allowed: bot.symbols.length ? bot.symbols.map(fxPair).join(", ") : '<span class="subtle">All pairs</span>',
       open: open.map(p => ({ label: fxSymbol(p.symbol), upl: p.unrealized_pnl })),
       noPairs: loaded
@@ -1253,6 +1306,7 @@ function forexBotRows() {
           // The prices on the open position; otherwise what the bot will place.
           tpsl: pos ? `${fxPrice(pos.take_profit)} / ${fxPrice(pos.stop_loss)}${pos.trailing_stop ? '<span class="sub-line">Trailing</span>' : ""}` : botTpsl,
           trades: trades.length,
+          upl: pos ? Number(pos.unrealized_pnl || 0) : null,
           pnl: sumOf(trades, "net_profit") + Number(pos?.unrealized_pnl || 0),
         };
       }),
@@ -1335,7 +1389,15 @@ document.querySelector("#cryptoBots").addEventListener("click", async event => {
   const bot = cryptoView.data.bots.find(b => b.id === Number(button.dataset.botId));
   const url = `/api/crypto/bots/${bot.id}`;
   const action = button.dataset.botAction;
-  if (action === "alert") {
+  if (action === "reset") {
+    const reset = await openDialog({
+      title: `Reset ${bot.name} session?`,
+      message: "Session P&L and closed counts start again from now for the bot and every one of its pairs. Open positions keep running and count toward the new session. Trade history is kept.",
+      confirmLabel: "Reset session", tone: "danger",
+      onSubmit: () => sendJson("POST", `${url}/reset-session`),
+    });
+    if (reset) loadCrypto();
+  } else if (action === "alert") {
     showAlertKit(bot.name, "/webhook/blofin");
   } else if (action === "toggle") {
     try {
@@ -1511,7 +1573,7 @@ async function loadForexBots() {
 // polls, so it is called when either arrives.
 function renderForexBots() {
   document.querySelector("#forexBots").innerHTML = forexBots.length
-    ? marketBotRows(forexBotRows(), forexBotsOpen, "Trades")
+    ? marketBotRows(forexBotRows(), forexBotsOpen, "Closed")
     : emptyRow(7, "No forex bots yet. Create one for each strategy that should trade forex on cTrader.");
 }
 
@@ -1551,7 +1613,15 @@ document.querySelector("#forexBots").addEventListener("click", async event => {
   const bot = forexBots.find(b => b.id === Number(button.dataset.botId));
   const url = `/api/forex/bots/${bot.id}`;
   const action = button.dataset.botAction;
-  if (action === "alert") {
+  if (action === "reset") {
+    const reset = await openDialog({
+      title: `Reset ${bot.name} session?`,
+      message: "Session P&L and closed counts start again from now for the bot and every one of its pairs. Open positions keep running and count toward the new session. Trade history is kept.",
+      confirmLabel: "Reset session", tone: "danger",
+      onSubmit: () => sendJson("POST", `${url}/reset-session`),
+    });
+    if (reset) loadForexBots();
+  } else if (action === "alert") {
     showAlertKit(bot.name, "/webhook/forex");
   } else if (action === "toggle") {
     try {
@@ -3798,7 +3868,7 @@ async function refreshBots() {
     getJson("/api/unrealized-pnl").catch(() => ({})),
   ]);
   botsById = Object.fromEntries(allBots.map(b => [b.id, b]));
-  renderCfdBots(allBots.filter(isCfd));
+  renderCfdBots(allBots.filter(isCfd), uplData);
   const bots = allBots.filter(b => !isCfd(b));
   const el = document.querySelector("#signalBots");
   if (!el) return;
@@ -4339,25 +4409,56 @@ document.querySelectorAll("[data-cfd-copy]").forEach(btn => btn.addEventListener
   });
 }));
 
-function renderCfdBots(bots) {
+// CFD bots use the same rows as Forex and Crypto: session P&L (closes since
+// the last Reset session plus the running P/L of open positions) and a Pairs
+// table per symbol. Which rows are open survives the refresh.
+const cfdBotsOpen = new Set();
+
+async function renderCfdBots(bots, uplData = {}) {
   const active = bots.filter(b => b.enabled).length;
   document.querySelector("#cfdStatBots").textContent = bots.length ? `${active} of ${bots.length}` : "0";
-  document.querySelector("#cfdBots").innerHTML = bots.length
-    ? bots.map(b => `<tr>
-      <td><span class="bot-dot ${b.enabled ? "active" : "paused"}"></span> <strong>${escapeAttr(b.name)}</strong></td>
-      <td>${b.lots ? number.format(b.lots) : 'Auto<span class="sub-line">Lot Sizes page</span>'}</td>
-      <td>${b.tp_usd ? "+" + currency.format(b.tp_usd) : '<span class="subtle">—</span>'} / ${b.sl_usd ? "-" + currency.format(b.sl_usd) : '<span class="subtle">—</span>'}${b.trailing_stop ? '<span class="sub-line">Trailing stop</span>' : ""}</td>
-      <td>${b.default_pair_max_cycles ?? '<span class="subtle">—</span>'}</td>
-      <td>${b.cycles_completed}</td>
-      <td>${statusBadge(b.enabled ? "enabled" : "paused")}</td>
-      <td class="row-actions">
-        <button type="button" class="mini-switch neutral" data-cfd-action="alert" data-bot-id="${b.id}">Alerts</button>
-        <button type="button" class="mini-switch neutral" data-cfd-action="edit" data-bot-id="${b.id}">Edit</button>
-        <button type="button" class="mini-switch neutral" data-cfd-action="toggle" data-bot-id="${b.id}">${b.enabled ? "Pause" : "Resume"}</button>
-        <button type="button" class="mini-switch" data-cfd-action="delete" data-bot-id="${b.id}">Delete</button>
-      </td>
-    </tr>`).join("")
-    : emptyRow(7, "No CFD bots yet. Click + New Bot to create one.");
+  if (!bots.length) {
+    document.querySelector("#cfdBots").innerHTML = emptyRow(7, "No CFD bots yet. Click + New Bot to create one.");
+    return;
+  }
+  const pairLists = await Promise.all(bots.map(b => getJson(`/api/signal-bots/${b.id}/pairs`).catch(() => [])));
+  const uplOf = p => uplData[`${p.symbol}_${p.direction}`] ?? null;
+  const rows = bots.map((b, i) => {
+    const open = (latestState.positions || []).filter(p => isCfd(p) && p.strategy_name === b.name);
+    const pairs = Object.fromEntries(pairLists[i].map(p => [p.symbol, p]));
+    const running = open.reduce((sum, p) => sum + Number(uplOf(p) || 0), 0);
+    const pnl = Number(b.session_pnl || 0) + running;
+    const tpsl = `${b.tp_usd ? "+" + currency.format(b.tp_usd) : "—"} / ${b.sl_usd ? "-" + currency.format(b.sl_usd) : "—"}${b.trailing_stop ? '<span class="sub-line">Trailing stop</span>' : ""}`;
+    const symbols = [...new Set([...open.map(p => p.symbol), ...Object.keys(pairs)])].sort();
+    return {
+      id: b.id, name: b.name, enabled: b.enabled, money: v => currency.format(v),
+      size: b.lots ? number.format(b.lots) : 'Auto<span class="sub-line">Lot Sizes page</span>',
+      tpsl,
+      pnl,
+      session: {
+        closed: Number(b.session_pnl || 0), closedCount: b.cycles_completed || 0,
+        running, openCount: open.length, pct: null, since: b.session_started_at,
+      },
+      allowed: `${b.cycles_completed} closed${b.default_pair_max_cycles ? `<span class="sub-line">${b.default_pair_max_cycles} per symbol cap</span>` : ""}`,
+      open: open.map(p => ({ label: escapeAttr(p.symbol), upl: uplOf(p) })),
+      pairsTitle: "Symbols",
+      noPairs: "No symbols traded yet — they appear here once an entry is filled.",
+      pairs: symbols.map(symbol => {
+        const pos = open.find(p => p.symbol === symbol);
+        const pair = pairs[symbol];
+        const upl = pos ? Number(uplOf(pos) || 0) : null;
+        return {
+          label: escapeAttr(symbol),
+          position: pos ? `<span class="badge ${pos.direction === "long" ? "ok" : "bad"}">${escapeAttr(pos.direction)}</span> <span class="subtle">${number.format(pos.size)} @ ${number.format(pos.entry_price)}</span>` : "",
+          tpsl,
+          trades: `${pair?.cycles_completed ?? 0}${pair?.max_cycles ? `/${pair.max_cycles}` : ""}${pair && !pair.enabled ? ' <span class="badge bad">paused</span>' : ""}`,
+          upl,
+          pnl: Number(pair?.session_pnl || 0) + Number(upl || 0),
+        };
+      }),
+    };
+  }).sort((x, y) => y.pnl - x.pnl);
+  document.querySelector("#cfdBots").innerHTML = marketBotRows(rows, cfdBotsOpen, "Closed", "cfd-action");
 }
 
 document.querySelector("#cfdBotNew").addEventListener("click", () => {
@@ -4395,13 +4496,22 @@ document.querySelector("#cfdBotForm").addEventListener("submit", async event => 
 });
 
 document.querySelector("#cfdBots").addEventListener("click", async event => {
+  toggleMarketBotRow(event, cfdBotsOpen);
   const button = event.target.closest("[data-cfd-action]");
   if (!button) return;
   const bot = botsById[button.dataset.botId];
   if (!bot) return;
   const url = `/api/signal-bots/${bot.id}`;
   const action = button.dataset.cfdAction;
-  if (action === "alert") {
+  if (action === "reset") {
+    const reset = await openDialog({
+      title: `Reset ${bot.name} session?`,
+      message: "Session P&L and cycle counts go back to zero for the bot and every one of its symbols. Open positions keep running and count toward the new session. Trade history is kept.",
+      confirmLabel: "Reset session", tone: "danger",
+      onSubmit: () => sendJson("POST", `${url}/reset-session`),
+    });
+    if (reset) refreshBots();
+  } else if (action === "alert") {
     // CFD bots share the Synthetic webhook; the bot's name routes it to cTrader.
     showAlertKit(bot.name, "/webhook");
   } else if (action === "toggle") {

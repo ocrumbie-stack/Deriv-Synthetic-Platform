@@ -19,7 +19,7 @@ import asyncio
 import logging
 import time
 import uuid
-from datetime import timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import httpx
@@ -71,8 +71,13 @@ def bot_out(bot: CryptoBot) -> dict:
         "tp_pct": bot.tp_pct,
         "sl_pct": bot.sl_pct,
         "enabled": bot.enabled,
+        "session_started_at": _utc_iso(bot.session_started_at),
         "created_at": bot.created_at.isoformat(),
     }
+
+
+def _utc_iso(moment: datetime | None) -> str | None:
+    return moment.replace(tzinfo=timezone.utc).isoformat() if moment else None
 
 
 def position_value(margin: float, leverage: int) -> float:
@@ -401,9 +406,11 @@ def bot_pairs(db: Session, mode: str) -> tuple[dict[str, list[dict]], dict[str, 
 CLOSED_MATCH_AFTER, CLOSED_MATCH_BEFORE, CLOSED_TTL = 300, 60, 30
 
 
-async def closed_by_bot(db: Session, mode: str, client: BlofinClient) -> dict[str, dict[str, dict]]:
+async def closed_by_bot(db: Session, mode: str, client: BlofinClient,
+                        session_starts: dict[str, datetime | None] | None = None) -> dict[str, dict[str, dict]]:
     """Realized P/L and close count per bot and pair, for positions the
-    bot's entries opened in this mode: {strategy: {symbol: {pnl, closed}}}."""
+    bot's entries opened in this mode: {strategy: {symbol: {pnl, closed}}}.
+    A strategy in session_starts only counts what closed after its start."""
     entries = db.execute(
         select(CryptoSignal.strategy_name, CryptoSignal.symbol, CryptoSignal.created_at)
         .where(
@@ -419,6 +426,7 @@ async def closed_by_bot(db: Session, mode: str, client: BlofinClient) -> dict[st
     by_symbol: dict[str, list[tuple[int, str]]] = {}
     for strategy, symbol, created_at in entries:
         by_symbol.setdefault(symbol, []).append((to_ms(created_at), strategy))
+    starts = {name: to_ms(at) for name, at in (session_starts or {}).items() if at}
     since = to_ms(entries[0].created_at) - CLOSED_MATCH_BEFORE * 1000
     closed = await _cached(("closed", mode, since), CLOSED_TTL, lambda: client.closed_positions(since))
     out: dict[str, dict[str, dict]] = {}
@@ -431,7 +439,7 @@ async def closed_by_bot(db: Session, mode: str, client: BlofinClient) -> dict[st
             if at > opened + CLOSED_MATCH_BEFORE * 1000:
                 break
             owner = strategy if opened - at <= CLOSED_MATCH_AFTER * 1000 else None
-        if owner is None:
+        if owner is None or row.get("closed_at_ms", 0) < starts.get(owner, 0):
             continue
         pair = out.setdefault(owner, {}).setdefault(row["symbol"], {"pnl": 0.0, "closed": 0})
         pair["pnl"] += row["realized_pnl"]
@@ -446,7 +454,7 @@ async def overview(db: Session, client: BlofinClient | None = None) -> dict:
     signals = db.scalars(
         select(CryptoSignal).where(CryptoSignal.execution_mode == mode).order_by(CryptoSignal.id.desc()).limit(200)
     )
-    bots = db.scalars(select(CryptoBot).order_by(CryptoBot.name))
+    bots = list(db.scalars(select(CryptoBot).order_by(CryptoBot.name)))
     pairs, newest = bot_pairs(db, mode)
     data = {
         "mode": mode,
@@ -476,7 +484,7 @@ async def overview(db: Session, client: BlofinClient | None = None) -> dict:
     # running P/L only, flagged by closed_error.
     data["closed_error"] = None
     try:
-        closed = await closed_by_bot(db, mode, client)
+        closed = await closed_by_bot(db, mode, client, {b.name: b.session_started_at for b in bots})
     except (BlofinError, OSError, httpx.HTTPError) as e:
         closed, data["closed_error"] = {}, str(e)
     for bot in data["bots"]:
