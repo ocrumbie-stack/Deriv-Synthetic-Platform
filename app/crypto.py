@@ -393,6 +393,52 @@ def bot_pairs(db: Session, mode: str) -> tuple[dict[str, list[dict]], dict[str, 
     return pairs, newest
 
 
+# BloFin doesn't say who opened a closed position, so it goes to the bot
+# whose filled entry on that pair came last before the position opened -
+# an entry fills within seconds of its alert, so one opened more than
+# CLOSED_MATCH_AFTER later (or a little before, for clock drift) was opened
+# some other way.
+CLOSED_MATCH_AFTER, CLOSED_MATCH_BEFORE, CLOSED_TTL = 300, 60, 30
+
+
+async def closed_by_bot(db: Session, mode: str, client: BlofinClient) -> dict[str, dict[str, dict]]:
+    """Realized P/L and close count per bot and pair, for positions the
+    bot's entries opened in this mode: {strategy: {symbol: {pnl, closed}}}."""
+    entries = db.execute(
+        select(CryptoSignal.strategy_name, CryptoSignal.symbol, CryptoSignal.created_at)
+        .where(
+            CryptoSignal.execution_mode == mode,
+            CryptoSignal.action == SignalAction.entry,
+            CryptoSignal.status == ExecutionStatus.executed,
+        )
+        .order_by(CryptoSignal.created_at)
+    ).all()
+    if not entries:
+        return {}
+    to_ms = lambda dt: int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
+    by_symbol: dict[str, list[tuple[int, str]]] = {}
+    for strategy, symbol, created_at in entries:
+        by_symbol.setdefault(symbol, []).append((to_ms(created_at), strategy))
+    since = to_ms(entries[0].created_at) - CLOSED_MATCH_BEFORE * 1000
+    closed = await _cached(("closed", mode, since), CLOSED_TTL, lambda: client.closed_positions(since))
+    out: dict[str, dict[str, dict]] = {}
+    for row in closed:
+        opened = row.get("opened_at_ms")
+        if not opened:
+            continue
+        owner = None
+        for at, strategy in by_symbol.get(row["symbol"], []):
+            if at > opened + CLOSED_MATCH_BEFORE * 1000:
+                break
+            owner = strategy if opened - at <= CLOSED_MATCH_AFTER * 1000 else None
+        if owner is None:
+            continue
+        pair = out.setdefault(owner, {}).setdefault(row["symbol"], {"pnl": 0.0, "closed": 0})
+        pair["pnl"] += row["realized_pnl"]
+        pair["closed"] += 1
+    return out
+
+
 async def overview(db: Session, client: BlofinClient | None = None) -> dict:
     """Connection state, wallet, open positions and recent signals for the
     current demo/live mode only."""
@@ -426,6 +472,20 @@ async def overview(db: Session, client: BlofinClient | None = None) -> dict:
         last = newest.get(position["symbol"])
         owned = last is not None and last.direction is not None and POSITION_SIDE[last.direction] == position["side"]
         position["strategy"] = last.strategy_name if owned else None
+    # Closed P/L adds to each bot's running P/L; a failure leaves the bots on
+    # running P/L only, flagged by closed_error.
+    data["closed_error"] = None
+    try:
+        closed = await closed_by_bot(db, mode, client)
+    except (BlofinError, OSError, httpx.HTTPError) as e:
+        closed, data["closed_error"] = {}, str(e)
+    for bot in data["bots"]:
+        mine = closed.get(bot["name"], {})
+        bot["closed_pnl"] = round(sum(p["pnl"] for p in mine.values()), 8)
+        bot["closed_count"] = sum(p["closed"] for p in mine.values())
+        for pair in bot["pairs"]:
+            done = mine.get(pair["symbol"], {"pnl": 0.0, "closed": 0})
+            pair["closed_pnl"], pair["closed_count"] = round(done["pnl"], 8), done["closed"]
     # Only decorates the header, so a failure here hides the badges rather
     # than flagging the connection.
     try:

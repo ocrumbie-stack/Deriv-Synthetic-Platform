@@ -258,6 +258,7 @@ class BlofinClient:
                 "symbol": row.get("instId"),
                 "realized_pnl": _num(row.get("realizedPnl")) or 0.0,
                 "fee": _num(row.get("fee")) or 0.0,
+                "opened_at_ms": int(_num(row.get("createTime")) or 0) or None,
                 "closed_at_ms": int(_num(row.get("updateTime")) or 0),
             }
             for row in out

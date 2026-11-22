@@ -244,6 +244,41 @@ class CryptoSignalTests(unittest.TestCase):
         # The ETH long isn't the bot's short, and nothing opened SOL here.
         self.assertEqual([p["strategy"] for p in data["positions"]], ["btc", None, None])
 
+    def test_bot_pnl_includes_closed_positions_its_entries_opened(self):
+        from datetime import datetime, timedelta
+        start = datetime(2026, 11, 20, 12, 0, 0)
+        ms = lambda dt: int(dt.replace(tzinfo=crypto.timezone.utc).timestamp() * 1000)
+        self.db.add_all([
+            CryptoSignal(strategy_name="btc", symbol="BTC-USDT", action="entry", direction="long", status="executed", execution_mode="demo", created_at=start),
+            CryptoSignal(strategy_name="other", symbol="BTC-USDT", action="entry", direction="short", status="executed", execution_mode="demo", created_at=start + timedelta(hours=1)),
+            CryptoSignal(strategy_name="btc", symbol="BTC-USDT", action="entry", direction="long", status="executed", execution_mode="live", created_at=start + timedelta(hours=2)),
+        ])
+        self.db.commit()
+        client = self._client()
+        client.balance.return_value = {"equity": 100.0, "available": 90.0, "unrealized_pnl": 0.0}
+        client.closed_positions.return_value = [
+            {"symbol": "BTC-USDT", "realized_pnl": 4.0, "opened_at_ms": ms(start + timedelta(seconds=2))},        # btc's entry
+            {"symbol": "BTC-USDT", "realized_pnl": -1.5, "opened_at_ms": ms(start + timedelta(hours=1, seconds=3))},  # other's entry
+            {"symbol": "BTC-USDT", "realized_pnl": 9.0, "opened_at_ms": ms(start + timedelta(minutes=30))},       # opened on BloFin
+            {"symbol": "BTC-USDT", "realized_pnl": 7.0, "opened_at_ms": ms(start + timedelta(hours=2, seconds=1))},  # live entry, not this mode
+            {"symbol": "ETH-USDT", "realized_pnl": 3.0, "opened_at_ms": ms(start)},
+        ]
+        data = asyncio.run(crypto.overview(self.db, client))
+        self.assertEqual(client.closed_positions.call_args.args[0], ms(start) - 60_000)
+        self.assertEqual((data["bots"][0]["closed_pnl"], data["bots"][0]["closed_count"]), (4.0, 1))
+        self.assertEqual(data["bots"][0]["pairs"][0]["closed_pnl"], 4.0)
+        self.assertIsNone(data["closed_error"])
+
+    def test_closed_pnl_failure_leaves_running_pnl(self):
+        self._send()
+        client = self._client()
+        client.balance.return_value = {"equity": 100.0, "available": 90.0, "unrealized_pnl": 0.0}
+        client.closed_positions.side_effect = BlofinError("BloFin HTTP 500")
+        data = asyncio.run(crypto.overview(self.db, client))
+        self.assertIn("500", data["closed_error"])
+        self.assertIsNone(data["error"])
+        self.assertEqual(data["bots"][0]["closed_pnl"], 0)
+
     def test_daily_loss_limit_refuses_entries_but_not_exits(self):
         self.risk.crypto_daily_loss_limit = 20
         self.db.commit()

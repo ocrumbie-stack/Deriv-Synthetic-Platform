@@ -1185,12 +1185,20 @@ function cryptoBotRows(data) {
     const traded = Object.fromEntries((bot.pairs || []).map(p => [p.symbol, p]));
     const symbols = [...new Set([...open.map(p => p.symbol), ...Object.keys(traded)])].sort();
     const botTpsl = plusMinus(bot.tp_pct, bot.sl_pct, "%");
+    // Closed P/L since the bot's first entry plus the running P/L of what's
+    // open, like the Forex bots. Without the closed history it's running only.
+    const loaded = data.connected && !data.error;
+    const withClosed = loaded && !data.closed_error;
+    const unrealized = sumOf(open, "unrealized_pnl");
+    const openNote = open.length ? `${unrealized > 0 ? "+" : ""}${cryptoMoney(unrealized)} open` : "";
     return {
       id: bot.id, name: bot.name, enabled: bot.enabled, money: cryptoMoney,
       size: `${cryptoMoney(bot.margin)}<span class="sub-line">${bot.leverage ? `${bot.leverage}x · ${cryptoMoney(bot.position_value)} position` : "Auto leverage · per pair"}</span>`,
       tpsl: botTpsl,
-      pnl: data.connected && !data.error ? sumOf(open, "unrealized_pnl") : null,
-      pnlNote: open.length ? `${open.length} open` : "no open position",
+      pnl: loaded ? (withClosed ? Number(bot.closed_pnl || 0) : 0) + unrealized : null,
+      pnlNote: !loaded ? ""
+        : withClosed ? `${bot.closed_count || 0} closed${openNote ? ` · ${openNote}` : ""}`
+        : `${open.length} open · closed P/L unavailable`,
       allowed: bot.symbols.length ? bot.symbols.map(cryptoPair).join(", ") : '<span class="subtle">Any</span>',
       open: open.map(p => ({ label: cryptoPair(p.symbol), upl: p.unrealized_pnl })),
       noPairs: "No pairs traded yet — pairs appear here once an entry is filled.",
@@ -1206,7 +1214,9 @@ function cryptoBotRows(data) {
           position: pos ? `<span class="badge ${pos.side === "LONG" ? "ok" : "bad"}">${escapeAttr(pos.side)}</span> <span class="subtle">${cryptoMoney(pos.margin)} · ${pos.leverage == null ? "—" : `${escapeAttr(pos.leverage)}x`} @ ${pos.entry_price == null ? "—" : number.format(pos.entry_price)}</span>` : "",
           tpsl: prices,
           trades: last ? last.entries : 0,
-          pnl: pos ? Number(pos.unrealized_pnl || 0) : null,
+          pnl: withClosed && last
+            ? Number(last.closed_pnl || 0) + Number(pos?.unrealized_pnl || 0)
+            : pos ? Number(pos.unrealized_pnl || 0) : null,
         };
       }),
     };
