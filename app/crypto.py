@@ -16,10 +16,11 @@ refused. Exits go through even when the bot is paused or missing.
 """
 
 import asyncio
+import json
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import httpx
@@ -29,7 +30,7 @@ from sqlalchemy.orm import Session
 from app import notify
 from app.blofin import BlofinClient, BlofinError, configured, contract_symbol, contracts_for, missing_settings, pair_label
 from app.config import settings
-from app.models import CryptoBot, CryptoPairLeverage, CryptoSignal, Direction, ExecutionStatus, SignalAction
+from app.models import CryptoBot, CryptoPairLeverage, CryptoSignal, CryptoTrade, Direction, ExecutionStatus, SignalAction
 from app.schemas import WebhookSignal
 from app.services import get_risk_settings, local_period_start
 
@@ -406,13 +407,14 @@ def bot_pairs(db: Session, mode: str) -> tuple[dict[str, list[dict]], dict[str, 
 CLOSED_MATCH_AFTER, CLOSED_MATCH_BEFORE, CLOSED_TTL = 300, 60, 30
 
 
-async def closed_by_bot(db: Session, mode: str, client: BlofinClient,
-                        session_starts: dict[str, datetime | None] | None = None) -> dict[str, dict[str, dict]]:
-    """Realized P/L and close count per bot and pair, for positions the
-    bot's entries opened in this mode: {strategy: {symbol: {pnl, closed}}}.
-    A strategy in session_starts only counts what closed after its start."""
+def _to_ms(dt: datetime) -> int:
+    return int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
+
+
+def _entry_index(db: Session, mode: str) -> dict[str, list[tuple[int, str, Direction | None]]]:
+    """Filled entries in this mode by pair, oldest first: (ms, strategy, direction)."""
     entries = db.execute(
-        select(CryptoSignal.strategy_name, CryptoSignal.symbol, CryptoSignal.created_at)
+        select(CryptoSignal.strategy_name, CryptoSignal.symbol, CryptoSignal.direction, CryptoSignal.created_at)
         .where(
             CryptoSignal.execution_mode == mode,
             CryptoSignal.action == SignalAction.entry,
@@ -420,31 +422,145 @@ async def closed_by_bot(db: Session, mode: str, client: BlofinClient,
         )
         .order_by(CryptoSignal.created_at)
     ).all()
-    if not entries:
+    out: dict[str, list[tuple[int, str, Direction | None]]] = {}
+    for strategy, symbol, direction, created_at in entries:
+        out.setdefault(symbol, []).append((_to_ms(created_at), strategy, direction))
+    return out
+
+
+def _owner(index: dict, symbol: str, opened_ms: int | None) -> tuple[str, Direction | None] | None:
+    """The bot entry that opened a closed position, by the rule above."""
+    if not opened_ms:
+        return None
+    owner = None
+    for at, strategy, direction in index.get(symbol, []):
+        if at > opened_ms + CLOSED_MATCH_BEFORE * 1000:
+            break
+        owner = (strategy, direction) if opened_ms - at <= CLOSED_MATCH_AFTER * 1000 else None
+    return owner
+
+
+async def closed_by_bot(db: Session, mode: str, client: BlofinClient,
+                        session_starts: dict[str, datetime | None] | None = None) -> dict[str, dict[str, dict]]:
+    """Realized P/L and close count per bot and pair, for positions the
+    bot's entries opened in this mode: {strategy: {symbol: {pnl, closed}}}.
+    A strategy in session_starts only counts what closed after its start."""
+    index = _entry_index(db, mode)
+    if not index:
         return {}
-    to_ms = lambda dt: int(dt.replace(tzinfo=timezone.utc).timestamp() * 1000)
-    by_symbol: dict[str, list[tuple[int, str]]] = {}
-    for strategy, symbol, created_at in entries:
-        by_symbol.setdefault(symbol, []).append((to_ms(created_at), strategy))
-    starts = {name: to_ms(at) for name, at in (session_starts or {}).items() if at}
-    since = to_ms(entries[0].created_at) - CLOSED_MATCH_BEFORE * 1000
+    starts = {name: _to_ms(at) for name, at in (session_starts or {}).items() if at}
+    since = min(rows[0][0] for rows in index.values()) - CLOSED_MATCH_BEFORE * 1000
     closed = await _cached(("closed", mode, since), CLOSED_TTL, lambda: client.closed_positions(since))
     out: dict[str, dict[str, dict]] = {}
     for row in closed:
-        opened = row.get("opened_at_ms")
-        if not opened:
+        found = _owner(index, row["symbol"], row.get("opened_at_ms"))
+        if found is None or row.get("closed_at_ms", 0) < starts.get(found[0], 0):
             continue
-        owner = None
-        for at, strategy in by_symbol.get(row["symbol"], []):
-            if at > opened + CLOSED_MATCH_BEFORE * 1000:
-                break
-            owner = strategy if opened - at <= CLOSED_MATCH_AFTER * 1000 else None
-        if owner is None or row.get("closed_at_ms", 0) < starts.get(owner, 0):
-            continue
-        pair = out.setdefault(owner, {}).setdefault(row["symbol"], {"pnl": 0.0, "closed": 0})
+        pair = out.setdefault(found[0], {}).setdefault(row["symbol"], {"pnl": 0.0, "closed": 0})
         pair["pnl"] += row["realized_pnl"]
         pair["closed"] += 1
     return out
+
+
+# Crypto -> Trade History keeps its own copy of BloFin's closed positions,
+# which BloFin only holds for about three months. The first read goes back
+# HISTORY_DAYS; later ones re-read from a day before the newest saved close,
+# so a row BloFin updates after a partial close is picked up again.
+HISTORY_DAYS, HISTORY_OVERLAP_DAYS, HISTORY_SYNC_TTL = 90, 1, 30
+_history_synced: dict[str, float] = {}
+
+
+def _from_ms(ms: int | None) -> datetime | None:
+    return datetime.fromtimestamp(ms / 1000, timezone.utc).replace(tzinfo=None) if ms else None
+
+
+async def sync_trades(db: Session, mode: str, client: BlofinClient, force: bool = False) -> int:
+    """Save BloFin's closed positions in this mode; returns how many were
+    new. Skipped if it ran in the last HISTORY_SYNC_TTL seconds."""
+    last = _history_synced.get(mode)
+    if not force and last is not None and time.monotonic() - last < HISTORY_SYNC_TTL:
+        return 0
+    newest = db.scalar(select(func.max(CryptoTrade.closed_at)).where(CryptoTrade.execution_mode == mode))
+    since = (newest - timedelta(days=HISTORY_OVERLAP_DAYS)) if newest else datetime.utcnow() - timedelta(days=HISTORY_DAYS)
+    rows = await client.closed_positions(_to_ms(since))
+    _history_synced[mode] = time.monotonic()
+    if not rows:
+        return 0
+    saved = {
+        t.history_key: t
+        for t in db.scalars(select(CryptoTrade).where(
+            CryptoTrade.execution_mode == mode, CryptoTrade.history_key.in_([r["key"] for r in rows])))
+    }
+    index = _entry_index(db, mode)
+    added = 0
+    for row in rows:
+        trade = saved.get(row["key"])
+        if trade is None:
+            trade = CryptoTrade(execution_mode=mode, history_key=row["key"])
+            db.add(trade)
+            saved[row["key"]] = trade
+            added += 1
+        found = _owner(index, row["symbol"], row.get("opened_at_ms"))
+        if found and not trade.strategy_name:
+            trade.strategy_name = found[0]
+        side = row.get("side") or trade.side
+        if side is None and found and found[1] is not None:
+            side = POSITION_SIDE[found[1]]
+        trade.symbol = row["symbol"]
+        trade.side = side
+        trade.open_price = row.get("open_price")
+        trade.close_price = row.get("close_price")
+        trade.contracts = row.get("contracts")
+        trade.leverage = row.get("leverage")
+        trade.realized_pnl = row["realized_pnl"]
+        trade.fee = row["fee"]
+        trade.opened_at = _from_ms(row.get("opened_at_ms"))
+        trade.closed_at = _from_ms(row.get("closed_at_ms")) or datetime.utcnow()
+        trade.raw = json.dumps(row["raw"]) if row.get("raw") is not None else None
+    db.commit()
+    return added
+
+
+def _trade_out(trade: CryptoTrade) -> dict:
+    return {
+        "id": trade.id,
+        "strategy_name": trade.strategy_name,
+        "symbol": trade.symbol,
+        "side": trade.side,
+        "open_price": trade.open_price,
+        "close_price": trade.close_price,
+        "contracts": trade.contracts,
+        "leverage": trade.leverage,
+        "realized_pnl": trade.realized_pnl,
+        "fee": trade.fee,
+        "opened_at": _utc_iso(trade.opened_at),
+        "closed_at": _utc_iso(trade.closed_at),
+    }
+
+
+async def history(db: Session, client: BlofinClient | None = None) -> dict:
+    """Closed trades and signals for the current demo/live mode, for Crypto's
+    Trade History, Performance and Signal Journal tabs. A failed BloFin read
+    still returns what's saved, flagged by sync_error."""
+    mode = _mode()
+    data = {"mode": mode, "connected": configured(mode), "missing": missing_settings(mode), "sync_error": None}
+    if data["connected"]:
+        try:
+            await sync_trades(db, mode, client or BlofinClient(mode))
+        except (BlofinError, OSError, httpx.HTTPError) as e:
+            db.rollback()
+            data["sync_error"] = str(e)
+    trades = db.scalars(
+        select(CryptoTrade).where(CryptoTrade.execution_mode == mode).order_by(CryptoTrade.closed_at.desc()).limit(5000)
+    )
+    signals = db.scalars(
+        select(CryptoSignal).where(CryptoSignal.execution_mode == mode).order_by(CryptoSignal.id.desc()).limit(1000)
+    )
+    data["trades"] = [_trade_out(t) for t in trades]
+    data["signals"] = [_signal_out(s) for s in signals]
+    data["bots"] = [{"name": b.name, "enabled": b.enabled} for b in db.scalars(select(CryptoBot).order_by(CryptoBot.name))]
+    data["period_starts"] = {p: _utc_iso(local_period_start(p)) for p in ("today", "week", "month")}
+    return data
 
 
 async def overview(db: Session, client: BlofinClient | None = None) -> dict:

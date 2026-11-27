@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import Boolean, DateTime, Enum as SqlEnum, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Enum as SqlEnum, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -209,6 +209,34 @@ class CryptoSignal(Base):
     # demo or live - the page only shows the current mode's signals.
     execution_mode: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class CryptoTrade(Base):
+    """A position BloFin reports as closed, saved so Crypto -> Trade History
+    keeps it after BloFin's own history (about three months) has dropped it.
+    Copied from BloFin's positions history; strategy_name is the bot whose
+    entry opened it, or None for one opened on BloFin itself."""
+
+    __tablename__ = "crypto_trades"
+    __table_args__ = (UniqueConstraint("execution_mode", "history_key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    execution_mode: Mapped[str] = mapped_column(String(10), index=True)
+    # BloFin's id for the history row, so a re-read updates it in place.
+    history_key: Mapped[str] = mapped_column(String(120))
+    strategy_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    symbol: Mapped[str] = mapped_column(String(40), index=True)
+    side: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    open_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    close_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    contracts: Mapped[float | None] = mapped_column(Float, nullable=True)
+    leverage: Mapped[float | None] = mapped_column(Float, nullable=True)
+    realized_pnl: Mapped[float] = mapped_column(Float, default=0.0)
+    fee: Mapped[float] = mapped_column(Float, default=0.0)
+    opened_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    closed_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    # BloFin's row as received, for checking the fields above against it.
+    raw: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class CTraderConnection(Base):

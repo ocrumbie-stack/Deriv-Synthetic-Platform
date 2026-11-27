@@ -1222,22 +1222,124 @@
 
         <div class="page" id="page-crypto-history">
           <div class="page-header">
-            <div>
-              <h1 class="page-title">Trade History</h1>
-              <p class="subtle">Every alert sent to /webhook/blofin in the current mode, and what the platform did</p>
+            <div><h1 class="page-title">Trade History</h1><p class="subtle">Closed BloFin positions in the current mode</p></div>
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+              <select id="cryptoHistoryPair" class="inline-input" style="width:auto;min-width:160px" aria-label="Filter by pair">
+                <option value="all">All pairs</option>
+              </select>
+              <span class="header-badge" id="cryptoHistoryCount">0 trades</span>
             </div>
-            <span class="header-badge" id="cryptoHistoryCount">0 signals</span>
+            <nav class="page-tabs" role="tablist" aria-label="History">
+              <button class="page-tab active" data-page="crypto-history" role="tab" aria-selected="true">Trade History</button>
+              <button class="page-tab" data-page="crypto-performance" role="tab" aria-selected="false">Performance</button>
+              <button class="page-tab" data-page="crypto-journal" role="tab" aria-selected="false">Signal Journal</button>
+            </nav>
           </div>
           <div class="page-body">
+            <p class="settings-error crypto-history-error" role="alert"></p>
+            <div class="chart-panel">
+              <div class="chart-header">
+                <span class="chart-title">Net P&amp;L by pair</span>
+                <span class="chart-value neutral" id="cryptoPairPerfCaption">all closed trades</span>
+              </div>
+              <canvas id="cryptoPairPerfChart" height="280" style="height:280px"></canvas>
+            </div>
+            <div class="metrics" id="cryptoHistoryStats"></div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr>
+                  <th>Strategy</th><th>Pair</th><th>Side</th>
+                  <th>Entry</th><th>Exit</th><th>Contracts</th><th>Leverage</th>
+                  <th>Realized P/L</th><th>Fee</th>
+                  <th>Opened</th><th>Closed</th><th>Duration</th>
+                </tr></thead>
+                <tbody id="cryptoTrades"><tr><td colspan="12" class="empty">Loading…</td></tr></tbody>
+              </table>
+            </div>
+            <p class="subtle settings-hint">Realized P/L and fee are as BloFin reports them. Closes are saved here, so they stay after BloFin's own history (about three months) drops them. Manual means no bot's entry opened the position: it was opened on BloFin, from the extension or another way.</p>
+          </div>
+        </div>
+
+        <div class="page" id="page-crypto-performance">
+          <div class="page-header">
+            <div><h1 class="page-title">Performance</h1><p class="subtle">Crypto strategies on BloFin</p></div>
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+              <select id="cryptoPerformancePair" class="inline-input" style="width:auto;min-width:160px" aria-label="Filter by pair">
+                <option value="all">All pairs</option>
+              </select>
+              <div class="tabs" role="tablist">
+                <button data-crypto-period="today" class="active">Today</button>
+                <button data-crypto-period="week">This week</button>
+                <button data-crypto-period="month">This month</button>
+                <button data-crypto-period="all">All time</button>
+              </div>
+            </div>
+            <nav class="page-tabs" role="tablist" aria-label="History">
+              <button class="page-tab" data-page="crypto-history" role="tab" aria-selected="false">Trade History</button>
+              <button class="page-tab active" data-page="crypto-performance" role="tab" aria-selected="true">Performance</button>
+              <button class="page-tab" data-page="crypto-journal" role="tab" aria-selected="false">Signal Journal</button>
+            </nav>
+          </div>
+          <div class="page-body">
+            <p class="settings-error crypto-history-error" role="alert"></p>
+            <div class="chart-panel">
+              <div class="chart-header">
+                <span class="chart-title">Equity Curve</span>
+                <span class="chart-value neutral" id="cryptoCurveValue">$0.00</span>
+              </div>
+              <canvas id="cryptoEquityChart" height="200" style="height:200px"></canvas>
+            </div>
+            <div class="chart-panel">
+              <div class="chart-header"><span class="chart-title">Signal Quality</span></div>
+              <canvas id="cryptoStatusChart" height="200" style="height:200px"></canvas>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr>
+                  <th>Strategy</th><th>Status</th><th>Net P/L</th>
+                  <th>Trades</th><th>Win rate</th><th>Avg win</th><th>Avg loss</th><th>Open</th>
+                </tr></thead>
+                <tbody id="cryptoPerformance"><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="page" id="page-crypto-journal">
+          <div class="page-header">
+            <div>
+              <h1 class="page-title">Signal Journal</h1>
+              <p class="subtle">Every alert sent to /webhook/blofin in the current mode, and what the platform did</p>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="header-badge" id="cryptoSignalCount">0 signals</span>
+              <div class="tabs"><button id="cryptoRejectionsBtn">Rejections only</button></div>
+            </div>
+            <nav class="page-tabs" role="tablist" aria-label="History">
+              <button class="page-tab" data-page="crypto-history" role="tab" aria-selected="false">Trade History</button>
+              <button class="page-tab" data-page="crypto-performance" role="tab" aria-selected="false">Performance</button>
+              <button class="page-tab active" data-page="crypto-journal" role="tab" aria-selected="true">Signal Journal</button>
+            </nav>
+          </div>
+          <div class="page-body">
+            <div class="chart-panel">
+              <div class="chart-header">
+                <span class="chart-title">Signal Timeline</span>
+                <div class="chart-legend">
+                  <div class="legend-item"><span class="legend-dot" style="background:#4488ff"></span>passed</div>
+                  <div class="legend-item"><span class="legend-dot" style="background:#ff3d5a"></span>blocked</div>
+                </div>
+              </div>
+              <canvas id="cryptoActivityChart" height="180" style="height:180px"></canvas>
+            </div>
             <div class="table-wrap">
               <table>
                 <thead><tr>
                   <th>Time</th><th>Strategy</th><th>Pair</th><th>Action</th><th>Margin</th><th>Leverage</th><th>TP / SL</th><th>Status</th><th>Detail</th>
                 </tr></thead>
-                <tbody id="cryptoSignals"></tbody>
+                <tbody id="cryptoSignals"><tr><td colspan="9" class="empty">Loading…</td></tr></tbody>
               </table>
             </div>
-            <p class="subtle settings-hint">Closed-trade profit and loss from BloFin will be added here once it has been checked against a demo account.</p>
           </div>
         </div>
 

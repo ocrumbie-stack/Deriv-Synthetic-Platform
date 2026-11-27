@@ -119,6 +119,32 @@ def _position(row: dict) -> dict:
     }
 
 
+def _closed(row: dict) -> dict:
+    """A row of BloFin's positions history. Side is None when BloFin gives
+    neither a long/short positionSide nor a signed size (one-way mode)."""
+    side = row.get("positionSide")
+    size = _num(row.get("closePositions")) or _num(row.get("openMaxPositions"))
+    if side not in ("long", "short"):
+        side = None if not size else ("long" if size > 0 else "short")
+    opened = int(_num(row.get("createTime")) or 0) or None
+    closed = int(_num(row.get("updateTime")) or 0)
+    key = row.get("historyId") or row.get("positionId") or f"{row.get('instId')}:{opened}:{closed}"
+    return {
+        "key": str(key),
+        "symbol": row.get("instId"),
+        "side": side.upper() if side else None,
+        "open_price": _num(row.get("openAveragePrice")) or _num(row.get("averagePrice")),
+        "close_price": _num(row.get("closeAveragePrice")),
+        "contracts": abs(size) if size else None,
+        "leverage": _num(row.get("leverage")),
+        "realized_pnl": _num(row.get("realizedPnl")) or 0.0,
+        "fee": _num(row.get("fee")) or 0.0,
+        "opened_at_ms": opened,
+        "closed_at_ms": closed,
+        "raw": row,
+    }
+
+
 class BlofinClient:
     def __init__(self, mode: str | None = None, timeout: float = 10.0):
         self.mode = (mode or settings.execution_mode).lower()
@@ -253,17 +279,7 @@ class BlofinClient:
             if len(rows) < 100:
                 break
             after = rows[-1].get("historyId")
-        return [
-            {
-                "symbol": row.get("instId"),
-                "realized_pnl": _num(row.get("realizedPnl")) or 0.0,
-                "fee": _num(row.get("fee")) or 0.0,
-                "opened_at_ms": int(_num(row.get("createTime")) or 0) or None,
-                "closed_at_ms": int(_num(row.get("updateTime")) or 0),
-            }
-            for row in out
-            if int(_num(row.get("updateTime")) or 0) >= since_ms
-        ]
+        return [_closed(row) for row in out if int(_num(row.get("updateTime")) or 0) >= since_ms]
 
     async def hedge_mode(self) -> bool:
         data = await self._request("GET", "/api/v1/account/position-mode") or {}

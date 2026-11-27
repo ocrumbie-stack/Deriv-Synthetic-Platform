@@ -865,6 +865,11 @@ async def crypto_overview(db: Session = Depends(get_db)) -> dict:
     return await crypto.overview(db)
 
 
+@app.get("/api/crypto/history")
+async def crypto_history(db: Session = Depends(get_db)) -> dict:
+    return await crypto.history(db)
+
+
 @app.get("/api/crypto/market")
 async def crypto_market(symbols: str = "") -> dict:
     return await crypto.market(symbols)

@@ -362,6 +362,71 @@ class CryptoSignalTests(unittest.TestCase):
         self.assertEqual([(c["symbol"], c["realized_pnl"]) for c in closed], [("ETH-USDT", 0.7)])
         self.assertEqual(request.call_args.args[:2], ("GET", "/api/v1/account/positions-history"))
 
+    def test_closed_positions_reads_side_prices_and_size(self):
+        from app.blofin import BlofinClient
+        client = BlofinClient("demo")
+        rows = [
+            {"instId": "BTC-USDT", "positionSide": "net", "closePositions": "-2.5", "openAveragePrice": "50000",
+             "closeAveragePrice": "49000", "leverage": "10", "realizedPnl": "2.5", "fee": "0.1",
+             "createTime": "1000", "updateTime": "2000", "historyId": "7"},
+            {"instId": "ETH-USDT", "positionSide": "long", "closePositions": "3", "realizedPnl": "1",
+             "updateTime": "2000", "positionId": "p9"},
+        ]
+        with patch.object(BlofinClient, "_request", new=AsyncMock(return_value=rows)):
+            btc, eth = asyncio.run(client.closed_positions(1000))
+        self.assertEqual((btc["key"], btc["side"], btc["contracts"], btc["open_price"], btc["close_price"], btc["leverage"]),
+                         ("7", "SHORT", 2.5, 50000.0, 49000.0, 10.0))
+        self.assertEqual((eth["key"], eth["side"], eth["contracts"], eth["open_price"]), ("p9", "LONG", 3.0, None))
+
+    def _closed_row(self, key, opened, closed, pnl, symbol="BTC-USDT", side=None):
+        return {"key": key, "symbol": symbol, "side": side, "open_price": 100.0, "close_price": 110.0, "contracts": 1.0,
+                "leverage": 10.0, "realized_pnl": pnl, "fee": 0.1, "opened_at_ms": opened, "closed_at_ms": closed, "raw": {"k": key}}
+
+    def test_history_saves_closed_trades_once_and_names_the_bot(self):
+        from datetime import datetime, timedelta
+        from app.models import CryptoTrade
+        start = datetime.utcnow() - timedelta(days=2)
+        ms = crypto._to_ms
+        self.db.add(CryptoSignal(strategy_name="btc", symbol="BTC-USDT", action="entry", direction="short",
+                                 status="executed", execution_mode="demo", created_at=start))
+        self.db.commit()
+        client = self._client()
+        client.closed_positions.return_value = [
+            self._closed_row("1", ms(start + timedelta(seconds=2)), ms(start + timedelta(hours=1)), 4.0),
+            self._closed_row("2", ms(start + timedelta(minutes=30)), ms(start + timedelta(hours=2)), -1.0, side="LONG"),
+        ]
+        crypto._history_synced.clear()
+        data = asyncio.run(crypto.history(self.db, client))
+        # The first read goes back 90 days.
+        since = client.closed_positions.call_args.args[0]
+        self.assertAlmostEqual(since, ms(datetime.utcnow() - timedelta(days=90)), delta=60_000)
+        self.assertEqual([(t["strategy_name"], t["side"], t["realized_pnl"]) for t in data["trades"]],
+                         [(None, "LONG", -1.0), ("btc", "SHORT", 4.0)])
+        self.assertIsNone(data["sync_error"])
+        self.assertEqual(set(data["period_starts"]), {"today", "week", "month"})
+        # A re-read updates the row in place, from a day before the newest close.
+        client.closed_positions.return_value = [
+            self._closed_row("2", ms(start + timedelta(minutes=30)), ms(start + timedelta(hours=3)), -2.0, side="LONG")]
+        asyncio.run(crypto.sync_trades(self.db, "demo", client, force=True))
+        self.assertEqual(client.closed_positions.call_args.args[0], ms(start + timedelta(hours=2) - timedelta(days=1)))
+        self.assertEqual(self.db.query(CryptoTrade).count(), 2)
+        self.assertEqual(self.db.query(CryptoTrade).filter_by(history_key="2").one().realized_pnl, -2.0)
+
+    def test_history_only_shows_this_modes_trades_and_survives_a_failed_read(self):
+        from datetime import datetime
+        from app.models import CryptoTrade
+        self.db.add_all([
+            CryptoTrade(execution_mode="live", history_key="1", symbol="BTC-USDT", realized_pnl=5, fee=0, closed_at=datetime.utcnow()),
+            CryptoTrade(execution_mode="demo", history_key="1", symbol="ETH-USDT", realized_pnl=2, fee=0, closed_at=datetime.utcnow()),
+        ])
+        self.db.commit()
+        client = self._client()
+        client.closed_positions.side_effect = BlofinError("BloFin HTTP 500")
+        crypto._history_synced.clear()
+        data = asyncio.run(crypto.history(self.db, client))
+        self.assertIn("500", data["sync_error"])
+        self.assertEqual([t["symbol"] for t in data["trades"]], ["ETH-USDT"])
+
     def test_api_key_failure_only_hides_the_badges(self):
         client = self._client()
         client.balance.return_value = {"equity": 100.0, "available": 90.0, "unrealized_pnl": 0.0}

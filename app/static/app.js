@@ -212,6 +212,8 @@ const pageIds = new Set([
   "crypto-bots",
   "crypto-positions",
   "crypto-history",
+  "crypto-performance",
+  "crypto-journal",
   "crypto-leverage",
   "system-risk",
   "system-settings",
@@ -223,6 +225,8 @@ const tabParent = {
   "strategies-ranking":  "trading-history",
   "signals-journal":     "trading-history",
   "strategies-settings": "system-risk",
+  "crypto-performance":  "crypto-history",
+  "crypto-journal":      "crypto-history",
 };
 
 // The top bar's market each page belongs to. The sidebar only lists the
@@ -232,7 +236,7 @@ const marketPages = {
   synthetic: ["dashboard-overview", "trading-bots", "trading-positions", "trading-history", "signals-journal", "strategies-ranking",
               "strategies-leverage", "cfd-overview", "cfd-bots", "cfd-positions", "cfd-history", "cfd-lot-sizes"],
   forex:     ["forex-overview", "forex-bots", "forex-positions", "forex-history"],
-  crypto:    ["crypto-overview", "crypto-bots", "crypto-positions", "crypto-history", "crypto-leverage"],
+  crypto:    ["crypto-overview", "crypto-bots", "crypto-positions", "crypto-history", "crypto-performance", "crypto-journal", "crypto-leverage"],
   system:    ["system-risk", "system-settings", "strategies-settings"],
 };
 const pageMarket = Object.fromEntries(Object.entries(marketPages).flatMap(([m, pages]) => pages.map(p => [p, m])));
@@ -253,6 +257,13 @@ const cryptoView = { data: null, market: null, timer: null, loading: false };
 const homeView = { timer: null, loading: false };
 let cfdLotRows = [];
 const cryptoLevView = { data: null };
+// Crypto's Trade History / Performance / Signal Journal tabs share one fetch.
+const CRYPTO_HISTORY_PAGES = new Set(["crypto-history", "crypto-performance", "crypto-journal"]);
+const cryptoHist = {
+  data: null, loading: false, page: null,
+  pair: "all", perfPair: "all", period: "today", rejections: false,
+  pairPerf: { rows: null }, equity: { points: [], pad: null, width: 0, height: 0 },
+};
 
 function navigate(pageId, updateUrl = true) {
   pageId = pageAliases[pageId] || pageId;
@@ -299,6 +310,8 @@ function navigate(pageId, updateUrl = true) {
   if (pageId === "forex-bots") loadForexBots();
   if (pageId === "forex-positions" || pageId === "forex-history" || pageId === "forex-bots") startForexTrading();
   else stopForexTrading();
+  cryptoHist.page = CRYPTO_HISTORY_PAGES.has(pageId) ? pageId : null;
+  if (cryptoHist.page) { renderCryptoHistory(); loadCryptoHistory(); }
   if (market === "crypto") startCryptoView();
   else stopCryptoView();
   if (pageId === "home") startHomeView();
@@ -821,6 +834,7 @@ async function loadCrypto() {
     cryptoView.data = data;
     renderCrypto(data);
     loadCryptoMarkets(data);
+    if (cryptoHist.page) loadCryptoHistory();
   } catch {
     message = "Couldn't load crypto data. Retrying…";
   } finally {
@@ -1084,9 +1098,184 @@ function renderCrypto(data) {
     </tr>`).join("")
     : emptyRow(10, data.connected ? "No open positions" : `Set ${data.missing.map(escapeAttr).join(", ")} to connect BloFin ${escapeAttr(data.mode)}`);
 
-  document.querySelector("#cryptoHistoryCount").textContent = `${data.signals.length} signal${data.signals.length === 1 ? "" : "s"}`;
-  document.querySelector("#cryptoSignals").innerHTML = data.signals.length
-    ? data.signals.map(s => `<tr>
+  document.querySelector("#cryptoBots").innerHTML = data.bots.length
+    ? marketBotRows(cryptoBotRows(data), cryptoBotsOpen, "Closed")
+    : emptyRow(7, "No crypto bots yet. Create one for each strategy that should trade on BloFin.");
+}
+
+// ─── Crypto Trade History / Performance / Signal Journal ─────────────────────
+// Closed trades are BloFin's positions history, saved by the server so they
+// outlive BloFin's own ~3 months. A trade no bot's entry opened is "Manual".
+
+async function loadCryptoHistory() {
+  if (cryptoHist.loading) return;
+  cryptoHist.loading = true;
+  let message = "";
+  try {
+    const data = await getJson("/api/crypto/history");
+    cryptoHist.data = data;
+    message = data.sync_error ? `Couldn't read new closes from BloFin (${data.sync_error}). Showing saved trades.` : "";
+    renderCryptoHistory();
+  } catch {
+    message = "Couldn't load crypto history. Retrying…";
+  } finally {
+    document.querySelectorAll(".crypto-history-error").forEach(el => { el.textContent = message; });
+    cryptoHist.loading = false;
+  }
+}
+
+function cryptoStrategy(t) { return t.strategy_name || "Manual"; }
+
+// Keeps the chosen pair across refreshes; falls back to "all" if it's gone.
+function fillCryptoPairSelect(el, symbols, current) {
+  if (!el) return current;
+  const existing = [...el.options].slice(1).map(o => o.value);
+  if (existing.join(",") !== symbols.join(",")) {
+    el.innerHTML = `<option value="all">All pairs</option>` +
+      symbols.map(s => `<option value="${escapeAttr(s)}">${cryptoPair(s)}</option>`).join("");
+  }
+  const value = current === "all" || symbols.includes(current) ? current : "all";
+  el.value = value;
+  return value;
+}
+
+function cryptoInPeriod(iso, period) {
+  const start = period === "all" ? null : cryptoHist.data?.period_starts?.[period];
+  return !start || (iso && new Date(utc(iso)) >= new Date(start));
+}
+
+function cryptoTradeStats(trades) {
+  const wins = trades.filter(t => t.realized_pnl > 0);
+  const losses = trades.filter(t => t.realized_pnl < 0);
+  const sum = list => list.reduce((s, t) => s + t.realized_pnl, 0);
+  return {
+    count: trades.length,
+    net: sum(trades),
+    fees: trades.reduce((s, t) => s + (t.fee || 0), 0),
+    winRate: trades.length ? wins.length / trades.length * 100 : 0,
+    avgWin: wins.length ? sum(wins) / wins.length : 0,
+    avgLoss: losses.length ? sum(losses) / losses.length : 0,
+  };
+}
+
+function renderCryptoHistory() {
+  const data = cryptoHist.data;
+  if (!data || !cryptoHist.page) return;
+  if (cryptoHist.page === "crypto-history") renderCryptoTrades(data);
+  if (cryptoHist.page === "crypto-performance") renderCryptoPerformance(data);
+  if (cryptoHist.page === "crypto-journal") renderCryptoJournal(data);
+}
+
+function renderCryptoTrades(data) {
+  const trades = data.trades;
+  const pairs = [...new Set(trades.map(t => t.symbol))].sort();
+  cryptoHist.pair = fillCryptoPairSelect(document.querySelector("#cryptoHistoryPair"), pairs, cryptoHist.pair);
+
+  // The chart always compares every pair, like Synthetic's.
+  const chartRows = symbolPerfRows(trades.map(t => ({ symbol: cryptoPairText(t.symbol), closed_at: t.closed_at, net_result: t.realized_pnl })));
+  drawSymbolPerfChart(document.querySelector("#cryptoPairPerfChart"), chartRows, null, cryptoHist.pairPerf, "#cryptoPairPerfCaption", "pair");
+
+  const shown = trades.filter(t => cryptoHist.pair === "all" || t.symbol === cryptoHist.pair);
+  const s = cryptoTradeStats(shown);
+  const scope = cryptoHist.pair === "all" ? "all pairs" : cryptoPairText(cryptoHist.pair);
+  document.querySelector("#cryptoHistoryCount").textContent = `${shown.length} trade${shown.length === 1 ? "" : "s"}`;
+  document.querySelector("#cryptoHistoryStats").innerHTML = `
+    <div class="metric">
+      <span class="metric-label">Trades</span>
+      <span class="metric-value neutral">${s.count}</span>
+      <span class="metric-sub">${escapeAttr(scope)}, closed</span>
+    </div>
+    <div class="metric">
+      <span class="metric-label">Win rate</span>
+      <span class="metric-value ${s.winRate >= 50 ? "positive" : "negative"}">${s.winRate.toFixed(1)}%</span>
+      <span class="metric-sub">of closed trades</span>
+    </div>
+    <div class="metric">
+      <span class="metric-label">Net P&amp;L</span>
+      <span class="metric-value ${pnlClass(s.net)}">${currency.format(s.net)}</span>
+      <span class="metric-sub">fees ${currency.format(s.fees)}</span>
+    </div>
+    <div class="metric">
+      <span class="metric-label">Avg win / loss</span>
+      <span class="metric-value neutral">${currency.format(s.avgWin)} / ${currency.format(s.avgLoss)}</span>
+      <span class="metric-sub">per closed trade</span>
+    </div>`;
+
+  document.querySelector("#cryptoTrades").innerHTML = shown.length
+    ? shown.map(t => `<tr>
+      <td>${t.strategy_name ? escapeAttr(t.strategy_name) : `<span class="subtle">Manual</span>`}</td>
+      <td>${cryptoPair(t.symbol)}</td>
+      <td>${t.side ? escapeAttr(t.side) : "—"}</td>
+      <td>${cryptoPrice(t.open_price)}</td>
+      <td>${cryptoPrice(t.close_price)}</td>
+      <td>${t.contracts == null ? "—" : number.format(t.contracts)}</td>
+      <td>${t.leverage ? `${number.format(t.leverage)}x` : "—"}</td>
+      <td class="${pnlClass(t.realized_pnl)}">${currency.format(t.realized_pnl)}</td>
+      <td>${currency.format(t.fee || 0)}</td>
+      <td>${t.opened_at ? fmtDate(t.opened_at) : "—"}</td>
+      <td>${fmtDate(t.closed_at)}</td>
+      <td>${t.opened_at ? duration(t.opened_at, t.closed_at) : "—"}</td>
+    </tr>`).join("")
+    : emptyRow(12, data.connected ? "No closed trades yet" : `Set ${data.missing.map(escapeAttr).join(", ")} to connect BloFin ${escapeAttr(data.mode)}`);
+}
+
+function renderCryptoPerformance(data) {
+  document.querySelectorAll("[data-crypto-period]").forEach(b => b.classList.toggle("active", b.dataset.cryptoPeriod === cryptoHist.period));
+  const pairs = [...new Set([...data.trades.map(t => t.symbol), ...data.signals.map(s => s.symbol)])].sort();
+  cryptoHist.perfPair = fillCryptoPairSelect(document.querySelector("#cryptoPerformancePair"), pairs, cryptoHist.perfPair);
+  const onPair = sym => cryptoHist.perfPair === "all" || sym === cryptoHist.perfPair;
+  const trades = data.trades.filter(t => onPair(t.symbol) && cryptoInPeriod(t.closed_at, cryptoHist.period));
+
+  let running = 0;
+  const curve = [...trades].reverse().map(t => {
+    running += t.realized_pnl;
+    return { time: t.closed_at, strategy_name: cryptoStrategy(t), symbol: cryptoPairText(t.symbol), net_result: t.realized_pnl, cumulative_net: running };
+  });
+  const curveEl = document.querySelector("#cryptoCurveValue");
+  curveEl.textContent = currency.format(running);
+  curveEl.className = `chart-value ${pnlClass(running)}`;
+  drawEquityChart(document.querySelector("#cryptoEquityChart"), curve, cryptoHist.equity, null);
+
+  const counts = {};
+  data.signals.filter(s => onPair(s.symbol) && cryptoInPeriod(s.created_at, cryptoHist.period))
+    .forEach(s => { counts[s.status] = (counts[s.status] || 0) + 1; });
+  drawStatusChart(document.querySelector("#cryptoStatusChart"), counts);
+
+  // Every bot is listed, with or without trades, then any other strategy
+  // that has closes (a deleted bot, or Manual).
+  const bots = new Map(data.bots.map(b => [b.name, b]));
+  const names = [...data.bots.map(b => b.name)];
+  trades.forEach(t => { const n = cryptoStrategy(t); if (!names.includes(n)) names.push(n); });
+  const open = {};
+  (cryptoView.data?.positions || []).filter(p => onPair(p.symbol)).forEach(p => {
+    const n = p.strategy || "Manual";
+    open[n] = (open[n] || 0) + 1;
+  });
+  Object.keys(open).forEach(n => { if (!names.includes(n)) names.push(n); });
+  const rows = names.map(name => ({ name, bot: bots.get(name), ...cryptoTradeStats(trades.filter(t => cryptoStrategy(t) === name)) }))
+    .sort((a, b) => b.net - a.net);
+
+  document.querySelector("#cryptoPerformance").innerHTML = rows.length
+    ? rows.map(r => `<tr>
+      <td>${r.name === "Manual" && !r.bot ? `<span class="subtle">Manual</span>` : escapeAttr(r.name)}</td>
+      <td>${r.bot ? statusBadge(r.bot.enabled ? "enabled" : "disabled") : `<span class="subtle">no bot</span>`}</td>
+      <td class="${pnlClass(r.net)}">${currency.format(r.net)}</td>
+      <td>${r.count}</td>
+      <td>${number.format(r.winRate)}%</td>
+      <td class="${pnlClass(r.avgWin)}">${currency.format(r.avgWin)}</td>
+      <td class="${pnlClass(r.avgLoss)}">${currency.format(r.avgLoss)}</td>
+      <td>${open[r.name] || 0}</td>
+    </tr>`).join("")
+    : emptyRow(8, "No crypto bots or closed trades yet");
+}
+
+function renderCryptoJournal(data) {
+  const signals = cryptoHist.rejections ? data.signals.filter(s => s.status === "rejected" || s.status === "failed") : data.signals;
+  document.querySelector("#cryptoRejectionsBtn").classList.toggle("active", cryptoHist.rejections);
+  document.querySelector("#cryptoSignalCount").textContent = `${signals.length} signal${signals.length === 1 ? "" : "s"}`;
+  drawActivityChart(document.querySelector("#cryptoActivityChart"), data.signals, cryptoHist.period);
+  document.querySelector("#cryptoSignals").innerHTML = signals.length
+    ? signals.map(s => `<tr>
       <td>${fmtDate(s.created_at)}</td>
       <td>${escapeAttr(s.strategy_name)}</td>
       <td>${cryptoPair(s.symbol)}</td>
@@ -1097,12 +1286,28 @@ function renderCrypto(data) {
       <td>${statusBadge(s.status)}</td>
       <td class="subtle wrap-cell">${escapeAttr(s.reason || "")}</td>
     </tr>`).join("")
-    : emptyRow(9, "No crypto signals yet");
-
-  document.querySelector("#cryptoBots").innerHTML = data.bots.length
-    ? marketBotRows(cryptoBotRows(data), cryptoBotsOpen, "Closed")
-    : emptyRow(7, "No crypto bots yet. Create one for each strategy that should trade on BloFin.");
+    : emptyRow(9, cryptoHist.rejections ? "No rejected crypto signals" : "No crypto signals yet");
 }
+
+document.querySelector("#cryptoHistoryPair")?.addEventListener("change", e => { cryptoHist.pair = e.target.value; renderCryptoHistory(); });
+document.querySelector("#cryptoPerformancePair")?.addEventListener("change", e => { cryptoHist.perfPair = e.target.value; renderCryptoHistory(); });
+document.querySelectorAll("[data-crypto-period]").forEach(btn => {
+  btn.addEventListener("click", () => { cryptoHist.period = btn.dataset.cryptoPeriod; renderCryptoHistory(); });
+});
+document.querySelector("#cryptoRejectionsBtn")?.addEventListener("click", () => { cryptoHist.rejections = !cryptoHist.rejections; renderCryptoHistory(); });
+(() => {
+  const equity = document.querySelector("#cryptoEquityChart");
+  equity?.addEventListener("mousemove", e => {
+    if (cryptoHist.equity.points.length) drawEquityChart(equity, cryptoHist.equity.points, cryptoHist.equity, e.clientX - equity.getBoundingClientRect().left);
+  });
+  equity?.addEventListener("mouseleave", () => {
+    if (cryptoHist.equity.points.length) drawEquityChart(equity, cryptoHist.equity.points, cryptoHist.equity, null);
+  });
+  const perf = document.querySelector("#cryptoPairPerfChart");
+  const draw = hoverY => drawSymbolPerfChart(perf, cryptoHist.pairPerf.rows, hoverY, cryptoHist.pairPerf, "#cryptoPairPerfCaption", "pair");
+  perf?.addEventListener("mousemove", e => { if (cryptoHist.pairPerf.rows) draw(e.clientY - perf.getBoundingClientRect().top); });
+  perf?.addEventListener("mouseleave", () => { if (cryptoHist.pairPerf.rows) draw(null); });
+})();
 
 // ─── Bot rows shared by Forex and Crypto ─────────────────────────────────────
 // Like a Multipliers bot row: open pairs with their running P/L under the
@@ -2583,15 +2788,15 @@ function drawDivergingBar(ctx, x, y, w, h, r, roundRight) {
   ctx.closePath();
 }
 
-function drawSymbolPerfChart(canvas, rows, hoverY) {
-  symbolPerfState.rows = rows;
+function drawSymbolPerfChart(canvas, rows, hoverY, state = symbolPerfState, captionSel = "#symbolPerfCaption", noun = "symbol") {
+  state.rows = rows;
   const setup = setupCanvas(canvas);
   if (!setup) return;
   const { ctx, width, height } = setup;
   clearCanvas(ctx, width, height);
 
-  const captionEl = document.querySelector("#symbolPerfCaption");
-  if (captionEl) captionEl.textContent = `${rows.length} symbol${rows.length === 1 ? "" : "s"} with closed trades`;
+  const captionEl = document.querySelector(captionSel);
+  if (captionEl) captionEl.textContent = `${rows.length} ${noun}${rows.length === 1 ? "" : "s"} with closed trades`;
 
   if (!rows.length) { drawEmpty(ctx, width, height, "No closed trades yet"); return; }
 
@@ -3302,7 +3507,7 @@ function drawEquityChart(canvas, points, state, hoverX) {
 
 // ─── Activity Chart ───────────────────────────────────────────────────────────
 
-function drawActivityChart(canvas, signals) {
+function drawActivityChart(canvas, signals, period = activePeriod) {
   const setup = setupCanvas(canvas);
   if (!setup) return;
   const { ctx, width, height } = setup;
@@ -3310,13 +3515,13 @@ function drawActivityChart(canvas, signals) {
   const pad = { top: 20, right: 18, bottom: 36, left: 16 };
   const numBuckets = 12;
   const now   = Date.now();
-  const range = activePeriod === "today" ? 8 * 3600e3 : activePeriod === "week" ? 5 * 86400e3 : 30 * 86400e3;
+  const range = period === "today" ? 8 * 3600e3 : period === "week" ? 5 * 86400e3 : 30 * 86400e3;
   const start = now - range;
   const bucketMs = range / numBuckets;
   const buckets = Array.from({ length: numBuckets }, (_, i) => ({ t: start + i * bucketMs, passed: 0, blocked: 0 }));
 
   signals.forEach(s => {
-    const t = new Date(s.created_at).getTime();
+    const t = new Date(utc(s.created_at)).getTime();
     if (t < start) return;
     const idx = Math.min(numBuckets - 1, Math.floor((t - start) / bucketMs));
     if (s.status === "rejected" || s.status === "failed") buckets[idx].blocked++;
@@ -3729,7 +3934,7 @@ document.querySelector("#rejectionsFilterBtn")?.addEventListener("click", functi
   renderAll();
 });
 
-window.addEventListener("resize", renderAll);
+window.addEventListener("resize", () => { renderAll(); if (cryptoHist.page) renderCryptoHistory(); });
 
 // ─── Signal Bots ─────────────────────────────────────────────────────────────
 
